@@ -1,6 +1,6 @@
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { AgentSystemInfo, SessionInfo, SessionStatus, AgentEvent, ThreadUsage, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls, ThreadTurnState, EventHistoryPage } from '../shared/types.js';
+import type { AgentSystemInfo, SessionInfo, SessionStatus, AgentEvent, ThreadUsage, UsageSummary, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls, ThreadTurnState, EventHistoryPage } from '../shared/types.js';
 import { CONTROL_IDS, MCP_SIGN_IN_TIMEOUT_MS, isMcpServerDown, isPermissionMode, subagentParent } from '../shared/types.js';
 import { userEventText } from '../shared/prompt-text.js';
 import { errorMessage } from '../shared/error-message.js';
@@ -24,7 +24,7 @@ import { isClaudeAccountId, removedAccountMessage } from './adapters/claude-acco
 import type { AgentAdapter, AgentQueryHandle, UserMessage } from './adapters/types.js';
 import { audioSentInline, inlineAudioType } from './adapters/file-attachments.js';
 import { ResumeNotFoundError } from './adapters/types.js';
-import { lastRunningCost, lastRunningTokens } from './adapters/running-cost.js';
+import { lastRunningCost, lastRunningModels, lastRunningTokens } from './adapters/running-cost.js';
 import { getGitIdentity } from './git.js';
 import { capToolResult, findRewindForkPoint, isAuthFailure, lastTurnUuid } from './agent-utils.js';
 import { hasApiKey, isApiKeyRejected, markApiKeyRejected } from './credentials.js';
@@ -34,7 +34,8 @@ import { noGitCheckpoints } from './no-git-checkpoints.js';
 import { within } from './within.js';
 import { previewManager } from './preview.js';
 import type { Emit, ManagedSession, SessionCompletionResult } from './session-types.js';
-import { SessionEventStore, TRANSIENT_EVENT_TYPES, eventLogPath } from './session-event-store.js';
+import { SessionEventStore, TRANSIENT_EVENT_TYPES, eventLogPath, getEventsDir } from './session-event-store.js';
+import { UsageLedger, eventLogSources, recordOf, summarize, usageLedgerPath } from './usage-ledger.js';
 import { lastSystemInit, systemInfoOf } from '../shared/live-events.js';
 import { StreamDeltas, isStreamDelta } from './session-stream.js';
 import {
@@ -184,6 +185,8 @@ class AgentSessionManager {
   private eventListeners = new Map<string, ((event: AgentEvent) => void)[]>();
 
   private events = new SessionEventStore();
+  /** Every turn's usage, across threads, for the Usage dialog. */
+  private usage = new UsageLedger(usageLedgerPath, async () => eventLogSources(getEventsDir(), await worktreeManager.threadLabels()));
   private skills = new SessionSkills();
   private promptSuggestions = new SessionPromptSuggestions();
 
@@ -630,6 +633,7 @@ class AgentSessionManager {
       resumeAtUuid: caps.resume && caps.rewind ? resumeAtUuid : null,
       priorCostUsd: caps.resume && session.providerSessionId ? lastRunningCost(session.eventHistory) : null,
       priorTokens: caps.resume && session.providerSessionId ? lastRunningTokens(session.eventHistory) : null,
+      priorModels: caps.resume && session.providerSessionId ? lastRunningModels(session.eventHistory) : null,
       toolAllowRules: currentSettings.toolAllowRules,
       toolDenyRules: currentSettings.toolDenyRules,
       alwaysAllowedTools: session.alwaysAllowedTools,
@@ -1008,6 +1012,8 @@ class AgentSessionManager {
     emit: Emit,
   ): Promise<void> {
     const { id } = session;
+    // When the turn ended, for the Usage dialog's ranges.
+    event.at ??= Date.now();
     let logged!: () => void;
     const logging = new Promise<void>((resolve) => { logged = resolve; });
     session.resultLogging = logging;
@@ -1027,6 +1033,8 @@ class AgentSessionManager {
       turnEnded(session.limits, event);
       const { threadSpendUsd, threadTokens } = session.limits;
       if (threadSpendUsd !== spent || threadTokens.input !== input || threadTokens.output !== output) this.saveThreadLimits(session);
+      const record = recordOf(event, { id, agent: session.adapter.id, repoPath: session.repoPath, title: session.displayName || session.branch });
+      if (record) this.usage.record(record);
       session.lastResult = {
         isError: event.isError,
         totalCostUsd: event.totalCostUsd,
@@ -2368,6 +2376,18 @@ class AgentSessionManager {
       return undefined;
     }));
     return { spendUsd: limits.threadSpendUsd, tokens: { ...limits.threadTokens } };
+  }
+
+  /** Usage across every thread since `since` (epoch ms; null for all
+   *  time), removed threads included, for the Usage dialog. */
+  async usageSummary(since: number | null): Promise<UsageSummary> {
+    const [{ records, backfilling }, labels] = await Promise.all([this.usage.read(), worktreeManager.threadLabels()]);
+    // A loaded thread's name can be newer than the manifest's.
+    for (const s of this.sessions.values()) {
+      const label = labels.get(s.id);
+      if (label && s.displayName) label.title = s.displayName;
+    }
+    return { ...summarize(records, since, labels), backfilling };
   }
 
   /** Save a thread's spend and spend allowance, which its history may not

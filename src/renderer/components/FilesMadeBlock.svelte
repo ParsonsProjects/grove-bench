@@ -10,14 +10,13 @@
   import { SectionLabel } from '$lib/components/ui/section-label/index.js';
   import { formatFileSize } from '$lib/file-attachments.js';
   import { openWorktreeFile } from '$lib/worktree-files.js';
-  import { worktreeFileUrl } from '../../shared/attachments.js';
   import type { MadeFile, MadeFileKind } from '../../shared/types.js';
   import type { ThreadImage } from '../stores/messages.svelte.js';
 
   let { sessionId, files, more }: { sessionId: string; files: MadeFile[]; more?: number } = $props();
 
   let images = $derived(files.filter((f) => f.kind === 'image').map((f): ThreadImage =>
-    f.image ? { file: f.image.file, name: f.path } : { name: f.path, url: worktreeFileUrl(sessionId, f.path) }));
+    f.image ? { file: f.image.file, name: f.path, path: f.path } : { name: f.path, path: f.path }));
   let others = $derived(files.filter((f) => f.kind !== 'image'));
   /** Files that turned out to be gone (or the worktree is). */
   let missing = $state<Record<string, true>>({});

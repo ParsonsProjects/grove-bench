@@ -44,6 +44,7 @@
   import { panelStore } from './stores/panels.svelte.js';
   import { previewStore } from './stores/preview.svelte.js';
   import { backgroundAgentStore } from './stores/background-agent.svelte.js';
+  import { usageReportStore } from './stores/usageReport.svelte.js';
   import type { AppErrorReport } from '../shared/types.js';
   import { isTempBranch } from '../shared/temp-branch.js';
   import { draftStore } from './stores/draft.svelte.js';
@@ -57,6 +58,7 @@
   // Loaded the first time it opens (Ctrl+R or the search button).
   const loadSessionFinder = lazyComponent(() => import('./components/SessionFinder.svelte'));
   const loadBackgroundAgentDialog = lazyComponent(() => import('./components/BackgroundAgentDialog.svelte'));
+  const loadUsageDialog = lazyComponent(() => import('./components/UsageDialog.svelte'));
   const loadSkillsPanel = lazyComponent(() => import('./components/SkillsPanel.svelte'));
   const loadAgentMonitor = lazyComponent(() => import('./components/AgentMonitorDialog.svelte'));
   // Mounted once opened, so its close animation plays.
@@ -664,6 +666,12 @@
 {#if backgroundAgentStore.ask}
   {#await loadBackgroundAgentDialog() then BackgroundAgentDialog}
     <BackgroundAgentDialog />
+  {/await}
+{/if}
+
+{#if usageReportStore.open}
+  {#await loadUsageDialog() then UsageDialog}
+    <UsageDialog />
   {/await}
 {/if}
 

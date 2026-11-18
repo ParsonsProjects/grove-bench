@@ -410,6 +410,21 @@ describe('ClaudeCodeAdapter.start(): the events', () => {
         turnTokens: { input: 700, output: 70 }, sessionTokens: { input: 700, output: 70 },
       });
     });
+
+    it('split a resumed turn by model from the totals each had reached', async () => {
+      const both = { ...result, modelUsage: { 'claude-opus-4-8': { inputTokens: 700, outputTokens: 70 }, 'claude-haiku-4-5': { inputTokens: 100, outputTokens: 10 } } };
+      const { handle, fake } = await start({
+        resumeSessionId: 's1', priorCostUsd: 5, priorTokens: { input: 500, output: 50 },
+        priorModels: { 'claude-opus-4-8': { input: 500, output: 50, costUsd: 5 } },
+      });
+      fake.send(both);
+      fake.end();
+      // 300 in this turn: Opus's 200 more and Haiku's 100, new since.
+      expect((await drain(handle))[0]).toMatchObject({
+        turnTokens: { input: 300, output: 30 },
+        models: [{ model: 'claude-opus-4-8', input: 200, output: 20 }, { model: 'claude-haiku-4-5', input: 100, output: 10 }],
+      });
+    });
   });
 });
 

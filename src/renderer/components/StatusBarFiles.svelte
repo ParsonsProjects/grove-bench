@@ -17,8 +17,9 @@
   import { formatFileSize } from '$lib/file-attachments.js';
   import { openWorktreeFile } from '$lib/worktree-files.js';
   import {
-    attachedTextContent, showAttachedText, showInThread, threadFileName, threadFileSize, threadImageSrc,
+    attachedTextContent, showAttachedText, showInThread, threadFileImage, threadFileName, threadFileSize, threadImageSrc,
   } from '$lib/thread-files.js';
+  import { shownImage, type ShownImage } from '$lib/thread-images.svelte.js';
   import { threadFileKey, type ThreadFile } from '../../shared/thread-items.js';
 
   let {
@@ -32,7 +33,7 @@
     /** Called when what was clicked opens somewhere else in the app. */
     onclose?: () => void;
     /** Show an image full size. */
-    onimage: (image: { src: string; label: string }) => void;
+    onimage: (image: ShownImage) => void;
   } = $props();
 
   /** Files that turned out to be gone (a cleared folder, a deleted worktree
@@ -63,10 +64,10 @@
   async function openFile(f: ThreadFile) {
     const key = threadFileKey(f);
     const name = threadFileName(f);
-    const src = threadImageSrc(sessionId, f);
-    if (src) {
+    const image = threadFileImage(f);
+    if (image) {
       onclose?.();
-      onimage({ src, label: name });
+      onimage({ ...shownImage(sessionId, image), label: name });
       return;
     }
     try {

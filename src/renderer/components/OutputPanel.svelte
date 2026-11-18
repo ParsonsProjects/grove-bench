@@ -12,6 +12,8 @@
   import SelectionMenu from './SelectionMenu.svelte';
   import BookmarkLinks from './BookmarkLinks.svelte';
   import ActivityContextMenu from './ActivityContextMenu.svelte';
+  import LazyImageLightbox from './LazyImageLightbox.svelte';
+  import { provideThreadImages } from '$lib/thread-images.svelte.js';
   import GroveWalk from './GroveWalk.svelte';
   import { bookmarkStore } from '../stores/bookmarks.svelte.js';
   import { arrivalScene } from '../stores/arrivalScene.svelte.js';
@@ -25,6 +27,9 @@
   import type { ChatMessage } from '../stores/messages.svelte.js';
 
   let { sessionId }: { sessionId: string } = $props();
+
+  /** One lightbox for the thread's images, which steps through them all. */
+  const threadImages = provideThreadImages();
 
   let scrollContainer = $state<HTMLDivElement>();
   let shouldAutoScroll = $state(true);
@@ -932,3 +937,4 @@
 
 <SelectionMenu {sessionId} container={scrollContainer} />
 <ActivityContextMenu {sessionId} container={scrollContainer} />
+<LazyImageLightbox images={threadImages} />

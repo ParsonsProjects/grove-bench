@@ -15,6 +15,7 @@ import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
 import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
 import { gitStatusStore } from '../stores/gitStatus.svelte.js';
 import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
+import { usageReportStore } from '../stores/usageReport.svelte.js';
 import { CONTROL_IDS } from '../../shared/types.js';
 import type { PrInfo, ThreadUsage } from '../../shared/types.js';
 
@@ -1381,6 +1382,17 @@ describe('StatusBar last turn', () => {
       } finally {
         openAt.mockRestore();
       }
+    });
+
+    it('opens the Usage dialog for every thread', async () => {
+      usageReportStore.open = false;
+      finishTurn(0.0423);
+      render(StatusBar, { props: { sessionId: ACTIVE } });
+      await toggle();
+      await fireEvent.click(screen.getByRole('button', { name: 'All usage' }));
+      expect(usageReportStore.open).toBe(true);
+      expect(screen.queryByRole('dialog', { name: 'Activity' })).toBeNull();
+      usageReportStore.open = false;
     });
 
     it('shows the thread\'s tokens next to its spend', async () => {

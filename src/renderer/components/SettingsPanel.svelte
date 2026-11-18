@@ -20,6 +20,7 @@
   import GitSettings from './settings/GitSettings.svelte';
   import NotificationSettings from './settings/NotificationSettings.svelte';
   import LimitSettings from './settings/LimitSettings.svelte';
+  import UsageReport from './UsageReport.svelte';
   import BackgroundSettings from './settings/BackgroundSettings.svelte';
   import McpSettings from './settings/McpSettings.svelte';
   import PluginSettings from './settings/PluginSettings.svelte';
@@ -247,7 +248,7 @@
                   <p class="text-xs text-muted-foreground mt-1">{s.label}: {s.description}</p>
                 </div>
 
-                {#if !settingsStore.loaded && s.id !== 'mcp' && s.id !== 'plugins' && s.id !== 'diagnostics'}
+                {#if !settingsStore.loaded && s.id !== 'mcp' && s.id !== 'plugins' && s.id !== 'diagnostics' && s.id !== 'usage'}
                   {#if settingsStore.loading}
                     <div class="flex items-center justify-center py-8 text-muted-foreground">
                       <Pulse class="mr-2" />
@@ -273,6 +274,8 @@
                   <NotificationSettings />
                 {:else if s.id === 'limits'}
                   <LimitSettings />
+                {:else if s.id === 'usage'}
+                  <div data-setting="usage-report"><UsageReport /></div>
                 {:else if s.id === 'background'}
                   <BackgroundSettings ongoto={(id) => (section = id)} />
                 {:else if s.id === 'mcp'}

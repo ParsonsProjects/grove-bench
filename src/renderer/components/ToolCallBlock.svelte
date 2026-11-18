@@ -7,7 +7,7 @@
   import ImageAttachments from './ImageAttachments.svelte';
   import type { StoredImage } from '../../shared/types.js';
   import { toolViewOf, type ToolView } from '../../shared/tool-view.js';
-  import { worktreeFileUrl, worktreeImageType } from '../../shared/attachments.js';
+  import { worktreeImageType } from '../../shared/attachments.js';
 
   let {
     sessionId,
@@ -43,7 +43,7 @@
   let writtenImage = $derived(
     view.kind === 'edit' && view.path && (view.write !== undefined || view.edits?.length) && !pending && !isError
       && worktreeImageType(view.path)
-      ? { name: view.path, url: worktreeFileUrl(sessionId, view.path) }
+      ? { name: view.path, path: view.path }
       : null,
   );
 </script>

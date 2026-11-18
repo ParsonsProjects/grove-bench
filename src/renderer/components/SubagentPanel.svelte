@@ -17,12 +17,17 @@
   import { agentCallInput, filterVisibleMessages, threadMessages } from '../lib/message-view.js';
   import { toolViewOf, toolViewSummary } from '../../shared/tool-view.js';
   import ThreadMessage from './ThreadMessage.svelte';
+  import LazyImageLightbox from './LazyImageLightbox.svelte';
+  import { provideThreadImages } from '$lib/thread-images.svelte.js';
   import ThreadViewSelect from './ThreadViewSelect.svelte';
   import MarkdownBlock from './MarkdownBlock.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
   import XIcon from '@lucide/svelte/icons/x';
+
+  /** One lightbox for the subagent's images, which steps through them all. */
+  const threadImages = provideThreadImages();
 
   let sessionId = $derived(subagentPanelStore.sessionId);
   let toolUseId = $derived(subagentPanelStore.toolUseId);
@@ -191,3 +196,5 @@
     </div>
   </aside>
 {/if}
+
+<LazyImageLightbox images={threadImages} />

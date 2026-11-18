@@ -1,6 +1,6 @@
 <script lang="ts">
-  import ImageLightbox from './ImageLightbox.svelte';
-  import { attachmentImageUrl } from '../../shared/attachments.js';
+  import LazyImageLightbox from './LazyImageLightbox.svelte';
+  import { ThreadImages, imageLabel, imageSrc, shownImage, threadImages } from '$lib/thread-images.svelte.js';
   import type { ThreadImage } from '../stores/messages.svelte.js';
 
   let {
@@ -18,49 +18,54 @@
     class?: string;
   } = $props();
 
+  // The pane's lightbox, which steps through every image in the pane. Out
+  // of one (no pane provides it), a lightbox of its own for these.
+  const paneImages = threadImages();
+  const viewer = paneImages ?? new ThreadImages();
+
   /** Images that failed to load (the file is gone), by src. */
   let failed = $state<Record<string, true>>({});
-  let openIndex = $state<number | null>(null);
+  let row = $state<HTMLElement>();
 
-  /** Inline data while the app still has it (just sent), a worktree file's
-   *  URL, otherwise the saved file. */
-  function srcOf(img: ThreadImage): string {
-    if ('dataUrl' in img) return img.dataUrl;
-    if ('url' in img) return img.url;
-    return attachmentImageUrl(sessionId, img.file);
+  /** The images here that can be opened, in order. */
+  let openable = $derived(images.filter((img) => !failed[imageSrc(sessionId, img)]).map((img) => shownImage(sessionId, img)));
+
+  $effect(() => {
+    if (!row) return;
+    return viewer.register(row, () => openable);
+  });
+
+  function open(img: ThreadImage) {
+    if (row) viewer.open(row, openable.findIndex((s) => s.image === img));
   }
-
-  function labelOf(img: ThreadImage): string {
-    return img.name || 'Image';
-  }
-
-  let openImage = $derived(openIndex !== null ? images[openIndex] : undefined);
 </script>
 
-<div class="flex flex-wrap gap-2 {className}">
+<div bind:this={row} class="flex flex-wrap gap-2 {className}">
   {#each images as img, i (i)}
-    {@const src = srcOf(img)}
+    {@const src = imageSrc(sessionId, img)}
     {#if failed[src] && hideUnavailable}
       <!-- Left out. -->
     {:else if failed[src]}
       <div
         class="h-16 w-24 flex items-center justify-center px-1 text-center text-micro text-muted-foreground border border-border/60"
-        title={labelOf(img)}
+        title={imageLabel(img)}
       >
         Image not available
       </div>
     {:else}
       <button
         type="button"
-        onclick={() => (openIndex = i)}
+        onclick={() => open(img)}
+        oncontextmenu={(e) => viewer.openMenu(e, shownImage(sessionId, img))}
+        data-own-menu
         class="block border border-border/60 hover:border-primary/60 transition-colors
           bg-[repeating-conic-gradient(var(--checker-a)_0_25%,var(--checker-b)_0_50%)] bg-[length:16px_16px]"
-        title={labelOf(img)}
-        aria-label="View {labelOf(img)}"
+        title={imageLabel(img)}
+        aria-label="View {imageLabel(img)}"
       >
         <img
           {src}
-          alt={labelOf(img)}
+          alt={imageLabel(img)}
           loading="lazy"
           decoding="async"
           onerror={() => (failed[src] = true)}
@@ -71,8 +76,6 @@
   {/each}
 </div>
 
-<ImageLightbox
-  src={openImage ? srcOf(openImage) : null}
-  label={openImage ? labelOf(openImage) : ''}
-  onclose={() => (openIndex = null)}
-/>
+{#if !paneImages}
+  <LazyImageLightbox images={viewer} />
+{/if}

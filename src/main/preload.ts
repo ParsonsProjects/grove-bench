@@ -79,6 +79,10 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.ATTACHMENT_READ, sessionId, file),
   openWorktreeFile: (sessionId: string, filePath: string) =>
     ipcRenderer.invoke(IPC.WORKTREE_FILE_OPEN, sessionId, filePath),
+  downloadImage: (sessionId: string, source: import('../shared/types.js').ImageSource, name?: string) =>
+    ipcRenderer.invoke(IPC.IMAGE_DOWNLOAD, sessionId, source, name) as Promise<string | null>,
+  showImageInFolder: (sessionId: string, source: import('../shared/types.js').ImageSource) =>
+    ipcRenderer.invoke(IPC.IMAGE_SHOW_IN_FOLDER, sessionId, source) as Promise<boolean>,
   respondToPermission: (sessionId: string, decision: PermissionDecision) =>
     ipcRenderer.invoke(IPC.AGENT_PERMISSION, sessionId, decision),
   respondToElicitation: (sessionId: string, requestId: string, response: import('../shared/types.js').McpElicitationResponse) =>
@@ -89,6 +93,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.LIMITS_DAILY_SPEND) as Promise<number>,
   getThreadUsage: (sessionId: string) =>
     ipcRenderer.invoke(IPC.LIMITS_THREAD_USAGE, sessionId) as Promise<import('../shared/types.js').ThreadUsage>,
+  getUsageSummary: (since: number | null) =>
+    ipcRenderer.invoke(IPC.USAGE_SUMMARY, since) as Promise<import('../shared/types.js').UsageSummary>,
   onAgentEvent: (sessionId: string, callback: (event: import('../shared/types.js').AgentEvent) => void) => {
     const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
     const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').AgentEvent) =>

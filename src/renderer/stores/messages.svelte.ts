@@ -68,9 +68,10 @@ export interface PendingTool {
 }
 
 /** An image shown in the thread: inline while the app still has its data
- *  (just sent), a file in the conversation's attachments folder, or (`url`)
- *  one the agent saved in its worktree, loaded from there. */
-export type ThreadImage = { name: string; dataUrl: string } | { name: string; url: string } | StoredImage;
+ *  (just sent), a file in the conversation's attachments folder (`file`; with
+ *  `path`, the worktree file it was copied from), or one the agent saved in
+ *  its worktree (`path` alone), loaded from there. */
+export type ThreadImage = { name: string; dataUrl: string } | { name: string; path: string } | (StoredImage & { path?: string });
 
 /** Another file attached to a message (a PDF, audio, ...). `file` is its name
  *  in the attachments folder, once main has saved it. */

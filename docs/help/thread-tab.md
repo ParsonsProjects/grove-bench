@@ -19,7 +19,7 @@ Your messages appear with a green left border. These are the instructions and fo
 
 Each message shows the time you sent it on the right; hover the time to see the full date. A divider marks where a new day starts (**Today**, **Yesterday**, or the date). Messages sent before Grove Bench kept these times show neither.
 
-Files you attached show above the message text. Click a text file to read it in the Focus panel: a Markdown file rendered, anything else with line numbers. Click a PDF or audio file to open it in its default app; any other file is shown in File Explorer instead, so a click never runs a program. Images show as thumbnails; click one to see it full size, and press `Esc` or click outside to close it. Images and files stay when you reopen the thread. They are deleted with the thread, when you `/clear` it, or when you rewind to before the message or tool that showed them.
+Files you attached show above the message text. Click a text file to read it in the Focus panel: a Markdown file rendered, anything else with line numbers. Click a PDF or audio file to open it in its default app; any other file is shown in File Explorer instead, so a click never runs a program. Images show as thumbnails; click one to see it full size, and press `Esc` or click outside to close it. See [Viewing images](#viewing-images) for stepping through them and saving a copy. Images and files stay when you reopen the thread. They are deleted with the thread, when you `/clear` it, or when you rewind to before the message or tool that showed them.
 
 Hover a message to reveal the rewind icon (**Rewind to this message**). It opens the rewind dialog with that message selected and a preview of everything that would be undone: files go back to how they were just before that message, and the message plus every turn after it are dropped. Dropped turns can't come back, but the files can: the rewind keeps a copy of them as they were, and leaves a line in the thread with **Bring them back**. The message text is placed back in the prompt box so you can rephrase it and try again. Tick **Thread only** in the dialog to keep the files and only reset the thread. In a thread that runs without git there are no checkpoints, so the dialog always resets only the thread and says the files stay as they are. With an agent that can't forget part of a thread (the ACP agents), the dialog says so: the agent starts afresh from that point and won't remember the earlier turns either. The Checkpoints tab (`Alt+3`) offers the same rewind with a full per-file diff.
 
@@ -86,7 +86,18 @@ Right-click anything in the thread for a menu of what you can do there. It lists
 - **A code block, table or link**: **Copy code**, **Copy table**, **Copy table as Markdown**, **Copy link**
 - **The message itself**: **Copy message**. Your messages also get **Rewind to this message**, and document-like responses get **Read in the Focus panel**. Tool calls offer **Copy command**, **Copy path**, **Copy pattern** or **Copy input**, and **Copy output**.
 
-Text boxes keep their own spell check menu.
+Text boxes keep their own spell check menu, and images their own (see below).
+
+### Viewing Images
+
+Click any image thumbnail in the thread (one you attached, a tool's screenshot, or one in **Files made**) to see it full size. Use the arrows at the top, or the `Left` and `Right` arrow keys, to step through every image the thread shows, in order; the count says where you are, such as **3 of 7**. Images in older messages that haven't loaded yet (above **Load older messages**) aren't included until you load them. A subagent's panel steps through its own images.
+
+Right-click an image, as a thumbnail or full size, for:
+
+- **Download**: saves a copy to your Downloads folder, under the name it had (a number is added if that name is taken, as in `shot (1).png`). An image a tool returned has no name, so it's saved as `image-` and part of its content hash. For an image the agent made, it's the copy taken when the turn ended.
+- **Open file location**: shows the image in File Explorer. An image you attached is shown as Grove's saved copy, which is named by its content hash (Grove doesn't keep where you attached it from). For an image the agent made, it's the agent's own file in the worktree, or the saved copy once that file is gone.
+
+The same two actions are buttons at the top of the full-size view.
 
 ## Controls
 

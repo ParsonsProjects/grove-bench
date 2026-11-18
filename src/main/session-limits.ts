@@ -12,7 +12,7 @@
 import { randomUUID } from 'node:crypto';
 import { PERMISSION_TIMEOUT_MINUTES } from '../shared/types.js';
 import type { AgentEvent, GroveBenchSettings, TokenCounts } from '../shared/types.js';
-import { localDay, reachedLimit, type LimitUsage, type ReachedLimit } from '../shared/limits.js';
+import { localDay, nonNegative, reachedLimit, type LimitUsage, type ReachedLimit } from '../shared/limits.js';
 import { loadDailySpend, saveDailySpend } from './app-state.js';
 import type { Emit } from './session-types.js';
 
@@ -69,15 +69,13 @@ export interface SessionLimits {
  *  their figure can't be trusted, so they don't count. */
 export function turnSpend(event: AgentEvent): number {
   if (event.type !== 'result' || event.sessionCostUsd === undefined) return 0;
-  const usd = event.totalCostUsd ?? 0;
-  return Number.isFinite(usd) && usd > 0 ? usd : 0;
+  return nonNegative(event.totalCostUsd);
 }
 
 /** The tokens a result says its turn used (none when it doesn't say). */
 export function turnTokens(event: AgentEvent): TokenCounts {
   if (event.type !== 'result' || !event.turnTokens) return { input: 0, output: 0 };
-  const count = (n: number) => (Number.isFinite(n) && n > 0 ? n : 0);
-  return { input: count(event.turnTokens.input), output: count(event.turnTokens.output) };
+  return { input: nonNegative(event.turnTokens.input), output: nonNegative(event.turnTokens.output) };
 }
 
 /** A thread's spend and tokens, and how far the user let it go past its
