@@ -7,14 +7,18 @@
  * Subagents come from the thread's Agent calls. One whose call is still
  * pending runs in the turn: it stops only with the turn (Claude Code's
  * stopTask stops background tasks). One whose call has returned while its
- * task still runs is in the background, and Stop goes to that task.
+ * task still runs is in the background, and Stop goes to that task. A running
+ * agent task with no Agent call in the loaded messages (a workflow, a remote
+ * agent, or a subagent whose call is older than the loaded history) is listed
+ * from its task alone, so nothing that keeps the thread working is missing.
  */
 import type { ChatMessage, ChatToolCallMessage } from '../stores/messages.svelte.js';
-import type { BackgroundTask } from '../stores/backgroundTask.svelte.js';
+import { AGENT_TASK_TYPES, type BackgroundTask } from '../stores/backgroundTask.svelte.js';
 import type { LiveBackgroundTask } from '../../shared/types.js';
 import { toolViewOf } from '../../shared/tool-view.js';
 import type { AgentSpriteState } from './agent-sprite.js';
 import { agentCallInput, isAgentCall } from './message-view.js';
+import { triageForSprite } from './session-triage.js';
 import { toolCallSummary, toolLabel } from './tool-names.js';
 
 /** What a thread or subagent is doing now. */
@@ -35,9 +39,12 @@ export interface MonitorCall {
 }
 
 export interface MonitorSubagent {
-  /** Its Agent call. */
+  /** Its Agent call, or for one listed from its task alone, the task's. */
   toolUseId: string;
-  /** Explore, general-purpose, ...; 'subagent' when the call doesn't say. */
+  /** Its Agent call is in the loaded messages, so its own thread can open. */
+  hasCall: boolean;
+  /** Explore, general-purpose, ...; 'subagent' when the call doesn't say;
+   *  'workflow' or 'remote agent' for those tasks. */
   type: string;
   description: string;
   prompt: string;
@@ -108,6 +115,25 @@ export const RECENT_CALLS = 6;
 
 const isToolCall = (m: ChatMessage): m is ChatToolCallMessage => m.kind === 'tool_call';
 
+/** A thread's tool calls and Agent calls, by message list. The store replaces
+ *  a thread's list whenever it changes (as its pendingInputByList cache
+ *  relies on), so a thread that hasn't changed since the last refresh isn't
+ *  walked again. */
+const scans = new WeakMap<readonly ChatMessage[], { calls: ChatToolCallMessage[]; agentCalls: ChatToolCallMessage[] }>();
+
+function scan(messages: readonly ChatMessage[]): { calls: ChatToolCallMessage[]; agentCalls: ChatToolCallMessage[] } {
+  let scanned = scans.get(messages);
+  if (!scanned) {
+    const calls = messages.filter(isToolCall);
+    scanned = { calls, agentCalls: calls.filter(isAgentCall) };
+    scans.set(messages, scanned);
+  }
+  return scanned;
+}
+
+/** The kind of a running agent task with no Agent call to say it. */
+const TASK_AGENT_TYPES: Record<string, string> = { local_workflow: 'workflow', remote_agent: 'remote agent' };
+
 function asCall(m: ChatToolCallMessage): MonitorCall {
   return { toolUseId: m.toolUseId, name: toolLabel(m.toolName), summary: toolCallSummary(m), isError: !!m.isError };
 }
@@ -145,6 +171,7 @@ function subagentOf(src: MonitorSource, calls: readonly ChatToolCallMessage[], c
   const background = !call.pending && taskRunning;
   return {
     toolUseId: call.toolUseId,
+    hasCall: true,
     type: agentType ?? 'subagent',
     description: toolViewOf(call).summary || task?.description || 'Subagent',
     prompt: prompt ?? '',
@@ -161,14 +188,49 @@ function subagentOf(src: MonitorSource, calls: readonly ChatToolCallMessage[], c
   };
 }
 
+/** A running agent task with no Agent call in the loaded messages, from what
+ *  its task reports. Always in the background: the turn isn't waiting on it. */
+function subagentFromTask(task: BackgroundTask): MonitorSubagent {
+  return {
+    toolUseId: task.toolUseId ?? `task:${task.taskId}`,
+    hasCall: false,
+    type: (task.taskType && TASK_AGENT_TYPES[task.taskType]) || 'subagent',
+    description: task.description || 'Background agent',
+    prompt: '',
+    background: true,
+    taskId: task.taskId,
+    stopping: !!task.stopping,
+    doing: task.lastToolName ? { kind: 'tool', name: toolLabel(task.lastToolName), summary: '' } : { kind: 'working' },
+    recent: [],
+    toolUses: task.toolUses,
+    ...(task.totalTokens ? { tokens: task.totalTokens } : {}),
+    ...(task.durationMs ? { durationMs: task.durationMs } : {}),
+  };
+}
+
 const MONITOR_TASK_TYPES = new Set(['monitor_mcp', 'monitor_ws']);
 
 export function monitorThread(src: MonitorSource): MonitorThread {
-  const calls = src.messages.filter(isToolCall);
-  const subagents = calls
-    .filter(isAgentCall)
-    .map((c) => subagentOf(src, calls, c))
-    .filter((a): a is MonitorSubagent => a !== null);
+  const { calls, agentCalls } = scan(src.messages);
+  const subagents: MonitorSubagent[] = [];
+  // One row per id, so a call listed twice can't give the list a duplicate key.
+  const listed = new Set<string>();
+  for (const call of agentCalls) {
+    if (listed.has(call.toolUseId)) continue;
+    const a = subagentOf(src, calls, call);
+    if (!a) continue;
+    listed.add(a.toolUseId);
+    subagents.push(a);
+  }
+  for (const task of src.tasks) {
+    if (task.status !== 'running' || !task.taskType || !AGENT_TASK_TYPES.has(task.taskType)) continue;
+    // Its Agent call is loaded: listed above while it runs, finished otherwise.
+    if (task.toolUseId && agentCalls.some((c) => c.toolUseId === task.toolUseId)) continue;
+    const a = subagentFromTask(task);
+    if (listed.has(a.toolUseId)) continue;
+    listed.add(a.toolUseId);
+    subagents.push(a);
+  }
   return {
     id: src.id,
     title: src.title,
@@ -190,9 +252,14 @@ export function monitorThread(src: MonitorSource): MonitorThread {
   };
 }
 
-/** Something is running or waiting on the user: what the Running filter keeps. */
+/** Something is running or waiting on the user: what the Running filter
+ *  keeps. A thread the sidebar's chips count as working or needing you
+ *  (starting up, installing, a background agent at work) always is, so the
+ *  list never leaves out one the title bar counts. */
 export function isActive(t: MonitorThread): boolean {
-  return t.turnRunning || t.doing.kind === 'waiting' || t.subagents.length > 0 || t.shells.length > 0;
+  const triage = triageForSprite(t.state);
+  return triage === 'working' || triage === 'needs-you'
+    || t.turnRunning || t.doing.kind === 'waiting' || t.subagents.length > 0 || t.shells.length > 0;
 }
 
 /** The text the filter box searches: names, tools, files, subagents, shells. */

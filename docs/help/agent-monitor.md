@@ -4,9 +4,9 @@ The agent monitor shows what every thread is running, in every project, in one p
 
 ## Opening it
 
-Click the activity counts in the title bar, just left of Help (**?**), or press `Ctrl+Shift+A`. Press `Esc`, the **✕** or `Ctrl+Shift+A` again to close it.
+Click the activity icon (a pulse line) in the title bar, just left of Help (**?**), or press `Ctrl+Shift+A`. Press `Esc`, the **✕** or `Ctrl+Shift+A` again to close it.
 
-The counts in the title bar show how many threads need you (amber) and how many are working (blue). They are counted the same way as the **Needs you** and **Working** filters in the sidebar, so the two always agree. Hover them for the numbers in words.
+Beside the icon, the title bar shows how many threads need you (amber) and how many are working (blue); with nothing to count it shows the icon alone. They are counted the same way as the **Needs you** and **Working** filters in the sidebar, so the two always agree. Hover the icon for the numbers in words.
 
 ## What it shows
 
@@ -17,9 +17,9 @@ Threads are grouped by project. Each row says what it is doing now:
 - **Needs you** and what the agent is waiting for, such as "Wants to edit a file".
 - When nothing runs, the thread's state, such as **Ready** or **Sleeping**. See [Thread states & colors](session-states.md).
 
-Under a thread are its running **subagents** (with their kind, such as Explore, and what they were asked to do) and its **shells** and **monitors**: commands the agent left running after its turn, such as a dev server or a watch on a CI run.
+Under a thread are its running **subagents** (with their kind, such as Explore, and what they were asked to do), any **workflow** or **remote agent** it started, and its **shells** and **monitors**: commands the agent left running after its turn, such as a dev server or a watch on a CI run.
 
-**Running** lists only threads with something running or waiting on you. **All threads** lists every open thread. Closed threads aren't listed: their agents have stopped. The filter box narrows the list to threads, tools, files, subagents or shells that match what you type. It has the cursor when the monitor opens.
+**Running** lists only threads with something running or waiting on you, the same threads the title bar counts, starting up and installing included. **All threads** lists every open thread. Closed threads aren't listed: their agents have stopped. The filter box narrows the list to threads, tools, files, subagents or shells that match what you type. It has the cursor when the monitor opens.
 
 Click a row to see more on the right:
 

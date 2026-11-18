@@ -33,6 +33,7 @@ afterEach(() => {
   store.deferredResume = {};
   store.needsAttention = {};
   messageStore.isRunning = {};
+  agentMonitorStore.open = false;
 });
 
 describe('App startup', () => {

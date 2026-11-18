@@ -13,6 +13,7 @@
   import { agentMonitorStore as monitor, MONITOR_REFRESH_MS, type MonitorSelection } from '../stores/agentMonitor.svelte.js';
   import { isActive, searchText, type MonitorThread } from '../lib/agent-monitor.js';
   import { AGENT_SPRITES } from '../lib/agent-sprite.js';
+  import { triageForSprite } from '../lib/session-triage.js';
   import AgentMonitorDoing from './AgentMonitorDoing.svelte';
   import AgentMonitorDetail from './AgentMonitorDetail.svelte';
   import StatusDot from './StatusDot.svelte';
@@ -50,8 +51,10 @@
     return [...byRepo.values()];
   });
 
-  let working = $derived(monitor.threads.filter((t) => t.state === 'working').length);
-  let waiting = $derived(monitor.threads.filter((t) => t.state === 'permission').length);
+  // Counted as the title bar and the sidebar's chips count them (starting up
+  // and installing are working too), so the three agree.
+  let working = $derived(monitor.threads.filter((t) => triageForSprite(t.state) === 'working').length);
+  let waiting = $derived(monitor.threads.filter((t) => triageForSprite(t.state) === 'needs-you').length);
   let subagents = $derived(monitor.threads.reduce((n, t) => n + t.subagents.length, 0));
   let shells = $derived(monitor.threads.reduce((n, t) => n + t.shells.length, 0));
 

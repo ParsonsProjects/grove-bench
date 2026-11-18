@@ -38,8 +38,6 @@ const SHIPPED = [
   ':(exclude)*/__mocks__/*',
   // The UI kit page, served by the dev server only (ui-kit.html)
   ':(exclude)src/renderer/ui-kit',
-  // The agent monitor mockup, also dev server only (agent-monitor.html)
-  ':(exclude)src/renderer/agent-monitor-mockup',
 ];
 
 function fail(message) {

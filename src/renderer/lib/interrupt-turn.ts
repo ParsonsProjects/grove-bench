@@ -8,7 +8,7 @@ import { arrivalScene } from '../stores/arrivalScene.svelte.js';
  * query, `SESSION_STOP`).
  */
 export function interruptTurn(sessionId: string): void {
-  messageStore.markSessionStopped(sessionId, { byUser: true });
+  messageStore.markSessionStopped(sessionId, { byUser: true, keepBackground: true });
   // A stopped turn may report no result, so nothing else would end it.
   arrivalScene.end(sessionId);
   void window.groveBench.stopSession(sessionId);

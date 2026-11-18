@@ -298,13 +298,14 @@ function userMessage(sent: string, images?: ThreadImage[], attachments?: ThreadF
  * closed, MCP questions cancelled, limit questions stopped. Those `keep`
  * names (by requestId: main still waits on them) stay open, and so do the
  * tool calls waiting on them. Other tool calls stop waiting for a
- * permission, and with `toolCalls` stop running too (their turn is over).
+ * permission, and with `toolCalls` stop running too (their turn is over),
+ * except those `spare` names (a background subagent's, which outlive it).
  * Returns `msgs` itself when nothing changed.
  */
 export function settlePrompts(
   msgs: ChatMessage[],
   keep: (requestId: string) => boolean = () => false,
-  { toolCalls = false }: { toolCalls?: boolean } = {},
+  { toolCalls = false, spare }: { toolCalls?: boolean; spare?: (call: ChatToolCallMessage) => boolean } = {},
 ): ChatMessage[] {
   const stillAwaited = new Set<string>();
   for (const m of msgs) {
@@ -322,6 +323,7 @@ export function settlePrompts(
         return m.resolved || keep(m.requestId) ? m : { ...m, resolved: true, decision: 'stop' };
       case 'tool_call':
         if (stillAwaited.has(m.toolUseId) || !(m.awaitingPermission || (toolCalls && m.pending))) return m;
+        if (m.pending && spare?.(m)) return m;
         return { ...m, awaitingPermission: false, ...(toolCalls ? { pending: false } : {}) };
       default:
         return m;
@@ -1575,8 +1577,10 @@ class MessageStore {
 
   /** Reset running state for a session (e.g. after stop is clicked). byUser:
    *  the user stopped it (Stop, or stopping at a limit), not its process
-   *  ending. */
-  markSessionStopped(sessionId: string, opts?: { byUser?: boolean }) {
+   *  ending. keepBackground: only the turn stopped and the agent is still up
+   *  (an interrupt), so background subagents work on, and the calls they are
+   *  running stay running, as settleReplayedToolCalls leaves them. */
+  markSessionStopped(sessionId: string, opts?: { byUser?: boolean; keepBackground?: boolean }) {
     if (opts?.byUser) this.userStops.set(sessionId, this.userStopCount(sessionId) + 1);
     // Apply deltas still waiting on the stream timer first, or they would
     // show up after the stop as a new fragment of the stopped reply.
@@ -1597,7 +1601,14 @@ class MessageStore {
 
     // Resolve any pending tool calls and prompts so spinners/buttons don't linger
     const msgs = this.messagesBySession[sessionId] ?? [];
-    const updated = settlePrompts(msgs, undefined, { toolCalls: true });
+    // A subagent is in the background when its Agent call has returned and
+    // its task still runs; one the turn waited on stops with the turn.
+    const inBackground = (call: ChatToolCallMessage) => {
+      const parent = call.parentToolUseId;
+      if (!parent || !backgroundTaskStore.isRunningFor(sessionId, parent)) return false;
+      return !msgs.some((m) => m.kind === 'tool_call' && m.toolUseId === parent && m.pending);
+    };
+    const updated = settlePrompts(msgs, undefined, { toolCalls: true, ...(opts?.keepBackground ? { spare: inBackground } : {}) });
     if (updated !== msgs) {
       this.messagesBySession[sessionId] = updated;
     }

@@ -7,6 +7,7 @@
   import type { MonitorCall, MonitorShell, MonitorSubagent, MonitorThread } from '../lib/agent-monitor.js';
   import { AGENT_SPRITES } from '../lib/agent-sprite.js';
   import { formatTokens } from '../lib/context-usage.js';
+  import { formatAgentTime } from '../lib/usage-report.js';
   import AgentMonitorDoing from './AgentMonitorDoing.svelte';
   import StatusDot from './StatusDot.svelte';
   import { Badge } from '$lib/components/ui/badge/index.js';
@@ -47,11 +48,6 @@
   });
 
   const HEADINGS: Record<Shown['kind'], string> = { thread: 'Thread', subagent: 'Subagent', shell: 'Background', none: 'Details' };
-
-  function duration(ms: number): string {
-    const s = Math.round(ms / 1000);
-    return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
-  }
 </script>
 
 {#snippet stopIcon()}
@@ -70,7 +66,9 @@
     <div>
       <SectionLabel as="h3" class="mb-1">Recent tool calls</SectionLabel>
       <ul class="space-y-1">
-        {#each calls as c (c.toolUseId)}
+        <!-- By place: a list redrawn each second, where an id seen twice
+             mustn't break it. -->
+        {#each calls as c, i (i)}
           <li class="flex min-w-0 items-center gap-1.5">
             <span class="shrink-0 font-medium {c.isError ? 'text-red-400' : 'text-yellow-400'}">{c.name}</span>
             <span class="truncate text-muted-foreground" title={c.summary}>{c.summary}</span>
@@ -190,7 +188,13 @@
     </div>
 
     <div class="flex flex-wrap gap-2">
-      <Button variant="subtle" size="xs" onclick={() => monitor.openSubagent(t.id, a.toolUseId)}><AppWindowIcon />Open its thread</Button>
+      {#if a.hasCall}
+        <Button variant="subtle" size="xs" onclick={() => monitor.openSubagent(t.id, a.toolUseId)}><AppWindowIcon />Open its thread</Button>
+      {:else}
+        <!-- Its Agent call isn't loaded (a workflow, or older than the history
+             shown), so it has no thread of its own to open. -->
+        <Button variant="subtle" size="xs" onclick={() => monitor.openThread(t.id)}><AppWindowIcon />Open thread</Button>
+      {/if}
       {#if a.taskId}
         {@const taskId = a.taskId}
         <Button variant="outline-destructive" size="xs" disabled={a.stopping} class="disabled:cursor-wait" onclick={() => monitor.stopTask(t.id, taskId)}>{@render stopIcon()}{a.stopping ? 'Stopping…' : 'Stop subagent'}</Button>
@@ -208,7 +212,7 @@
     <div class="grid grid-cols-3 gap-2">
       {@render stat('Tool calls', String(a.toolUses))}
       {#if a.tokens}{@render stat('Tokens', formatTokens(a.tokens))}{/if}
-      {#if a.durationMs}{@render stat('Running for', duration(a.durationMs))}{/if}
+      {#if a.durationMs}{@render stat('Running for', formatAgentTime(a.durationMs))}{/if}
     </div>
 
     {#if a.prompt}

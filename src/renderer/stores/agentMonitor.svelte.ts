@@ -28,12 +28,13 @@ export type MonitorSelection =
 export const MONITOR_REFRESH_MS = 1000;
 
 /** Every open thread as the monitor shows it, read from the stores now.
- *  Closed threads are left out: their agents are gone. */
+ *  Closed threads are left out: their agents are gone. (A thread being
+ *  removed is closed first, Sidebar's destroySessionById.) */
 export function readMonitorThreads(): MonitorThread[] {
   const threads: MonitorThread[] = [];
   for (const session of store.sessions) {
     const state = sessionSpriteState(session);
-    if (state === 'stopped' || state === 'removing') continue;
+    if (state === 'stopped') continue;
     const messages = messageStore.getMessages(session.id);
     const isRunning = messageStore.getIsRunning(session.id);
     const activity = messageStore.getActivity(session.id);
@@ -70,10 +71,18 @@ class AgentMonitorStore {
   selection = $state<MonitorSelection | null>(null);
   /** The snapshot the dialog draws (see the top of this file). */
   threads = $state.raw<MonitorThread[]>([]);
-  /** Why the last Stop failed, shown until the next action. */
+  /** Why the last Stop failed, shown with its row until the next action. */
   error = $state('');
 
+  /** Opens fresh: no filter left from last time, which could hide what is
+   *  running now, nor an old error; the first row selected. Running or All
+   *  stays as it was. */
   toggle(): void {
+    if (!this.open) {
+      this.query = '';
+      this.error = '';
+      this.selection = null;
+    }
     this.open = !this.open;
   }
 
@@ -118,6 +127,10 @@ class AgentMonitorStore {
     try {
       await stopping;
     } catch (err) {
+      // Show it with the row that failed, which a row's own Stop doesn't select.
+      const t = this.threads.find((x) => x.id === threadId);
+      const sub = t?.subagents.find((a) => a.taskId === taskId);
+      this.select(sub ? { kind: 'subagent', threadId, toolUseId: sub.toolUseId } : { kind: 'shell', threadId, taskId });
       this.error = `Couldn't stop it: ${err instanceof Error ? err.message : String(err)}`;
     }
     this.refresh();

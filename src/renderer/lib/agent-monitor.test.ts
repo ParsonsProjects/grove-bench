@@ -64,7 +64,7 @@ describe('monitorThread: subagents', () => {
     const t = monitorThread(source({ messages: [agent, done, grep], progress: { [grep.toolUseId]: { elapsedSeconds: 3 } } }));
     expect(t.subagents).toHaveLength(1);
     const [a] = t.subagents;
-    expect(a).toMatchObject({ toolUseId: 'agent-1', type: 'Explore', description: 'Find the callers', background: false, toolUses: 2 });
+    expect(a).toMatchObject({ toolUseId: 'agent-1', hasCall: true, type: 'Explore', description: 'Find the callers', background: false, toolUses: 2 });
     expect(a.prompt).toBe('Find every caller of setActiveTab.');
     expect(a.taskId).toBeUndefined();
     expect(a.doing).toEqual({ kind: 'tool', name: 'Grep', summary: expect.stringContaining('setActiveTab'), seconds: 3 });
@@ -75,9 +75,11 @@ describe('monitorThread: subagents', () => {
     const agent = agentCall('agent-2', false);
     const t = monitorThread(source({
       messages: [agent],
-      tasks: [task({ taskId: 'bg-1', toolUseId: 'agent-2', toolUses: 4, totalTokens: 9100, durationMs: 120_000 })],
+      tasks: [task({ taskId: 'bg-1', taskType: 'local_agent', toolUseId: 'agent-2', toolUses: 4, totalTokens: 9100, durationMs: 120_000 })],
     }));
-    expect(t.subagents[0]).toMatchObject({ background: true, taskId: 'bg-1', toolUses: 4, tokens: 9100, durationMs: 120_000, stopping: false });
+    // Once, from its call: the task is the same subagent.
+    expect(t.subagents).toHaveLength(1);
+    expect(t.subagents[0]).toMatchObject({ background: true, hasCall: true, taskId: 'bg-1', toolUses: 4, tokens: 9100, durationMs: 120_000, stopping: false });
   });
 
   it('treats a pending call with a task as in the turn: Stop would not reach it', () => {
@@ -91,6 +93,35 @@ describe('monitorThread: subagents', () => {
     const agent = agentCall('agent-4', false);
     const t = monitorThread(source({ messages: [agent], tasks: [task({ toolUseId: 'agent-4', status: 'completed' })] }));
     expect(t.subagents).toEqual([]);
+  });
+
+  it('lists a running workflow or remote agent from its task, with no thread of its own to open', () => {
+    const t = monitorThread(source({
+      isRunning: false,
+      tasks: [
+        task({ taskId: 'wf', taskType: 'local_workflow', description: 'Release checklist', lastToolName: 'Bash', toolUses: 3 }),
+        task({ taskId: 'ra', taskType: 'remote_agent', description: 'Remote review' }),
+        task({ taskId: 'sh', taskType: 'local_bash', description: 'npm start' }),
+        task({ taskId: 'done', taskType: 'local_workflow', description: 'Finished', status: 'completed' }),
+      ],
+    }));
+    expect(t.subagents.map((a) => [a.type, a.description, a.hasCall, a.taskId, a.background])).toEqual([
+      ['workflow', 'Release checklist', false, 'wf', true],
+      ['remote agent', 'Remote review', false, 'ra', true],
+    ]);
+    expect(t.subagents[0].doing).toEqual({ kind: 'tool', name: 'Bash', summary: '' });
+    expect(isActive(t)).toBe(true);
+  });
+
+  it('lists a background subagent whose Agent call is older than the loaded history from its task', () => {
+    const t = monitorThread(source({ tasks: [task({ taskId: 'old', taskType: 'local_agent', toolUseId: 'not-loaded', description: 'An older ask' })] }));
+    expect(t.subagents).toHaveLength(1);
+    expect(t.subagents[0]).toMatchObject({ toolUseId: 'not-loaded', hasCall: false, type: 'subagent', description: 'An older ask', taskId: 'old' });
+  });
+
+  it('lists an Agent call seen twice once', () => {
+    const t = monitorThread(source({ messages: [agentCall('dup', true), agentCall('dup', true)] }));
+    expect(t.subagents).toHaveLength(1);
   });
 
   it('shows a stop in flight', () => {
@@ -119,6 +150,15 @@ describe('monitorThread: shells and monitors', () => {
 });
 
 describe('isActive and searchText', () => {
+  it('counts a thread as active whenever the title bar counts it: starting up and installing too', () => {
+    for (const state of ['starting', 'installing', 'working', 'permission'] as const) {
+      expect(isActive(monitorThread(source({ isRunning: false, state })))).toBe(true);
+    }
+    for (const state of ['ready', 'sleeping', 'unread', 'error'] as const) {
+      expect(isActive(monitorThread(source({ isRunning: false, state })))).toBe(false);
+    }
+  });
+
   it('counts a thread as active while its turn runs, it waits on you, or anything runs in it', () => {
     const idle = source({ isRunning: false, state: 'ready' });
     expect(isActive(monitorThread(idle))).toBe(false);

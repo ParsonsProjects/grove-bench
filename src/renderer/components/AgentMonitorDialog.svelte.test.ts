@@ -9,6 +9,7 @@ import { agentMonitorStore } from '../stores/agentMonitor.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
 import { messageStore, type ChatMessage, type ChatToolCallMessage } from '../stores/messages.svelte.js';
 import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
+import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
 function call(toolUseId: string, toolName: string, toolInput: unknown, extra: Partial<ChatToolCallMessage> = {}): ChatToolCallMessage {
@@ -54,12 +55,12 @@ afterEach(() => {
   vi.restoreAllMocks();
   store.sessions = [];
   store.activeSessionId = null;
-  messageStore.messagesBySession = {};
-  messageStore.isRunning = {};
-  messageStore.activityBySession = {};
-  backgroundTaskStore.tasksBySession = {};
-  backgroundTaskStore.shellsBySession = {};
+  // Every per-thread entry, the task store's included: Interrupt leaves a
+  // stop in progress and a paused queue, Open thread a tab choice.
+  messageStore.destroyAllSessions();
+  subagentPanelStore.open = false;
   agentMonitorStore.open = false;
+  agentMonitorStore.error = '';
   agentMonitorStore.show = 'running';
   agentMonitorStore.query = '';
   agentMonitorStore.selection = null;
@@ -122,6 +123,25 @@ describe('AgentMonitorDialog', () => {
     await fireEvent.click(within(details).getByRole('button', { name: 'Open thread' }));
     expect(store.activeSessionId).toBe('wait');
     expect(agentMonitorStore.open).toBe(false);
+  });
+
+  it('counts and lists a thread starting up as working, as the title bar does', async () => {
+    store.sessions = [...store.sessions, { id: 'boot', branch: 'feat-boot', repoPath: 'C:/dev/api', status: 'starting', displayName: 'Rate limiter' }];
+    const dialog = await openMonitor();
+    expect(within(dialog).getByTestId('monitor-totals')).toHaveTextContent('2 working');
+    expect(within(dialog).getByText('Rate limiter')).toBeInTheDocument();
+  });
+
+  it('lists a background workflow from its task, and opens its thread', async () => {
+    backgroundTaskStore.start('idle', { type: 'task_started', taskId: 'wf', description: 'Release checklist', taskType: 'local_workflow' });
+    const dialog = await openMonitor();
+    const row = within(dialog).getAllByTestId('monitor-subagent').find((r) => r.textContent?.includes('Release checklist'));
+    expect(row).toHaveTextContent('workflow');
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Show Release checklist' }));
+    const details = within(dialog).getByRole('complementary', { name: 'Details' });
+    await fireEvent.click(within(details).getByRole('button', { name: 'Open thread' }));
+    expect(store.activeSessionId).toBe('idle');
+    expect(subagentPanelStore.open).toBe(false);
   });
 
   it('says when nothing is running', async () => {

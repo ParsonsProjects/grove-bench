@@ -24,12 +24,13 @@ afterEach(() => {
   vi.restoreAllMocks();
   store.sessions = [];
   store.activeSessionId = null;
-  messageStore.messagesBySession = {};
-  messageStore.isRunning = {};
-  backgroundTaskStore.tasksBySession = {};
-  backgroundTaskStore.shellsBySession = {};
+  // Every per-thread entry, the task store's included: an interrupt leaves a
+  // stop in progress and a paused queue behind.
+  messageStore.destroyAllSessions();
   agentMonitorStore.open = false;
+  agentMonitorStore.query = '';
   agentMonitorStore.error = '';
+  agentMonitorStore.selection = null;
   agentMonitorStore.threads = [];
   agentsStore.list = [];
   subagentPanelStore.open = false;
@@ -97,9 +98,28 @@ describe('agentMonitorStore actions', () => {
     expect(mockGroveBench.stopBackgroundTask).toHaveBeenCalledWith('a', 'sh-from-before-the-reload');
   });
 
-  it('says why a stop failed', async () => {
+  it('says why a stop failed, with the row that failed selected', async () => {
+    backgroundTaskStore.setLive('a', [{ taskId: 'sh1', taskType: 'local_bash', description: 'npm start' }]);
+    agentMonitorStore.refresh();
+    agentMonitorStore.select({ kind: 'thread', threadId: 'b' });
     mockGroveBench.stopBackgroundTask.mockRejectedValueOnce(new Error('no such task'));
-    await agentMonitorStore.stopTask('a', 'gone');
+    await agentMonitorStore.stopTask('a', 'sh1');
     expect(agentMonitorStore.error).toBe("Couldn't stop it: no such task");
+    expect(agentMonitorStore.selection).toEqual({ kind: 'shell', threadId: 'a', taskId: 'sh1' });
+  });
+
+  it('opens fresh: no filter or error from last time, the first row selected', () => {
+    agentMonitorStore.query = 'oauth';
+    agentMonitorStore.error = "Couldn't stop it: gone";
+    agentMonitorStore.selection = { kind: 'thread', threadId: 'b' };
+    agentMonitorStore.show = 'all';
+    agentMonitorStore.toggle();
+    expect(agentMonitorStore.open).toBe(true);
+    expect(agentMonitorStore.query).toBe('');
+    expect(agentMonitorStore.error).toBe('');
+    expect(agentMonitorStore.selection).toBeNull();
+    // Running or All is a choice, kept.
+    expect(agentMonitorStore.show).toBe('all');
+    agentMonitorStore.show = 'running';
   });
 });

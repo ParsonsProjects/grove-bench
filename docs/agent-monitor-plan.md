@@ -13,11 +13,11 @@ Before it, this was spread out and per thread: the status bar's Activity popup l
 
 How it reads the data: `lib/agent-monitor.ts` builds the rows from one thread's state (pure, tested on its own); `stores/agentMonitor.svelte.ts` gathers that state from `messageStore`, `backgroundTaskStore`, `store` and `agentsStore`. The rows are a snapshot read again every second while the dialog is open, not a derivation: a derivation would walk every thread's messages again on every streamed word in any of them.
 
-Subagents come from the thread's Agent calls. One whose call is still pending runs in the turn; one whose call has returned while its task still runs is in the background, and Stop goes to its task.
+Subagents come from the thread's Agent calls. One whose call is still pending runs in the turn; one whose call has returned while its task still runs is in the background, and Stop goes to its task. A running agent task with no Agent call in the loaded messages (a workflow, a remote agent, or a subagent whose call is older than the loaded history page) is listed from its task alone, so nothing the title bar counts as working is missing; it has no thread of its own to open. The dialog's totals and its Running filter count threads the way the title bar and the chips do (`triageForSprite`). An interrupt (`interruptTurn`) leaves the calls a background subagent is running pending (`markSessionStopped`'s `keepBackground`), since the subagent works on.
 
 ## Not built yet
 
-- **Processes and memory.** They need sampling in main (below). The standalone mockup (`/agent-monitor.html` on the dev server, `src/renderer/agent-monitor-mockup/`, never bundled) still has the Processes view, End process and the memory column as the reference for this.
+- **Processes and memory.** They need sampling in main (below). A clickable mockup of the Processes view, End process and the memory column was built while designing this and then removed so it wouldn't need upkeep; it is in the history of PR #304 (`git show 1683b4b:src/renderer/agent-monitor-mockup/MonitorView.svelte`).
 - **Turn time and per-turn tokens for each thread.** The renderer keeps no turn start time; main would need to send one.
 - **Subagents for ACP agents** (below).
 
