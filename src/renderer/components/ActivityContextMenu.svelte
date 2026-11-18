@@ -21,8 +21,10 @@
     if (!el) return;
     const onContextMenu = (e: MouseEvent) => {
       const target = e.target as Element;
-      // Text boxes keep the spell check menu.
-      if (target.closest('input, textarea, select, [contenteditable]')) return;
+      // Text boxes keep the spell check menu, and elements marked
+      // data-own-menu (image thumbnails) their own. Theirs can't stop this
+      // one: Svelte handles oncontextmenu at the app's root, after this.
+      if (target.closest('input, textarea, select, [contenteditable], [data-own-menu]')) return;
       const entries = activityMenuEntries(readActivityTarget(target, el, messageStore.getMessages(sessionId)));
       if (entries.length === 0) return;
       e.preventDefault();

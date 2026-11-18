@@ -727,6 +727,9 @@ const api: Record<string, unknown> = {
     };
   },
   exportThread: async () => null,
+  // A thread image's Download and Open file location (no disk in a browser).
+  downloadImage: async (_sessionId: string, _source: unknown, name?: string) => name?.split(/[\\/]/).pop() || 'image.png',
+  showImageInFolder: async () => true,
   switchAgent: async () => {},
   // Mirrors the Claude Code adapter's declared controls (for Opus 5.5, the
   // default model) so the status bar

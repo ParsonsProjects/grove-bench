@@ -1320,6 +1320,15 @@ export interface StoredImage {
   name?: string;
 }
 
+/** Where an image the thread shows is, so main can save a copy to Downloads
+ *  or show it in its folder: a saved copy (and the worktree file it was
+ *  copied from, for one the agent made), a file in the worktree, or one just
+ *  sent, whose saved copy main finds by its content. */
+export type ImageSource =
+  | { kind: 'stored'; file: string; path?: string }
+  | { kind: 'worktree'; path: string }
+  | { kind: 'inline'; data: string; mediaType: string };
+
 // ─── Files the agent made ───
 
 /** What kind of file the agent made in a turn, which decides how the thread
@@ -1576,6 +1585,12 @@ export interface GroveBenchAPI {
   /** Open a file in the conversation's worktree that the agent made or
    *  linked to (main/worktree-files.ts). */
   openWorktreeFile(sessionId: string, filePath: string): Promise<OpenWorktreeFileResult>;
+  /** Save a copy of an image in the thread to the Downloads folder, under
+   *  `name` (a number added if it's taken). The name it was saved under, or
+   *  null when the image is gone. */
+  downloadImage(sessionId: string, source: ImageSource, name?: string): Promise<string | null>;
+  /** Show an image in the thread in its folder. False when it's gone. */
+  showImageInFolder(sessionId: string, source: ImageSource): Promise<boolean>;
   respondToPermission(sessionId: string, decision: PermissionDecision): Promise<boolean>;
   /** Answer an MCP elicitation. False when it already resolved or timed out. */
   respondToElicitation(sessionId: string, requestId: string, response: McpElicitationResponse): Promise<boolean>;
@@ -2556,6 +2571,8 @@ export const IPC = {
   ATTACHMENT_OPEN: 'attachment:open',
   ATTACHMENT_READ: 'attachment:read',
   WORKTREE_FILE_OPEN: 'worktree:openFile',
+  IMAGE_DOWNLOAD: 'image:download',
+  IMAGE_SHOW_IN_FOLDER: 'image:showInFolder',
   AGENT_PERMISSION: 'agent:permission',
   AGENT_HISTORY: 'agent:history',
   AGENT_HISTORY_PAGE: 'agent:history-page',

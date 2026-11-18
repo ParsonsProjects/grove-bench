@@ -6,10 +6,12 @@
  */
 import { messageStore } from '../stores/messages.svelte.js';
 import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
-import { attachmentImageUrl, isMarkdownFile, worktreeFileUrl } from '../../shared/attachments.js';
+import { isMarkdownFile } from '../../shared/attachments.js';
 import { attachedFilesFromSent } from '../../shared/prompt-text.js';
 import { toolLabel } from './tool-names.js';
 import type { ThreadFile } from '../../shared/thread-items.js';
+import type { ThreadImage } from '../stores/messages.svelte.js';
+import { imageSrc } from './thread-images.svelte.js';
 
 /** Show the message an event made in the Thread tab, as a search hit does. */
 export function showInThread(sessionId: string, eventIndex: number): void {
@@ -42,14 +44,21 @@ export function threadFileSize(f: ThreadFile): number | undefined {
   }
 }
 
-/** Where an image in the list loads from (the saved copy, else the file in
- *  the worktree), or null for a file that isn't an image. */
-export function threadImageSrc(sessionId: string, f: ThreadFile): string | null {
-  if (f.kind === 'image') return attachmentImageUrl(sessionId, f.image.file);
+/** An image in the list as the thread shows it (the saved copy, else the
+ *  file in the worktree), or null for a file that isn't an image. */
+export function threadFileImage(f: ThreadFile): ThreadImage | null {
+  if (f.kind === 'image') return f.image;
   if (f.kind === 'made' && f.made.kind === 'image') {
-    return f.made.image ? attachmentImageUrl(sessionId, f.made.image.file) : worktreeFileUrl(sessionId, f.made.path);
+    const { path } = f.made;
+    return f.made.image ? { file: f.made.image.file, name: path, path } : { name: path, path };
   }
   return null;
+}
+
+/** Where an image in the list loads from, or null for a file that isn't one. */
+export function threadImageSrc(sessionId: string, f: ThreadFile): string | null {
+  const image = threadFileImage(f);
+  return image ? imageSrc(sessionId, image) : null;
 }
 
 /** Show an attached text file in the Focus panel, docked beside the thread

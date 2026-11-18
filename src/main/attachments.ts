@@ -14,14 +14,14 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, protocol, shell } from 'electron';
-import type { AgentEvent, FileAttachment, ImageMediaType, MadeFile, StoredFile, StoredImage } from '../shared/types.js';
+import type { AgentEvent, FileAttachment, ImageMediaType, ImageSource, MadeFile, StoredFile, StoredImage } from '../shared/types.js';
 import { ATTACHMENT_SCHEME, knownMediaType, worktreeImageType } from '../shared/attachments.js';
 import type { AdapterEvent } from './adapters/types.js';
 import type { FoundFile } from './turn-files.js';
-import { withLockRetry } from './fs-utils.js';
+import { safeFileName, withLockRetry } from './fs-utils.js';
 import { logger } from './logger.js';
 import { isThreadId } from './session-event-store.js';
-import { worktreeImageResponse } from './worktree-files.js';
+import { resolveWorktreeFile, worktreeImageResponse } from './worktree-files.js';
 
 const EXT_BY_TYPE: Record<ImageMediaType, string> = {
   'image/png': 'png',
@@ -294,6 +294,167 @@ export async function attachmentResponse(url: string, worktreeOf?: WorktreeLooku
   } catch {
     return new Response(null, { status: 404 });
   }
+}
+
+// ─── Download, and Open file location ───
+
+/** An ImageSource as the renderer sent it, checked, or null. The names and
+ *  paths in it are checked again where they're used. */
+export function parseImageSource(value: unknown): ImageSource | null {
+  if (!value || typeof value !== 'object') return null;
+  const v = value as Record<string, unknown>;
+  if (v.kind === 'stored' && typeof v.file === 'string') {
+    return typeof v.path === 'string' ? { kind: 'stored', file: v.file, path: v.path } : { kind: 'stored', file: v.file };
+  }
+  if (v.kind === 'worktree' && typeof v.path === 'string') return { kind: 'worktree', path: v.path };
+  if (v.kind === 'inline' && typeof v.data === 'string' && typeof v.mediaType === 'string') {
+    return { kind: 'inline', data: v.data, mediaType: v.mediaType };
+  }
+  return null;
+}
+
+/** `file` when it is a file that's there, else null. */
+async function existingFile(file: string | null | undefined): Promise<string | null> {
+  if (!file) return null;
+  try {
+    return (await fs.promises.stat(file)).isFile() ? file : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The real path of an image in the worktree (as the agent named it), when
+ *  it is one, inside the worktree. The real path's type must match, as when
+ *  it's served: a link named .png can't reach a .env. */
+async function worktreeImage(worktree: string | undefined, filePath: string): Promise<string | null> {
+  const type = worktreeImageType(filePath);
+  const real = type && worktree ? await resolveWorktreeFile(worktree, filePath) : null;
+  return real && worktreeImageType(real) === type ? existingFile(real) : null;
+}
+
+/** Where the saved copy of an image just sent is: it was named by its
+ *  content (contentHash, a hash of the base64 text). Hashed here with
+ *  fileHash, off the main thread, since this one may be a large image. */
+async function inlineCopy(sessionId: string, data: string, mediaType: string): Promise<string | null> {
+  if (!Object.hasOwn(EXT_BY_TYPE, mediaType)) return null;
+  const hash = await fileHash(Buffer.from(data, 'utf8'));
+  return imagePath(sessionId, `${hash}.${EXT_BY_TYPE[mediaType as ImageMediaType]}`)?.path ?? null;
+}
+
+/**
+ * The image's file on disk, or null when it's gone. `prefer` says which to
+ * try first for one the agent made, which has both: the saved copy (what the
+ * thread shows, so what Download saves) or the agent's own file in the
+ * worktree (what Open file location shows, since that's the one to work on).
+ */
+async function imageFile(
+  sessionId: string,
+  source: ImageSource,
+  worktreeOf: WorktreeLookup,
+  prefer: 'copy' | 'original',
+): Promise<string | null> {
+  switch (source.kind) {
+    case 'inline':
+      return existingFile(await inlineCopy(sessionId, source.data, source.mediaType));
+    case 'worktree':
+      return worktreeImage(worktreeOf(sessionId), source.path);
+    case 'stored': {
+      const copy = () => existingFile(imagePath(sessionId, source.file)?.path);
+      const original = () => (source.path ? worktreeImage(worktreeOf(sessionId), source.path) : Promise.resolve(null));
+      return prefer === 'copy' ? (await copy()) ?? original() : (await original()) ?? copy();
+    }
+  }
+}
+
+/**
+ * The file name to save an image under: the last part of `name` (a path, or
+ * the name it was attached under), made safe for Windows (safeFileName),
+ * ending in `ext`, the image's real type. A name that already ends in one for
+ * that type (shot.jpeg for a .jpg) keeps it. With no name left, `fallback`,
+ * made safe the same way.
+ */
+export function downloadName(name: string | undefined, ext: string, fallback: string): string {
+  const given = name ?? '';
+  let base = given.slice(Math.max(given.lastIndexOf('/'), given.lastIndexOf('\\')) + 1);
+  const type = worktreeImageType(`image.${ext}`);
+  if (type && worktreeImageType(base) === type) {
+    const dot = base.lastIndexOf('.');
+    ext = base.slice(dot + 1);
+    base = base.slice(0, dot);
+  }
+  const stem = safeFileName(base, 120, '_') || safeFileName(fallback, 120, '_') || 'image';
+  return `${stem}.${ext}`;
+}
+
+/** Write a new file in `dir` named `fileName`, or `name (1).png` and so on
+ *  when that's taken (as a browser's downloads do). `write` must fail with
+ *  EEXIST rather than replace a file. Its full path. */
+async function writeNew(dir: string, fileName: string, write: (dest: string) => Promise<void>): Promise<string> {
+  const ext = path.extname(fileName);
+  const stem = fileName.slice(0, fileName.length - ext.length);
+  for (let n = 0; ; n++) {
+    const dest = path.join(dir, n === 0 ? fileName : `${stem} (${n})${ext}`);
+    try {
+      await write(dest);
+      return dest;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST' || n >= 999) throw err;
+    }
+  }
+}
+
+/**
+ * Save a copy of an image in the thread to the Downloads folder: the one the
+ * thread shows (for one the agent made, the copy taken that turn, else its
+ * file as it is now). Named after `name` when there is one. The name it was
+ * saved under, or null when the image is gone. Throws when it can't be
+ * written (no room, no permission).
+ */
+export async function downloadImage(
+  sessionId: string,
+  source: ImageSource,
+  name: string | undefined,
+  worktreeOf: WorktreeLookup,
+): Promise<string | null> {
+  let fileName: string;
+  let write: (dest: string) => Promise<void>;
+  if (source.kind === 'inline') {
+    // Just sent: the data is here, whether or not main has saved its copy yet.
+    if (!Object.hasOwn(EXT_BY_TYPE, source.mediaType)) return null;
+    const data = Buffer.from(source.data, 'base64');
+    if (data.length === 0) return null;
+    fileName = downloadName(name, EXT_BY_TYPE[source.mediaType as ImageMediaType], 'image');
+    write = (dest) => fs.promises.writeFile(dest, data, { flag: 'wx' });
+  } else {
+    const file = await imageFile(sessionId, source, worktreeOf, 'copy');
+    if (!file) return null;
+    // With no name (a tool's image), named after the file found, never the
+    // name the renderer sent: a saved copy by its hash, else its own name.
+    const ext = path.extname(file);
+    const own = path.basename(file, ext);
+    const fallback = FILE_RE.test(path.basename(file)) ? `image-${own.slice(0, 8)}` : own;
+    fileName = downloadName(name, ext.slice(1).toLowerCase(), fallback);
+    write = (dest) => fs.promises.copyFile(file, dest, fs.constants.COPYFILE_EXCL);
+  }
+  const dir = app.getPath('downloads');
+  try {
+    await fs.promises.mkdir(dir, { recursive: true });
+    const saved = await writeNew(dir, fileName, write);
+    logger.info(`[attachments] saved an image from ${sessionId} to Downloads`);
+    return path.basename(saved);
+  } catch (err) {
+    logger.warn(`[attachments] could not save an image from ${sessionId} to Downloads:`, err);
+    throw err;
+  }
+}
+
+/** Show an image in the thread in its folder (for one the agent made, its
+ *  file in the worktree while it's there). False when it's gone. */
+export async function showImageInFolder(sessionId: string, source: ImageSource, worktreeOf: WorktreeLookup): Promise<boolean> {
+  const file = await imageFile(sessionId, source, worktreeOf, 'original');
+  if (!file) return false;
+  shell.showItemInFolder(file);
+  return true;
 }
 
 /** Must run before the app is ready. */

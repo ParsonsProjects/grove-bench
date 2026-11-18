@@ -79,6 +79,10 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.ATTACHMENT_READ, sessionId, file),
   openWorktreeFile: (sessionId: string, filePath: string) =>
     ipcRenderer.invoke(IPC.WORKTREE_FILE_OPEN, sessionId, filePath),
+  downloadImage: (sessionId: string, source: import('../shared/types.js').ImageSource, name?: string) =>
+    ipcRenderer.invoke(IPC.IMAGE_DOWNLOAD, sessionId, source, name) as Promise<string | null>,
+  showImageInFolder: (sessionId: string, source: import('../shared/types.js').ImageSource) =>
+    ipcRenderer.invoke(IPC.IMAGE_SHOW_IN_FOLDER, sessionId, source) as Promise<boolean>,
   respondToPermission: (sessionId: string, decision: PermissionDecision) =>
     ipcRenderer.invoke(IPC.AGENT_PERMISSION, sessionId, decision),
   respondToElicitation: (sessionId: string, requestId: string, response: import('../shared/types.js').McpElicitationResponse) =>
