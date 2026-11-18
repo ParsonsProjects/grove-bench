@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, cleanup, screen, fireEvent, within } from '@testing-library/svelte';
 import { mockGroveBench } from '../__mocks__/setup.js';
@@ -10,6 +10,11 @@ import StatusBarActivity from './StatusBarActivity.svelte';
 import type { ThreadItems } from '../../shared/thread-items.js';
 
 const ACTIVE = 's-active';
+
+// The lightbox loads on first use (LazyImageLightbox). Load it here once,
+// since transforming it cold can take longer than a test waits for the
+// dialog on a slow runner, as with Help (TitleBar.svelte.test.ts).
+beforeAll(async () => { await import('./ImageLightbox.svelte'); }, 30_000);
 const HIDDEN = 's-hidden';
 
 const ITEMS: ThreadItems = {
