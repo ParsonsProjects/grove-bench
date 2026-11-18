@@ -4,7 +4,7 @@ import type { LimitKind } from './limits.js';
 import type { ThreadItems } from './thread-items.js';
 import type { ScheduleOutcome, SkillSchedule, SkillScheduleInput } from './skill-schedules.js';
 import type { CiLogTail } from './ci-log.js';
-import type { FollowUp } from './follow-ups.js';
+import type { FollowUp, FollowUpsChange } from './follow-ups.js';
 
 // ─── Worktree ───
 
@@ -1638,8 +1638,9 @@ export interface GroveBenchAPI {
   setFollowUpDone(id: string, done: boolean): Promise<void>;
   followUpStarted(id: string, sessionId: string): Promise<void>;
   removeFollowUp(id: string): Promise<void>;
-  /** The whole list after every change, from an agent or another window. */
-  onFollowUpsChanged(callback: (list: FollowUp[]) => void): () => void;
+  /** What changed in each save, by an agent or another window
+   *  (applyFollowUpsChange applies it to the list). */
+  onFollowUpsChanged(callback: (change: FollowUpsChange) => void): () => void;
 
   // Prerequisites
   /** Full check of git + agent CLI (spawns processes; excludes gh). */
@@ -2734,7 +2735,7 @@ export const IPC = {
   /** Renderer → main: a thread was started from one. */
   FOLLOW_UP_STARTED: 'followUps:started',
   FOLLOW_UP_REMOVE: 'followUps:remove',
-  /** Main → renderer: the follow-ups changed (an agent added one, say). */
+  /** Main → renderer: what changed in the follow-ups (an agent added one, say). */
   FOLLOW_UPS_CHANGED: 'followUps:changed',
   FIND_EVENT_INDEX_BY_UUID: 'agent:findEventIndexByUuid',
   MEMORY_LIST: 'memory:list',

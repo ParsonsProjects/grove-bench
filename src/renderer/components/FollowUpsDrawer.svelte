@@ -18,7 +18,7 @@
   import { store } from '../stores/sessions.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { getRepoColor } from '../lib/repo-colors.js';
-  import { formatAge } from '../lib/format-age.js';
+  import { formatAge } from '../../shared/format-age.js';
   import { ipcErrorText } from '../lib/mcp-errors.js';
   import { followUpPrompt, type FollowUp } from '../../shared/follow-ups.js';
   import CopyButton from './CopyButton.svelte';
@@ -30,13 +30,8 @@
   import ListTodoIcon from '@lucide/svelte/icons/list-todo';
 
   let projects = $derived(followUpsStore.byProject(store.repos));
-
-  /** Follow-ups whose details are shown in full. */
-  let expanded = $state(new Set<string>());
-  /** Projects whose done follow-ups are shown. */
-  let showDone = $state(new Set<string>());
-  /** Why the last action didn't happen, shown at the top until the next one. */
-  let notice = $state<{ tone: 'danger' | 'warning'; text: string } | null>(null);
+  // The notice, and which details and done lists are open, live in the
+  // store: the drawer mounts again each time it moves to another dock.
 
   function toggle(set: Set<string>, key: string): Set<string> {
     const next = new Set(set);
@@ -72,22 +67,22 @@
 
   function startThread(f: FollowUp) {
     if (!store.repos.includes(f.repoPath)) {
-      notice = { tone: 'warning', text: 'Its project was removed. Add the project again to start a thread from it.' };
+      followUpsStore.notice = { tone: 'warning', text: 'Its project was removed. Add the project again to start a thread from it.' };
       return;
     }
     if (!draftStore.openFollowUp(f)) {
-      notice = { tone: 'warning', text: "You're already writing a new thread. Send or discard it, then start this follow-up." };
+      followUpsStore.notice = { tone: 'warning', text: "You're already writing a new thread. Send or discard it, then start this follow-up." };
       return;
     }
-    notice = null;
+    followUpsStore.notice = null;
   }
 
   async function run(change: () => Promise<void>) {
     try {
       await change();
-      notice = null;
+      followUpsStore.notice = null;
     } catch (e) {
-      notice = { tone: 'danger', text: ipcErrorText(e, "That couldn't be saved.") };
+      followUpsStore.notice = { tone: 'danger', text: ipcErrorText(e, "That couldn't be saved.") };
     }
   }
 
@@ -147,11 +142,18 @@
     </PanelHeader>
 
     <div class="flex-1 overflow-y-auto px-3 py-2 outline-none" tabindex="-1" bind:this={listEl}>
-      {#if notice}
-        <Notice tone={notice.tone} class="mb-2 break-words">{notice.text}</Notice>
+      {#if followUpsStore.notice}
+        <Notice tone={followUpsStore.notice.tone} class="mb-2 break-words">{followUpsStore.notice.text}</Notice>
       {/if}
 
-      {#if !followUpsStore.ready}
+      {#if !followUpsStore.ready && followUpsStore.loadFailed}
+        <Notice tone="danger" class="break-words">
+          Couldn't read your follow-ups. Another program may be holding the file.
+          {#snippet actions()}
+            <Button variant="link" size="2xs" onclick={() => void followUpsStore.load()}>Try again</Button>
+          {/snippet}
+        </Notice>
+      {:else if !followUpsStore.ready}
         <p class="text-xs text-muted-foreground mt-4 text-center">Loading follow-ups…</p>
       {:else if projects.length === 0}
         <p class="text-xs text-muted-foreground mt-4 text-center">
@@ -184,11 +186,11 @@
               {@render origin(f)}
               {#if f.details}
                 <p
-                  class="mt-1 whitespace-pre-wrap break-words text-xs text-foreground/90 {long && !expanded.has(f.id) ? 'line-clamp-4' : ''}"
+                  class="mt-1 whitespace-pre-wrap break-words text-xs text-foreground/90 {long && !followUpsStore.expanded.has(f.id) ? 'line-clamp-4' : ''}"
                 >{f.details}</p>
                 {#if long}
-                  <Button variant="link" size="inline" class="text-caption" onclick={() => (expanded = toggle(expanded, f.id))}>
-                    {expanded.has(f.id) ? 'Show less' : 'Show more'}
+                  <Button variant="link" size="inline" class="text-caption" onclick={() => (followUpsStore.expanded = toggle(followUpsStore.expanded, f.id))}>
+                    {followUpsStore.expanded.has(f.id) ? 'Show less' : 'Show more'}
                   </Button>
                 {/if}
               {/if}
@@ -228,10 +230,10 @@
               variant="quiet"
               size="2xs"
               class="px-0 text-caption"
-              aria-expanded={showDone.has(project.repoPath)}
-              onclick={() => (showDone = toggle(showDone, project.repoPath))}
-            >{showDone.has(project.repoPath) ? 'Hide done' : `Show done (${project.done.length})`}</Button>
-            {#if showDone.has(project.repoPath)}
+              aria-expanded={followUpsStore.showDone.has(project.repoPath)}
+              onclick={() => (followUpsStore.showDone = toggle(followUpsStore.showDone, project.repoPath))}
+            >{followUpsStore.showDone.has(project.repoPath) ? 'Hide done' : `Show done (${project.done.length})`}</Button>
+            {#if followUpsStore.showDone.has(project.repoPath)}
               {#each project.done as f (f.id)}
                 {@const by = threadName(f.doneBySessionId)}
                 <article class="mt-1 mb-2 border border-border/60 p-2" aria-label={f.title}>

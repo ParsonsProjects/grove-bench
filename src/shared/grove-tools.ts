@@ -11,6 +11,14 @@ export const GROVE_TOOL_NAMES = {
 
 export type GroveServerName = keyof typeof GROVE_TOOL_NAMES;
 
+type GroveToolName = (typeof GROVE_TOOL_NAMES)[GroveServerName][number];
+
+/** Grove's tools the Thread tab's Summary still shows, where it hides the
+ *  rest of Grove's: adding a follow-up and marking one done change what is
+ *  left for later threads. Typed against the table, so a rename there
+ *  can't leave this list behind. */
+export const GROVE_TOOLS_IN_SUMMARY: ReadonlySet<string> = new Set<GroveToolName>(['followup_add', 'followup_done']);
+
 export const GROVE_SERVER_NAMES = Object.keys(GROVE_TOOL_NAMES) as GroveServerName[];
 
 /** A Grove tool's name in the forms groveToolOf reads (see there). */

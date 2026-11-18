@@ -2,7 +2,7 @@ import type { ChatMessage } from '../stores/messages.svelte.js';
 import type { ActivityViewMode } from '../../shared/types.js';
 import { changesFiles, toolViewOf, type ToolView } from '../../shared/tool-view.js';
 import { taskListOf } from '../../shared/thread-items.js';
-import { GROVE_SERVER_NAMES, titledAsGroveTool } from '../../shared/grove-tools.js';
+import { GROVE_SERVER_NAMES, GROVE_TOOLS_IN_SUMMARY, titledAsGroveTool } from '../../shared/grove-tools.js';
 
 /** See ActivityViewMode in shared/types.ts for what each mode shows. */
 export type MessageViewMode = ActivityViewMode;
@@ -23,10 +23,6 @@ export const VIEW_MODE_DESCRIPTIONS: Record<MessageViewMode, string> = {
 /** Grove's own MCP servers (the Preview browser, project memory): local, and
  *  too frequent for Summary. */
 const GROVE_MCP_SERVERS: ReadonlySet<string> = new Set(GROVE_SERVER_NAMES);
-
-/** Grove's tools Summary still shows: adding a follow-up and marking one
- *  done change what is left for later threads, which you'd want to see. */
-const GROVE_TOOLS_IN_SUMMARY: ReadonlySet<string> = new Set(['followup_add', 'followup_done']);
 
 /** A call that started a subagent. It stays in every view as one line that
  *  opens the subagent's own thread, so its work is never out of reach. */

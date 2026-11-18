@@ -23,6 +23,8 @@
   import { dockStore, lastOpened, DOCK_MIN_WIDTH, DOCK_THREAD_MIN_WIDTH, type DockPanel } from '../stores/dock.svelte.js';
   import MarkdownPreviewPanel from './MarkdownPreviewPanel.svelte';
   import BookmarksDrawer from './BookmarksDrawer.svelte';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import { Button } from '$lib/components/ui/button/index.js';
 
   let { sessionId = null, shared = false }: { sessionId?: string | null; shared?: boolean } = $props();
 
@@ -134,6 +136,14 @@
       <div class={paneClass('followups')}>
         {#await loadFollowUpsDrawer() then FollowUpsDrawer}
           <FollowUpsDrawer />
+        {:catch}
+          <!-- Chromium keeps a failed import, so only a restart tries again. -->
+          <Notice tone="danger" layout="stacked" class="m-3">
+            Couldn't load the Follow-ups list. Restart Grove Bench to try again.
+            {#snippet actions()}
+              <Button variant="quiet" size="2xs" onclick={() => followUpsStore.toggleDrawer(false)}>Close</Button>
+            {/snippet}
+          </Notice>
         {/await}
       </div>
     {/if}

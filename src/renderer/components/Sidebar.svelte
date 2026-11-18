@@ -44,7 +44,7 @@
   import { lazyComponent } from '../lib/lazy-component.js';
   import { memoryStore } from '../stores/memory.svelte.js';
   import ContextMenu from './ContextMenu.svelte';
-  import { formatAge } from '../lib/format-age.js';
+  import { formatAge } from '../../shared/format-age.js';
   import { isRepoCollapsed } from '../lib/repo-collapse.js';
   import { sortSessions, defaultDirFor } from '../lib/session-sort.js';
   import { triageForSprite, triageCounts, matchesTriageFilter, TRIAGE_FILTERS, TRIAGE_FILTER_LABELS, type TriageFilter, type TriageEntry } from '../lib/session-triage.js';
@@ -1123,8 +1123,9 @@
    *  Projects tree), with each group's sessions ordered by the active sort.
    *  Open conversations are listed here too, and work the same as in the
    *  Conversations list above. */
-  let followUpsLabel = $derived(followUpsStore.openCount === 0 ? 'Follow-ups'
-    : `Follow-ups: ${followUpsStore.openCount} open`);
+  /** Open follow-ups in the projects still here: a removed project's can't be started. */
+  let openFollowUps = $derived(followUpsStore.openCountIn(store.repos));
+  let followUpsLabel = $derived(openFollowUps === 0 ? 'Follow-ups' : `Follow-ups: ${openFollowUps} open`);
 
   function getBranchGroups(repo: string): [string, typeof store.sessions][] {
     const groups: Record<string, typeof store.sessions> = {};
@@ -1166,8 +1167,8 @@
       aria-label={followUpsLabel}
     >
       <ListTodoIcon class="size-4" />
-      {#if followUpsStore.openCount > 0}
-        <span class="absolute top-0.5 right-0.5 text-micro leading-none tabular-nums text-primary" aria-hidden="true">{followUpsStore.openCount > 99 ? '99+' : followUpsStore.openCount}</span>
+      {#if openFollowUps > 0}
+        <Badge tone="primary" variant="solid" count class="absolute -top-0.5 -right-0.5 pointer-events-none" aria-hidden="true">{openFollowUps > 99 ? '99+' : openFollowUps}</Badge>
       {/if}
     </Button>
     <Button

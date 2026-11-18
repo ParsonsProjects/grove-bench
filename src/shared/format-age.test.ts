@@ -50,6 +50,16 @@ describe('formatAge', () => {
     expect(formatAge(now - 90 * 24 * 60 * 60_000)).toBe('3mo ago');
   });
 
+  it('spells the units out in the long form, from a given time', () => {
+    const now = Date.UTC(2026, 3, 17, 12);
+    expect(formatAge(now - 30_000, { now, long: true })).toBe('just now');
+    expect(formatAge(now - 60_000, { now, long: true })).toBe('1 minute ago');
+    expect(formatAge(now - 2 * 3_600_000, { now, long: true })).toBe('2 hours ago');
+    expect(formatAge(now - 24 * 3_600_000, { now, long: true })).toBe('1 day ago');
+    expect(formatAge(now - 90 * 24 * 3_600_000, { now, long: true })).toBe('3 months ago');
+    expect(formatAge(now - 5 * 60_000, { now })).toBe('5m ago');
+  });
+
   it('returns empty string for falsy timestamps', () => {
     expect(formatAge(0)).toBe('');
     expect(formatAge(undefined as unknown as number)).toBe('');

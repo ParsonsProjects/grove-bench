@@ -12,6 +12,7 @@ import { z } from 'zod';
 import type { FollowUpOperations, MemoryOperations, PreviewOperations } from './types.js';
 import { groveToolOf, type GroveServerName } from '../../shared/grove-tools.js';
 import { FOLLOW_UP_LIMITS, type FollowUp } from '../../shared/follow-ups.js';
+import { formatAge } from '../../shared/format-age.js';
 
 export { groveToolOf, type GroveServerName };
 
@@ -150,41 +151,44 @@ export function memoryServer(ops: MemoryOperations): GroveServer {
 
 // ─── grove-followups ───
 
-/** How long ago, in the agent's words. */
-function ago(ms: number, now: number): string {
-  const minutes = Math.max(0, Math.round((now - ms) / 60_000));
-  if (minutes < 60) return minutes <= 1 ? 'just now' : `${minutes} minutes ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return hours === 1 ? '1 hour ago' : `${hours} hours ago`;
-  const days = Math.round(hours / 24);
-  return days === 1 ? '1 day ago' : `${days} days ago`;
-}
-
-/** One follow-up as followup_list shows it. */
-function describeFollowUp(f: FollowUp, now: number): string {
+/** One follow-up as followup_list shows it: its details in full, or cut to
+ *  FOLLOW_UP_LIMITS.detailsInList when it lists several. */
+function describeFollowUp(f: FollowUp, now: number, full: boolean): string {
   const from = f.fromLabel ? ` in "${f.fromLabel}"${f.fromBranch ? ` (branch ${f.fromBranch})` : ''}` : '';
-  const lines = [`## ${f.id}: ${f.title}`, `Added ${ago(f.createdAt, now)}${from}.`];
+  const lines = [`## ${f.id}: ${f.title}`, `Added ${formatAge(f.createdAt, { now, long: true })}${from}.`];
   if (f.startedSessionIds?.length) lines.push(`A thread was started from it ${f.startedSessionIds.length === 1 ? 'once' : `${f.startedSessionIds.length} times`}.`);
-  if (f.doneAt !== undefined) lines.push(`Done ${ago(f.doneAt, now)}${f.doneNote ? `: ${f.doneNote}` : '.'}`);
-  if (f.details) lines.push('', f.details);
+  if (f.doneAt !== undefined) lines.push(`Done ${formatAge(f.doneAt, { now, long: true })}${f.doneNote ? `: ${f.doneNote}` : '.'}`);
+  if (f.details) {
+    const cut = !full && f.details.length > FOLLOW_UP_LIMITS.detailsInList;
+    lines.push('', cut ? `${f.details.slice(0, FOLLOW_UP_LIMITS.detailsInList).trimEnd()}…` : f.details);
+  }
   return lines.join('\n');
 }
 
 /** Tool bodies, separate from the tool definitions so they can be tested alone. */
 export function followUpToolHandlers(ops: FollowUpOperations, now: () => number = Date.now) {
   return {
-    add: ({ title, details }: { title: string; details: string }) => guarded(async () => {
-      const { followUp, existing } = ops.add({ title, details });
+    add: ({ title, details }: { title: string; details?: string }) => guarded(async () => {
+      const { followUp, existing } = ops.add({ title, details: details ?? '' });
       return text(existing
         ? `An open follow-up with that title is already listed: ${followUp.id}. Nothing was added.`
         : `Added follow-up ${followUp.id}: ${followUp.title}. The user can start a thread from it in Grove Bench's Follow-ups drawer.`);
     }),
 
-    list: ({ includeDone }: { includeDone?: boolean }) => guarded(async () => {
+    list: ({ includeDone, id }: { includeDone?: boolean; id?: string }) => guarded(async () => {
+      const at = now();
+      if (id?.trim()) {
+        const key = id.trim().toLowerCase();
+        const one = ops.list({ includeDone: true }).find((f) => f.id === key);
+        if (!one) throw new Error(`There is no follow-up ${id.trim()} in this project.`);
+        return text(describeFollowUp(one, at, true));
+      }
       const list = ops.list({ includeDone });
       if (list.length === 0) return text(includeDone ? 'This project has no follow-ups.' : 'This project has no open follow-ups.');
-      const at = now();
-      return text(list.map((f) => describeFollowUp(f, at)).join('\n\n'));
+      const listed = list.map((f) => describeFollowUp(f, at, false)).join('\n\n');
+      const cut = list.some((f) => f.details.length > FOLLOW_UP_LIMITS.detailsInList);
+      return text(cut ? `${listed}\n\nDetails longer than ${FOLLOW_UP_LIMITS.detailsInList} characters are cut here; `
+        + 'call followup_list with an id to read one in full.' : listed);
     }),
 
     done: ({ id, note }: { id: string; note?: string }) => guarded(async () => {
@@ -194,14 +198,14 @@ export function followUpToolHandlers(ops: FollowUpOperations, now: () => number 
   };
 }
 
+/** No server instructions: the appended system prompt every agent gets
+ *  (followUpsForSystemPrompt) says what follow-ups are and when to add one,
+ *  and saying it twice costs tokens on every turn. The limits aren't in the
+ *  schema either: a longer title, details or note is cut, not refused. */
 export function followUpsServer(ops: FollowUpOperations): GroveServer {
   const run = followUpToolHandlers(ops);
   return {
     name: 'grove-followups',
-    instructions: 'Follow-ups are work for a later thread in this project, kept by Grove Bench, where the user sees them '
-      + 'in the Follow-ups drawer and starts a thread from one. Add one with followup_add when you find work outside '
-      + 'what this thread is for that shouldn\'t be lost, and tell the user you added it. When this thread finishes '
-      + 'a follow-up (its first message names one, say), mark it with followup_done.',
     tools: [
       {
         name: 'followup_add',
@@ -210,8 +214,9 @@ export function followUpsServer(ops: FollowUpOperations): GroveServer {
           + 'a refactor or test you left out, something the user said to do later. Not for work you are about to do here. '
           + 'The new thread starts with none of this thread\'s context, so the details must stand alone.',
         shape: {
-          title: z.string().min(1).max(FOLLOW_UP_LIMITS.title).describe('One line saying what to do, e.g. "Handle an expired token in refreshSession".'),
-          details: z.string().max(FOLLOW_UP_LIMITS.details).describe('What a new thread needs to start: what and why, where (files, functions), what you found, and what done looks like.'),
+          title: z.string().min(1).describe(`One line saying what to do, e.g. "Handle an expired token in refreshSession". Cut to ${FOLLOW_UP_LIMITS.title} characters.`),
+          details: z.string().optional().describe('What a new thread needs to start: what and why, where (files, functions), what you found, '
+            + `and what done looks like. Cut to ${FOLLOW_UP_LIMITS.details} characters.`),
         },
         run: run.add,
         searchHint: 'follow-up later task todo backlog next thread',
@@ -219,9 +224,11 @@ export function followUpsServer(ops: FollowUpOperations): GroveServer {
       },
       {
         name: 'followup_list',
-        description: 'List this project\'s follow-ups (work for later threads) with their details, oldest first.',
+        description: 'List this project\'s follow-ups (work for later threads), oldest first, with the start of their details. '
+          + 'Give an id to read one in full.',
         shape: {
           includeDone: z.boolean().optional().describe('Also list the ones that are done (the most recent ones are kept).'),
+          id: z.string().optional().describe('Show only this follow-up, with its details in full, done or not.'),
         },
         run: run.list,
         searchHint: 'list follow-ups later tasks backlog',
@@ -232,7 +239,7 @@ export function followUpsServer(ops: FollowUpOperations): GroveServer {
         description: 'Mark a follow-up done once this thread has finished its work.',
         shape: {
           id: z.string().min(1).describe('The follow-up\'s id, e.g. "3fa2c1".'),
-          note: z.string().max(FOLLOW_UP_LIMITS.note).optional().describe('One or two sentences on what was done, shown to the user.'),
+          note: z.string().optional().describe(`One or two sentences on what was done, shown to the user. Cut to ${FOLLOW_UP_LIMITS.note} characters.`),
         },
         run: run.done,
         searchHint: 'mark follow-up done complete',

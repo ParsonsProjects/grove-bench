@@ -1050,6 +1050,16 @@ describe('draftStore.openFollowUp', () => {
     expect(mockGroveBench.followUpStarted).toHaveBeenCalledWith('a1b2c3', 'new1');
   });
 
+  it('drops the link when the draft moves to another project', async () => {
+    draftStore.openFollowUp(followUp);
+    draftStore.open('/repo/one');
+    expect(draftStore.draft).toMatchObject({ repoPath: '/repo/one' });
+    expect(draftStore.draft).not.toHaveProperty('followUpId');
+    await settle();
+    await draftStore.start();
+    expect(mockGroveBench.followUpStarted).not.toHaveBeenCalled();
+  });
+
   it("doesn't note a thread that didn't start", async () => {
     createSessionMock().mockRejectedValue(new Error('no'));
     draftStore.openFollowUp(followUp);

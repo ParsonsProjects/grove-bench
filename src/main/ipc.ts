@@ -2281,9 +2281,9 @@ export function registerHandlers() {
   });
 
   // An agent adding one (or another window changing one) shows at once.
-  followUps.onFollowUpsChanged((list) => {
+  followUps.onFollowUpsChanged((change) => {
     for (const w of BrowserWindow.getAllWindows()) {
-      if (!w.isDestroyed()) w.webContents.send(IPC.FOLLOW_UPS_CHANGED, list);
+      if (!w.isDestroyed()) w.webContents.send(IPC.FOLLOW_UPS_CHANGED, change);
     }
   });
 

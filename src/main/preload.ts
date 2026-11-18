@@ -139,8 +139,8 @@ const api: GroveBenchAPI = {
   setFollowUpDone: (id: string, done: boolean) => ipcRenderer.invoke(IPC.FOLLOW_UP_SET_DONE, id, done),
   followUpStarted: (id: string, sessionId: string) => ipcRenderer.invoke(IPC.FOLLOW_UP_STARTED, id, sessionId),
   removeFollowUp: (id: string) => ipcRenderer.invoke(IPC.FOLLOW_UP_REMOVE, id),
-  onFollowUpsChanged: (callback: (list: import('../shared/follow-ups.js').FollowUp[]) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, list: import('../shared/follow-ups.js').FollowUp[]) => callback(list);
+  onFollowUpsChanged: (callback: (change: import('../shared/follow-ups.js').FollowUpsChange) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, change: import('../shared/follow-ups.js').FollowUpsChange) => callback(change);
     ipcRenderer.on(IPC.FOLLOW_UPS_CHANGED, handler);
     return () => {
       ipcRenderer.removeListener(IPC.FOLLOW_UPS_CHANGED, handler);

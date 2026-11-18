@@ -34,11 +34,33 @@ export interface FollowUp {
   doneNote?: string;
 }
 
+/** What changed in one save, as main tells the windows: the follow-ups
+ *  added or changed, and the ids of ones removed (deleted, or old done
+ *  ones dropped). Small, where the whole list could be large. */
+export interface FollowUpsChange {
+  upserted: FollowUp[];
+  removed: string[];
+}
+
+/** `list` with `change` applied: changed ones replaced where they are, new
+ *  ones added at the end (the list is oldest first), removed ones dropped.
+ *  Applying a change twice gives the same list. */
+export function applyFollowUpsChange(list: readonly FollowUp[], change: FollowUpsChange): FollowUp[] {
+  const removed = new Set(change.removed);
+  const changed = new Map(change.upserted.map((f) => [f.id, f]));
+  const next = list.filter((f) => !removed.has(f.id)).map((f) => changed.get(f.id) ?? f);
+  const present = new Set(next.map((f) => f.id));
+  for (const f of change.upserted) if (!present.has(f.id) && !removed.has(f.id)) next.push(f);
+  return next;
+}
+
 export const FOLLOW_UP_LIMITS = {
   /** Longest title kept. */
   title: 120,
   /** Longest details kept. */
   details: 4000,
+  /** Details followup_list shows of each when it lists several. */
+  detailsInList: 200,
   /** Longest note kept when one is marked done. */
   note: 500,
   /** Open follow-ups one project can have: an agent that adds one per

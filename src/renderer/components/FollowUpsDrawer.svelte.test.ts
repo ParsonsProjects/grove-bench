@@ -15,6 +15,10 @@ function fu(extra: Partial<FollowUp> = {}): FollowUp {
 beforeEach(() => {
   followUpsStore.list = [];
   followUpsStore.ready = true;
+  followUpsStore.loadFailed = false;
+  followUpsStore.notice = null;
+  followUpsStore.expanded = new Set();
+  followUpsStore.showDone = new Set();
   followUpsStore.drawerOpen = true;
   store.repos = ['/repo-a', '/repo-b'];
   store.sessions = [];
@@ -73,12 +77,29 @@ describe('FollowUpsDrawer', () => {
     expect(open).toHaveBeenCalledWith(f);
   });
 
-  it("says so when you're already writing a new thread", async () => {
+  it("says so when you're already writing a new thread, still after moving to another dock", async () => {
     vi.spyOn(draftStore, 'openFollowUp').mockReturnValue(false);
-    followUpsStore.list = [fu()];
-    render(FollowUpsDrawer);
+    followUpsStore.list = [fu({ details: 'x'.repeat(300) })];
+    const first = render(FollowUpsDrawer);
+    await fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Start thread' }));
+    // Showing the draft moves the drawer from the thread's dock to the
+    // landing's: it mounts again there.
+    first.unmount();
+    render(FollowUpsDrawer);
     expect(screen.getByText(/already writing a new thread/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show less' })).toBeInTheDocument();
+  });
+
+  it("offers to try again when the list couldn't be read", async () => {
+    const load = vi.spyOn(followUpsStore, 'load').mockResolvedValue();
+    followUpsStore.ready = false;
+    followUpsStore.loadFailed = true;
+    render(FollowUpsDrawer);
+    expect(screen.queryByText(/Loading follow-ups/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Couldn't read your follow-ups/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(load).toHaveBeenCalled();
   });
 
   it("won't start one whose project was removed", async () => {

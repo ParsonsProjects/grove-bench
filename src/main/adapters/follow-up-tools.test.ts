@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { z } from 'zod';
 import { followUpToolHandlers, followUpsServer, isAutoAllowedGroveTool } from './grove-tools.js';
 import type { FollowUpOperations } from './types.js';
 import type { FollowUp } from '../../shared/follow-ups.js';
@@ -35,6 +36,12 @@ describe('followUpToolHandlers', () => {
     expect(textOf(res)).toContain('already listed: a1b2c3');
   });
 
+  it('adds one without details, as an empty string', async () => {
+    const ops = fakeOps();
+    await followUpToolHandlers(ops).add({ title: 'Add tests' });
+    expect(ops.add).toHaveBeenCalledWith({ title: 'Add tests', details: '' });
+  });
+
   it('lists each with its id, age, origin and details', async () => {
     const ops = fakeOps({ list: vi.fn(() => [
       followUp({ fromLabel: 'Fix login', fromBranch: 'claude/login', startedSessionIds: ['s2'] }),
@@ -53,6 +60,25 @@ describe('followUpToolHandlers', () => {
       'Added 3 days ago.',
       'Done 1 hour ago: Removed it',
     ].join('\n'));
+  });
+
+  it('cuts long details when it lists several, and shows one in full by id', async () => {
+    const long = 'x'.repeat(300);
+    const ops = fakeOps({ list: vi.fn(() => [followUp({ details: long }), followUp({ id: 'ffffff', title: 'Old', details: 'short' })]) });
+    const handlers = followUpToolHandlers(ops, () => NOW);
+    const listed = textOf(await handlers.list({}));
+    expect(listed).toContain(`${'x'.repeat(200)}…`);
+    expect(listed).not.toContain('x'.repeat(201));
+    expect(listed).toContain('call followup_list with an id to read one in full');
+    const one = textOf(await handlers.list({ id: ' A1B2C3 ' }));
+    expect(ops.list).toHaveBeenLastCalledWith({ includeDone: true });
+    expect(one).toContain(long);
+    expect(one).not.toContain('ffffff');
+    expect(await handlers.list({ id: 'zzz' })).toEqual({ content: [{ type: 'text', text: 'There is no follow-up zzz in this project.' }], isError: true });
+  });
+
+  it("doesn't add the note about cut details when nothing was cut", async () => {
+    expect(textOf(await followUpToolHandlers(fakeOps()).list({}))).not.toContain('cut here');
   });
 
   it('says when there are none', async () => {
@@ -76,13 +102,24 @@ describe('followUpToolHandlers', () => {
 });
 
 describe('followUpsServer', () => {
-  it('is served as grove-followups with instructions, and every tool runs without a prompt', () => {
+  it('is served as grove-followups, leaving the guidance to the system prompt, and every tool runs without a prompt', () => {
     const server = followUpsServer(fakeOps());
     expect(server.name).toBe('grove-followups');
-    expect(server.instructions).toContain('followup_add');
+    expect(server.instructions).toBeUndefined();
     const servers = new Set(['grove-followups'] as const);
     for (const tool of server.tools) {
       expect(isAutoAllowedGroveTool(`mcp__grove-followups__${tool.name}`, servers), tool.name).toBe(true);
     }
+  });
+});
+
+describe('followup tool inputs', () => {
+  it('accepts a title, details and note past the limits, which the store cuts', () => {
+    const tools = followUpsServer(fakeOps()).tools;
+    const shape = (name: string) => z.object(tools.find((t) => t.name === name)!.shape);
+    expect(shape('followup_add').safeParse({ title: 't'.repeat(500), details: 'd'.repeat(9000) }).success).toBe(true);
+    expect(shape('followup_add').safeParse({ title: 't' }).success).toBe(true);
+    expect(shape('followup_add').safeParse({ title: '' }).success).toBe(false);
+    expect(shape('followup_done').safeParse({ id: 'a', note: 'n'.repeat(2000) }).success).toBe(true);
   });
 });

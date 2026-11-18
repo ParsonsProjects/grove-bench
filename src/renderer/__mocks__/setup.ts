@@ -210,7 +210,7 @@ const mockGroveBench = {
   setFollowUpDone: vi.fn(() => Promise.resolve()),
   followUpStarted: vi.fn(() => Promise.resolve()),
   removeFollowUp: vi.fn(() => Promise.resolve()),
-  onFollowUpsChanged: vi.fn((_callback: (list: import('../../shared/follow-ups.js').FollowUp[]) => void) => () => {}),
+  onFollowUpsChanged: vi.fn((_callback: (change: import('../../shared/follow-ups.js').FollowUpsChange) => void) => () => {}),
   findEventIndexByUuid: vi.fn(() => Promise.resolve(null as number | null)),
   memoryList: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').MemoryEntry[])),
   memoryRead: vi.fn(() => Promise.resolve(null as string | null)),

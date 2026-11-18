@@ -353,8 +353,9 @@ class DraftStore {
   setRepo(repo: string): void {
     if (!this.draft || repo === this.draft.repoPath) return;
     this.draft.repoPath = repo;
-    // Branches belong to the old project.
+    // Branches belong to the old project, and so does a follow-up.
     this.resetToNewBranch();
+    delete this.draft.followUpId;
     void this.refreshKind(repo);
   }
 

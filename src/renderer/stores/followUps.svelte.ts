@@ -1,11 +1,11 @@
 /**
  * Follow-ups (shared/follow-ups.ts): work agents found for later threads,
- * kept by main in follow-ups.json. Main sends the whole list after every
- * change, an agent's included, so the drawer shows one the moment it is
- * added. Starting a thread from one fills the New thread draft
+ * kept by main in follow-ups.json. Main sends what changed after every save,
+ * an agent's included, so the drawer shows one the moment it is added.
+ * Starting a thread from one fills the New thread draft
  * (draftStore.openFollowUp), and the thread is noted against it once it starts.
  */
-import type { FollowUp } from '../../shared/follow-ups.js';
+import { applyFollowUpsChange, type FollowUp, type FollowUpsChange } from '../../shared/follow-ups.js';
 import { nextOpening } from './dock.svelte.js';
 
 /** How often, and how many times, to ask again while follow-ups.json can't
@@ -20,31 +20,48 @@ export interface FollowUpProject {
 }
 
 class FollowUpsStore {
-  /** Every project's follow-ups, as main last sent them (oldest first). */
+  /** Every project's follow-ups, oldest first. */
   list = $state<FollowUp[]>([]);
   /** The list has been read. Until then the drawer says it is loading. */
   ready = $state(false);
+  /** Every attempt to read it failed: the drawer offers to try again. */
+  loadFailed = $state(false);
   drawerOpen = $state(false);
   /** When the drawer was last opened (dock.svelte: nextOpening). */
   opening = $state(0);
 
-  /** Open ones in every project, for the sidebar button's count. */
-  openCount = $derived(this.list.filter((f) => f.doneAt === undefined).length);
+  // The drawer's own state, kept here rather than in the drawer: it moves
+  // to another dock (and mounts again) whenever the thread on screen changes.
+  /** Why the drawer's last action didn't happen, until the next one. */
+  notice = $state<{ tone: 'danger' | 'warning'; text: string } | null>(null);
+  /** Follow-ups whose details are shown in full. */
+  expanded = $state(new Set<string>());
+  /** Projects whose done follow-ups are shown. */
+  showDone = $state(new Set<string>());
 
   private unsubscribe: (() => void) | null = null;
+  /** Changes that arrived before the list was read, applied to it once it is. */
+  private pending: FollowUpsChange[] = [];
 
   async load(retryMs = LOAD_RETRY_MS): Promise<void> {
     // Listen first, so a change while the list loads isn't missed.
-    this.unsubscribe ??= window.groveBench.onFollowUpsChanged((list) => {
-      this.list = list;
-      this.ready = true;
+    this.unsubscribe ??= window.groveBench.onFollowUpsChanged((change) => {
+      if (this.ready) {
+        this.list = applyFollowUpsChange(this.list, change);
+        return;
+      }
+      this.pending.push(change);
+      // Main just saved the file, so it can likely be read now.
+      if (this.loadFailed) void this.load(retryMs);
     });
+    this.loadFailed = false;
     for (let attempt = 1; attempt <= LOAD_ATTEMPTS && !this.ready; attempt++) {
       try {
         const list = await window.groveBench.listFollowUps();
-        if (list) {
-          // A change pushed while this loaded is newer than the answer.
-          if (!this.ready) this.list = list;
+        if (list && !this.ready) {
+          // Changes are safe to apply twice, so one the answer already has is fine.
+          this.list = this.pending.reduce(applyFollowUpsChange, list);
+          this.pending = [];
           this.ready = true;
           return;
         }
@@ -53,7 +70,17 @@ class FollowUpsStore {
       }
       if (attempt < LOAD_ATTEMPTS) await new Promise((r) => setTimeout(r, retryMs));
     }
-    if (!this.ready) console.warn('[follow-ups] follow-ups.json stayed unreadable; the list shows once something changes it');
+    if (!this.ready) {
+      this.loadFailed = true;
+      console.warn('[follow-ups] follow-ups.json stayed unreadable');
+    }
+  }
+
+  /** Open follow-ups in these projects, for the sidebar button's count. A
+   *  removed project's can't be started, so they aren't counted. */
+  openCountIn(repos: readonly string[]): number {
+    const projects = new Set(repos);
+    return this.list.filter((f) => f.doneAt === undefined && projects.has(f.repoPath)).length;
   }
 
   /** Each project with follow-ups: open ones oldest first (the order they
@@ -100,6 +127,7 @@ class FollowUpsStore {
     const wasOpen = this.drawerOpen;
     this.drawerOpen = open ?? !this.drawerOpen;
     if (this.drawerOpen && !wasOpen) this.opening = nextOpening();
+    if (!this.drawerOpen) this.notice = null;
   }
 }
 
