@@ -298,6 +298,11 @@ export function registerHandlers() {
     if (activeSessions.length > 0) {
       throw new Error('Cannot remove a project while it has active threads');
     }
+    // A thread in another project working in this one through a worktree.
+    const names = await worktreeManager.threadsLinking(repoPath);
+    if (names.length > 0) {
+      throw new Error(`${names.length === 1 ? 'A thread in another project works' : `${names.length} threads in other projects work`} in this project: ${names.join(', ')}. Delete ${names.length === 1 ? 'it' : 'them'} first.`);
+    }
 
     if (await projectKind(repoPath) === 'git') {
       const orphans = await worktreeManager.cleanupOrphans(repoPath);
@@ -336,6 +341,40 @@ export function registerHandlers() {
     }
   });
 
+  /**
+   * The other projects a new thread asks to work in
+   * (CreateSessionOpts.linkedRepos), checked as its own branch is: each an
+   * added git project other than the thread's, where `branch` is free to
+   * check out. One that has the branch continues it; the rest get it new,
+   * from their default branch.
+   */
+  async function planLinks(repoPath: string, linkedRepos: unknown, branch: string): Promise<Array<{ repoPath: string; useExisting: boolean; baseBranch?: string }>> {
+    if (!Array.isArray(linkedRepos) || linkedRepos.length === 0) return [];
+    const key = (p: string) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+    const projects = new Set(listProjects(await worktreeManager.listRepos()).map(key));
+    const plans: Array<{ repoPath: string; useExisting: boolean; baseBranch?: string }> = [];
+    for (const raw of linkedRepos) {
+      if (typeof raw !== 'string' || !raw.trim()) continue;
+      const linkRepo = raw.trim();
+      if (key(linkRepo) === key(repoPath) || plans.some((p) => key(p.repoPath) === key(linkRepo))) continue;
+      const name = path.basename(linkRepo);
+      if (!projects.has(key(linkRepo))) throw new Error(`${name} isn't one of your projects. Add it first.`);
+      const kind = await projectKind(linkRepo);
+      if (kind === 'missing') throw new Error(`The project folder ${linkRepo} wasn't found.`);
+      if (kind === 'folder') throw new Error(`${name} isn't a git repository, so this thread can't work in it through a worktree.`);
+      const exists = await branchExistsAnywhere(linkRepo, branch);
+      if (exists) {
+        const holder = (await worktreeBranches(linkRepo).catch(() => null))?.get(branch);
+        if (holder) {
+          throw new Error(`${branch} is checked out at ${holder} in ${name}. A branch can only be checked out in one place, so pick another branch name or switch ${name} off it.`);
+        }
+      }
+      const baseBranch = exists ? undefined : await getDefaultBranch(linkRepo).catch(() => undefined);
+      plans.push({ repoPath: linkRepo, useExisting: exists, ...(baseBranch ? { baseBranch } : {}) });
+    }
+    return plans;
+  }
+
   /** SESSION_CREATE once the id is settled: the checks, then the setup (in
    *  the background for a new worktree). `deleted` fires when the thread is
    *  deleted during the checks. */
@@ -360,6 +399,10 @@ export function registerHandlers() {
       throw new Error((await gitVersion())
         ? 'This project isn\'t a git repository, so a thread can only work in the project folder itself.'
         : 'Git isn\'t installed, so a thread can only work in the project folder itself.');
+    }
+
+    if (opts.direct && Array.isArray(opts.linkedRepos) && opts.linkedRepos.length > 0) {
+      throw new Error('Working in another project needs this thread in its own worktree. Pick a new or existing branch instead of the project folder.');
     }
 
     if (opts.direct) {
@@ -454,8 +497,11 @@ export function registerHandlers() {
       }
     }
 
+    // Other projects it also works in, checked now so the draft gets the reason.
+    const links = await planLinks(opts.repoPath, opts.linkedRepos, branch);
+
     deleted.throwIfAborted();
-    logger.info(`Creating session: branch=${branch}, repo=${opts.repoPath}, useExisting=${useExisting}`);
+    logger.info(`Creating session: branch=${branch}, repo=${opts.repoPath}, useExisting=${useExisting}${links.length > 0 ? `, linked=${links.map((l) => l.repoPath).join(', ')}` : ''}`);
     perfSteps.begin(id, 'new conversation', startedAt);
     perfSteps.step(id, 'checks');
 
@@ -503,35 +549,62 @@ export function registerHandlers() {
         perfSteps.step(id, 'copy files');
 
         // Install dependencies if enabled and the project has a package.json,
-        // with the package manager the project uses
-        if (settings.getSettings().autoInstallDeps) {
+        // with the package manager the project uses. `project` names a linked
+        // project's worktree; the thread's own has none.
+        const installDeps = async (dir: string, project: string | null) => {
           let manager: PackageManager = 'npm';
+          const where = project ? ` in ${project}` : '';
           try {
-            await fs.access(path.join(worktree.path, 'package.json'));
-            if (!win.isDestroyed()) {
+            await fs.access(path.join(dir, 'package.json'));
+            if (!project && !win.isDestroyed()) {
               win.webContents.send(IPC.SESSION_STATUS, worktree.id, 'installing');
             }
 
-            manager = await detectPackageManager(worktree.path);
-            emitPrelaunch({ type: 'status', message: 'Installing dependencies…' });
-            logger.info(`Running ${manager} install in worktree ${worktree.id}`);
-            await installDependencies(worktree.path, manager, signal);
-            perfSteps.step(id, 'install dependencies');
-            logger.info(`${manager} install completed for worktree ${worktree.id}`);
+            manager = await detectPackageManager(dir);
+            emitPrelaunch({ type: 'status', message: project ? `Installing ${project}'s dependencies…` : 'Installing dependencies…' });
+            logger.info(`Running ${manager} install in ${dir}`);
+            await installDependencies(dir, manager, signal);
+            perfSteps.step(id, project ? `install ${project} dependencies` : 'install dependencies');
+            logger.info(`${manager} install completed in ${dir}`);
           } catch (e) {
             if (signal.aborted) throw e;
             if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-              perfSteps.step(id, 'install dependencies (failed)');
+              perfSteps.step(id, project ? `install ${project} dependencies (failed)` : 'install dependencies (failed)');
               const err = e as { stderr?: string; message?: string };
               const stderr = err.stderr || err.message || String(e);
-              logger.warn(`${manager} install failed for worktree ${worktree.id}:`, e);
-              emitPrelaunch({ type: 'error', message: `${manager} install failed:\n${stderr}` });
+              logger.warn(`${manager} install failed in ${dir}:`, e);
+              emitPrelaunch({ type: 'error', message: `${manager} install failed${where}:\n${stderr}` });
             } else if (manager !== 'npm') {
               // The project asks for this tool, and npm used to run in its
               // place. No package.json, or no npm at all, stays quiet as before.
-              logger.warn(`${manager} isn't installed; no dependencies installed in worktree ${worktree.id}`);
-              emitPrelaunch({ type: 'error', message: `This project uses ${manager}, which isn't installed or isn't on PATH, so the worktree's dependencies weren't installed.` });
+              logger.warn(`${manager} isn't installed; no dependencies installed in ${dir}`);
+              emitPrelaunch({ type: 'error', message: `${project ?? 'This project'} uses ${manager}, which isn't installed or isn't on PATH, so the worktree's dependencies weren't installed.` });
             }
+          }
+        };
+        const autoInstall = settings.getSettings().autoInstallDeps;
+        if (autoInstall) await installDeps(worktree.path, null);
+
+        // Linked projects' worktrees, on the same branch name. One that
+        // fails is said and left out: the thread still starts.
+        for (const plan of links) {
+          signal.throwIfAborted();
+          const project = path.basename(plan.repoPath);
+          emitPrelaunch({ type: 'status', message: `Making a worktree of ${project}…` });
+          try {
+            const link = await worktreeManager.createLink(id, { repoPath: plan.repoPath, branchName: branch, baseBranch: plan.baseBranch, useExisting: plan.useExisting });
+            perfSteps.step(id, `link ${project}`);
+            try {
+              const config = await worktreeManager.getRepoConfig(plan.repoPath);
+              if (config.copyFiles.length > 0) await worktreeManager.copyProjectFiles(plan.repoPath, link.path, config.copyFiles);
+            } catch (e) {
+              logger.warn(`Failed to copy untracked files to ${link.path}:`, e);
+            }
+            if (autoInstall) await installDeps(link.path, project);
+          } catch (e) {
+            if (signal.aborted) throw e;
+            logger.warn(`Could not link ${plan.repoPath} to ${id}:`, e);
+            emitPrelaunch({ type: 'error', message: `Couldn't make a worktree of ${project}, so this thread works without it: ${(e as Error | null)?.message || String(e)}` });
           }
         }
 
@@ -542,6 +615,7 @@ export function registerHandlers() {
           id: worktree.id,
           branch: worktree.branch,
           cwd: worktree.path,
+          linked: worktree.linked ?? [],
           repoPath: opts.repoPath,
           window: win,
           adapterType: opts.adapterType,
@@ -632,6 +706,7 @@ export function registerHandlers() {
         id: worktree.id,
         branch: worktree.branch,
         cwd: worktree.path,
+        linked: worktree.linked ?? [],
         repoPath,
         window: win,
         resumeSessionId: providerSessionId,

@@ -84,6 +84,10 @@ export interface CreateSessionOpts {
   continueBranch?: boolean;
   /** Run directly on the repo checkout — no worktree is created. */
   direct?: boolean;
+  /** Other projects the thread also works in, each through a worktree made
+   *  for it on the thread's branch name (docs/linked-projects-plan.md).
+   *  Needs a thread in its own worktree. */
+  linkedRepos?: string[];
   /** Which adapter to use for this session (defaults to registry default). */
   adapterType?: string;
   /** Mode to start in instead of the agent's saved default (e.g. 'plan' for
