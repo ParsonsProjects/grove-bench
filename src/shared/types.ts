@@ -527,6 +527,10 @@ export interface GitStatusOptions {
   /** Kill each git command after this many ms, answering with `error`: for
    *  a check the user waits on (the delete and remove-project dialogs). */
   timeout?: number;
+  /** Read the thread's worktree of this linked project instead of its own.
+   *  A git operation stopped part way there isn't reported: the Changes tab
+   *  only finishes or aborts the thread's own. */
+  linkedRepo?: string;
 }
 
 /** A git operation stopped part way, waiting on the user: a merge, rebase,
@@ -573,6 +577,9 @@ export interface GitStatusResult {
 export interface FileDiffOptions {
   /** Diff against the merge-base with this branch instead of HEAD/index. */
   base?: string;
+  /** Read the thread's worktree of this linked project instead of its own
+   *  (read only: docs/linked-projects-plan.md). */
+  linkedRepo?: string;
 }
 
 /** Lines of the "new side" of a file (working tree, or the index for a staged
@@ -1705,14 +1712,14 @@ export interface GroveBenchAPI {
   // File operations (for @ file picker)
   listFiles(sessionId: string): Promise<string[]>;
   readFile(sessionId: string, filePath: string): Promise<string>;
-  openInEditor(sessionId: string, filePath: string, line?: number): Promise<void>;
+  openInEditor(sessionId: string, filePath: string, line?: number, opts?: { linkedRepo?: string }): Promise<void>;
 
   // File revert (for changes review). `renamedFrom`: a rename's old path,
   // which comes back (not a copy's: its source was never removed).
   revertFile(sessionId: string, filePath: string, staged?: boolean, renamedFrom?: string): Promise<void>;
   getFileDiff(sessionId: string, filePath: string, staged?: boolean, opts?: FileDiffOptions): Promise<FileDiffResult>;
-  getFileLines(sessionId: string, filePath: string, staged?: boolean): Promise<FileLinesResult>;
-  getImageDiffContent(sessionId: string, filePath: string): Promise<ImageDiffContent>;
+  getFileLines(sessionId: string, filePath: string, staged?: boolean, opts?: { linkedRepo?: string }): Promise<FileLinesResult>;
+  getImageDiffContent(sessionId: string, filePath: string, opts?: { linkedRepo?: string }): Promise<ImageDiffContent>;
   stageFile(sessionId: string, filePath: string): Promise<void>;
   unstageFile(sessionId: string, filePath: string): Promise<void>;
   commit(sessionId: string, message: string): Promise<void>;

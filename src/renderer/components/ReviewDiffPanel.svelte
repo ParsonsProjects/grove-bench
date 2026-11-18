@@ -71,6 +71,8 @@
     headerActions,
     dialogs,
     operation,
+    reviewKey: reviewKeyProp,
+    linkedRepo,
   }: {
     sessionId: string;
     /** Identity of what is being compared. When it changes every per-file
@@ -118,7 +120,18 @@
     /** A merge, rebase, cherry-pick or revert git stopped part way: names
      *  the sides of a conflicted file's markers. */
     operation?: GitOperation;
+    /** Where viewed marks and draft comments are kept, when not the
+     *  thread's own (linkedReviewKey). Comments still go to the thread's
+     *  agent. */
+    reviewKey?: string;
+    /** The files are in the thread's worktree of this linked project
+     *  (docs/linked-projects-plan.md): opening one opens it there, there is
+     *  no Markdown preview, and the last turn's edits (which name the
+     *  thread's own files) aren't matched against them. */
+    linkedRepo?: string;
   } = $props();
+  /** Viewed marks' and comments' key. */
+  let reviewKey = $derived(reviewKeyProp ?? sessionId);
 
   let isLoading = $derived(loading);
   /** The conversation's agent on its bench above the empty message. */
@@ -137,22 +150,22 @@
   let railEntries = $derived([...conflictEntries, ...stagedEntries, ...unstagedEntries, ...untrackedEntries]);
 
   // ── Viewed tracking ──
-  let reviewState = $derived(reviewStore.bySession[sessionId]);
+  let reviewState = $derived(reviewStore.bySession[reviewKey]);
   function isViewed(entry: GitStatusEntry): boolean {
     reviewState;
-    return reviewStore.isViewed(sessionId, entry.filePath, entry.contentHash);
+    return reviewStore.isViewed(reviewKey, entry.filePath, entry.contentHash);
   }
   function changedSinceViewed(entry: GitStatusEntry): boolean {
     reviewState;
-    return reviewStore.changedSinceViewed(sessionId, entry.filePath, entry.contentHash);
+    return reviewStore.changedSinceViewed(reviewKey, entry.filePath, entry.contentHash);
   }
-  let viewedCount = $derived.by(() => { reviewState; return reviewStore.viewedCount(sessionId, entries); });
+  let viewedCount = $derived.by(() => { reviewState; return reviewStore.viewedCount(reviewKey, entries); });
 
   /** Toggle viewed; marking a file viewed moves on to the next unviewed file
    *  (like GitHub collapsing the file you just ticked). */
   function toggleViewed(entry: GitStatusEntry) {
     const next = !isViewed(entry);
-    reviewStore.setViewed(sessionId, entry.filePath, entry.contentHash, next);
+    reviewStore.setViewed(reviewKey, entry.filePath, entry.contentHash, next);
     if (next) {
       const ordered = visibleEntries;
       const idx = ordered.findIndex(e => fileKey(e) === fileKey(entry));
@@ -162,7 +175,7 @@
   }
 
   // ── Review comments (line-anchored, batched into one prompt) ──
-  let comments = $derived.by(() => { reviewState; return reviewStore.getComments(sessionId); });
+  let comments = $derived.by(() => { reviewState; return reviewStore.getComments(reviewKey); });
   /** Comments written against this comparison (line numbers only make sense here). */
   let sourceComments = $derived(comments.filter(c => (c.context ?? '') === (commentContext ?? '')));
   let composer = $state<CommentAnchor | null>(null);
@@ -171,7 +184,7 @@
   }
 
   // Edit history from tool calls (for the expandable sub-section)
-  let editHistory = $derived(messageStore.getLastTurnFileChanges(sessionId));
+  let editHistory = $derived(linkedRepo ? [] : messageStore.getLastTurnFileChanges(sessionId));
   let editHistoryByFile = $derived(
     new Map(editHistory.map(fc => [fc.filePath, fc]))
   );
@@ -596,7 +609,7 @@
     const entry = selectedEntry;
     const c = composer;
     if (!entry || !c) return;
-    reviewStore.addComment(sessionId, {
+    reviewStore.addComment(reviewKey, {
       filePath: entry.filePath,
       side: c.side,
       startLine: c.startLine,
@@ -615,7 +628,7 @@
     try {
       const prompt = buildReviewPrompt(comments);
       messageStore.submitMessage(sessionId, { displayText: prompt, outgoing: prompt });
-      reviewStore.clearComments(sessionId);
+      reviewStore.clearComments(reviewKey);
       composer = null;
       messageStore.setActiveTab(sessionId, 'activity');
     } finally {
@@ -625,7 +638,7 @@
   function reviewToPrompt() {
     if (comments.length === 0) return;
     messageStore.appendToPrompt(sessionId, buildReviewPrompt(comments));
-    reviewStore.clearComments(sessionId);
+    reviewStore.clearComments(reviewKey);
     composer = null;
   }
 
@@ -641,7 +654,7 @@
   }
 
   function openInEditor(filePath: string) {
-    window.groveBench.openInEditor(sessionId, filePath).catch(() => {});
+    window.groveBench.openInEditor(sessionId, filePath, undefined, linkedRepo ? { linkedRepo } : undefined).catch(() => {});
   }
 
   function fileName(filePath: string): string {
@@ -1036,7 +1049,7 @@
           </Button>
         {/if}
 
-        {#if isMarkdownFile(selectedEntry.filePath) && selectedEntry.status !== 'deleted'}
+        {#if !linkedRepo && isMarkdownFile(selectedEntry.filePath) && selectedEntry.status !== 'deleted'}
           <Button
             size="xs"
             variant="quiet"
@@ -1117,7 +1130,7 @@
       <!-- Diff content -->
       <div class="flex-1 overflow-y-auto px-4 py-2" bind:this={diffContainer}>
         {#if diffResult?.kind === 'image'}
-          <ImageDiffView {sessionId} filePath={selectedEntry.filePath} />
+          <ImageDiffView {sessionId} filePath={selectedEntry.filePath} {linkedRepo} />
         {:else if diffResult?.kind === 'binary'}
           <Notice tone="neutral"><p>Binary file — no text diff to display.</p></Notice>
         {:else if diffResult?.kind === 'tooLarge'}
@@ -1137,8 +1150,8 @@
             {onAddComment}
             onSaveComment={saveComment}
             onCancelComment={() => composer = null}
-            onUpdateComment={(id, body) => reviewStore.updateComment(sessionId, id, body)}
-            onRemoveComment={(id) => reviewStore.removeComment(sessionId, id)}
+            onUpdateComment={(id, body) => reviewStore.updateComment(reviewKey, id, body)}
+            onRemoveComment={(id) => reviewStore.removeComment(reviewKey, id)}
             conflict={selectedEntry.status === 'conflicted' ? { operation } : null}
           />
         {:else if key in diffErrors}
@@ -1188,7 +1201,7 @@
           <span class="text-muted-foreground">across {new Set(comments.map(c => c.filePath)).size} file{new Set(comments.map(c => c.filePath)).size === 1 ? '' : 's'}</span>
           <div class="ml-auto flex items-center gap-1.5">
             {#if reviewBarActions}{@render reviewBarActions()}{/if}
-            <Button size="2xs" variant="outline-destructive" onclick={() => { if (confirm('Discard all review comments?')) { reviewStore.clearComments(sessionId); composer = null; } }}>Discard</Button>
+            <Button size="2xs" variant="outline-destructive" onclick={() => { if (confirm('Discard all review comments?')) { reviewStore.clearComments(reviewKey); composer = null; } }}>Discard</Button>
             <Button size="2xs" variant="subtle" onclick={reviewToPrompt} title="Put the batched comments into the prompt so you can edit before sending">To prompt</Button>
             <Button size="2xs" onclick={sendReview} disabled={sendingReview} title="Send all comments to the agent as one prompt (queued if it is busy)">
               Send to agent

@@ -1329,6 +1329,39 @@ describe('file handlers', () => {
     expect(await invoke(IPC.FILE_LINES, 's1', 'lines.ts', true)).toBeNull();
   });
 
+  describe('reading a linked project for the Changes tab', () => {
+    const linkWt = () => path.join(tmp, 'linked-wt');
+    beforeEach(() => {
+      fs.mkdirSync(linkWt(), { recursive: true });
+      m.worktreeManager.getWorktree.mockImplementation((id: string) => (id === 's1'
+        ? { ...wtInfo(), linked: [{ repoPath: '/b', path: linkWt(), branch: 'feat' }] }
+        : undefined));
+    });
+
+    it("GIT_STATUS reads the linked worktree, without its stopped git operation, and nothing it doesn't link", async () => {
+      vi.mocked(git.git).mockResolvedValue(' M lib/pay.ts\0');
+      const result = await invoke(IPC.GIT_STATUS, 's1', { linkedRepo: '/b' });
+      expect(result.entries.map((e: { filePath: string }) => e.filePath)).toEqual(['lib/pay.ts']);
+      expect(vi.mocked(git.git).mock.calls.every(([, cwd]) => cwd === linkWt())).toBe(true);
+      expect(git.gitOperation).not.toHaveBeenCalled();
+      expect(await invoke(IPC.GIT_STATUS, 's1', { linkedRepo: '/elsewhere' })).toEqual({ entries: [] });
+    });
+
+    it('FILE_DIFF and FILE_LINES read files in the linked worktree, and keep to it', async () => {
+      fs.writeFileSync(path.join(linkWt(), 'pay.ts'), 'one\ntwo\n');
+      vi.mocked(git.fileDiff).mockResolvedValue('--- a/pay.ts\n+++ b/pay.ts\n@@ -1 +1 @@\n-old\n+one\n');
+      expect(await invoke(IPC.FILE_DIFF, 's1', 'pay.ts', false, { linkedRepo: '/b' })).toMatchObject({ kind: 'text' });
+      expect(git.fileDiff).toHaveBeenCalledWith(linkWt(), 'pay.ts', { staged: false });
+      expect(await invoke(IPC.FILE_LINES, 's1', 'pay.ts', false, { linkedRepo: '/b' })).toEqual({ lines: ['one', 'two'] });
+      await expect(invoke(IPC.FILE_DIFF, 's1', '../wt/secret.ts', false, { linkedRepo: '/b' })).rejects.toThrow();
+      await expect(invoke(IPC.FILE_DIFF, 's1', 'pay.ts', false, { linkedRepo: '/elsewhere' })).rejects.toThrow('Worktree not found');
+    });
+
+    it('FILE_OPEN_IN_EDITOR opens a file in the linked worktree, and nothing outside it', async () => {
+      await expect(invoke(IPC.FILE_OPEN_IN_EDITOR, 's1', '../wt/a.ts', undefined, { linkedRepo: '/b' })).rejects.toThrow('Path traversal not allowed');
+    });
+  });
+
   it('FILE_DIFF: images get a thumbnail view, untracked files a synthesized diff', async () => {
     expect(await invoke(IPC.FILE_DIFF, 's1', 'img/logo.png')).toEqual({ kind: 'image', ext: 'png' });
 
@@ -1615,7 +1648,7 @@ describe('git handlers', () => {
     it("reads each linked worktree's branch, changes, sync, unmerged commits and, when asked, its PR", async () => {
       m.worktreeManager.getWorktree.mockImplementation((id: string) => (id === 's1' ? linkedInfo() : undefined));
       vi.mocked(git.currentBranch).mockResolvedValue('feat');
-      vi.mocked(git.git).mockResolvedValue(' M a.ts\n?? b.ts\n');
+      vi.mocked(git.git).mockResolvedValue(' M a.ts\0?? b.ts\0');
       vi.mocked(git.syncStatus).mockResolvedValue({ upstream: 'origin/feat', ahead: 1, behind: 0 });
       vi.mocked(git.getDefaultBranch).mockResolvedValue('main');
       vi.mocked(git.branchCommits).mockResolvedValue([{ sha: 'a', subject: 'x' }, { sha: 'b', subject: 'y' }] as never);

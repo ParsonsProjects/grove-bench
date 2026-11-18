@@ -1,6 +1,6 @@
 # Linked Projects: One Thread Working in a Second Project
 
-> **Status: Phases 0 and 1 built; 2 and 3 not started.** The open
+> **Status: Phases 0, 1 and 2 built; 3 not started.** The open
 > questions are settled (see "Decisions"). Where the build differs from
 > this plan, "What was built" says so. This is a smaller slice of Goal 2
 > in `docs/projects-plan.md` ("one conversation, several repositories"). It
@@ -336,7 +336,7 @@ fills it from the setting. It is useful by itself and is the base for links.
 
 ## What was built
 
-Phases 0 and 1, with these differences from the plan above:
+Phases 0, 1 and 2, with these differences from the plan above:
 
 - **Direct threads can't link** (see "Branch").
 - **The edit check** is a deny rule in Claude Code's settings
@@ -347,6 +347,16 @@ Phases 0 and 1, with these differences from the plan above:
   the app restarts, while the status bar shows only links that exist.
 - **The sidebar badge** counts the linked projects, with their names in its
   tooltip.
+- **Changes view (phase 2)** is its own component, `LinkedChangesPanel`,
+  rather than a second key in `gitStatusStore`: the thread's own view and
+  its refresh triggers are left as they were. It reads on show, every 5 s
+  while the agent works, at the end of a turn and on focus. `readCheckout`
+  in `ipc.ts` resolves `linkedRepo` for `GIT_STATUS`, `FILE_DIFF`,
+  `FILE_LINES`, `FILE_CONTENT_DATA_URL` and `FILE_OPEN_IN_EDITOR`; the
+  write handlers don't take it. A stopped git operation in a linked
+  worktree isn't reported. `ReviewDiffPanel` takes `reviewKey` (viewed
+  marks and comments, `linkedReviewKey`) and `linkedRepo` (opens files
+  there; no Markdown preview and no last-turn edit marks for those files).
 - **Code:** `createLink`, `removeLinks`, `cleanupOrphanLinks` and the
   linked rename in `worktree-manager.ts`; `planLinks` and
   `GIT_LINKED_STATUS` in `ipc.ts`; `linked-projects.ts` (folders, deny

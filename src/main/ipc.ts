@@ -1506,8 +1506,8 @@ export function registerHandlers() {
     return [...sortedDirs, ...files];
   });
 
-  ipcMain.handle(IPC.FILE_OPEN_IN_EDITOR, async (_event, sessionId: string, filePath: string, line?: number) => {
-    const worktree = worktreeManager.getWorktree(sessionId);
+  ipcMain.handle(IPC.FILE_OPEN_IN_EDITOR, async (_event, sessionId: string, filePath: string, line?: number, opts?: { linkedRepo?: unknown }) => {
+    const worktree = readCheckout(sessionId, opts?.linkedRepo);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
     const resolved = path.resolve(worktree.path, filePath);
     const normalizedResolved = path.normalize(resolved);
@@ -1589,6 +1589,18 @@ export function registerHandlers() {
 
   // ─── File revert & diff (for changes review panel) ───
 
+  /** The checkout a Changes read looks at: the thread's own worktree, or
+   *  with `linkedRepo` its worktree of that linked project, read only
+   *  (docs/linked-projects-plan.md). Undefined for a thread that isn't
+   *  known, or a project it doesn't link. Writes (stage, revert, commit)
+   *  only ever take the thread's own. */
+  function readCheckout(sessionId: string, linkedRepo: unknown): { path: string; noGit?: boolean } | undefined {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree || linkedRepo === undefined) return worktree;
+    const link = typeof linkedRepo === 'string' ? worktree.linked?.find((l) => l.repoPath === linkedRepo) : undefined;
+    return link ? { path: link.path } : undefined;
+  }
+
   ipcMain.handle(IPC.FILE_REVERT, async (_event, sessionId: string, filePath: string, staged?: boolean, renamedFrom?: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
@@ -1597,8 +1609,8 @@ export function registerHandlers() {
     await revertFile(worktree.path, relPath, staged === true, oldPath);
   });
 
-  ipcMain.handle(IPC.FILE_DIFF, async (_event, sessionId: string, filePath: string, staged?: boolean, opts?: { base?: string }): Promise<FileDiffResult> => {
-    const worktree = worktreeManager.getWorktree(sessionId);
+  ipcMain.handle(IPC.FILE_DIFF, async (_event, sessionId: string, filePath: string, staged?: boolean, opts?: { base?: string; linkedRepo?: unknown }): Promise<FileDiffResult> => {
+    const worktree = readCheckout(sessionId, opts?.linkedRepo);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
     const { relPath, resolved } = sanitizeWorktreeRelPath(worktree.path, filePath);
 
@@ -1648,8 +1660,8 @@ export function registerHandlers() {
 
   // Lines of the new side of a file, for expanding context around hunks.
   // Staged diffs compare against the index, so serve the index version there.
-  ipcMain.handle(IPC.FILE_LINES, async (_event, sessionId: string, filePath: string, staged?: boolean): Promise<FileLinesResult> => {
-    const worktree = worktreeManager.getWorktree(sessionId);
+  ipcMain.handle(IPC.FILE_LINES, async (_event, sessionId: string, filePath: string, staged?: boolean, opts?: { linkedRepo?: unknown }): Promise<FileLinesResult> => {
+    const worktree = readCheckout(sessionId, opts?.linkedRepo);
     if (!worktree) return null;
     const { relPath, resolved } = sanitizeWorktreeRelPath(worktree.path, filePath);
     try {
@@ -1666,8 +1678,8 @@ export function registerHandlers() {
     }
   });
 
-  ipcMain.handle(IPC.FILE_CONTENT_DATA_URL, async (_event, sessionId: string, filePath: string): Promise<ImageDiffContent> => {
-    const worktree = worktreeManager.getWorktree(sessionId);
+  ipcMain.handle(IPC.FILE_CONTENT_DATA_URL, async (_event, sessionId: string, filePath: string, opts?: { linkedRepo?: unknown }): Promise<ImageDiffContent> => {
+    const worktree = readCheckout(sessionId, opts?.linkedRepo);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
     const { relPath, resolved } = sanitizeWorktreeRelPath(worktree.path, filePath);
     const mime = mimeForImageExt(imageExtFor(relPath) ?? '');
@@ -1761,7 +1773,9 @@ export function registerHandlers() {
       if (!(await pathExists(link.path))) return { ...empty, missing: true };
       const [branch, porcelain, sync, base] = await Promise.all([
         currentBranch(link.path).catch(() => null),
-        git(['status', '--porcelain'], link.path).catch(() => null),
+        // As the Changes tab reads it: every untracked file, and no lock
+        // taken that would get in the agent's way.
+        statusGit(link.path).catch(() => null),
         syncStatus(link.path).catch(() => null),
         getDefaultBranch(link.repoPath).catch(() => null),
       ]);
@@ -1774,7 +1788,7 @@ export function registerHandlers() {
       return {
         ...empty,
         branch,
-        uncommitted: porcelain === null ? null : porcelain.split('\n').filter((l) => l.trim() !== '').length,
+        uncommitted: porcelain === null ? null : parseGitStatusPorcelain(porcelain).entries.length,
         sync,
         base,
         unmerged,
@@ -1880,14 +1894,14 @@ export function registerHandlers() {
 
   // Polled to keep what's shown current: background work (background-work.ts).
   ipcMain.handle(IPC.GIT_STATUS, (_event, sessionId: string, opts?: GitStatusOptions) => inBackground(async (): Promise<GitStatusResult> => {
-    const worktree = worktreeManager.getWorktree(sessionId);
+    const worktree = readCheckout(sessionId, opts?.linkedRepo);
     if (!worktree || worktree.noGit) return { entries: [] };
     const cwd = worktree.path;
     const timeout = requestedTimeout(opts?.timeout);
     // A merge or rebase stopped part way: the Changes tab finishes or aborts it.
     // A timed check skips it: it runs git with no time limit, and only the
-    // Changes tab reads it.
-    const operation = timeout ? Promise.resolve(null) : Promise.resolve().then(() => gitOperation(cwd)).catch((e) => {
+    // Changes tab reads it. So does a linked project's, which it only shows.
+    const operation = timeout || opts?.linkedRepo !== undefined ? Promise.resolve(null) : Promise.resolve().then(() => gitOperation(cwd)).catch((e) => {
       logger.warn(`git operation check failed for session ${sessionId}:`, e);
       return null;
     });

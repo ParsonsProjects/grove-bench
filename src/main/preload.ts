@@ -214,18 +214,18 @@ const api: GroveBenchAPI = {
   // File operations (for @ file picker)
   listFiles: (sessionId: string) => ipcRenderer.invoke(IPC.FILE_LIST, sessionId),
   readFile: (sessionId: string, filePath: string) => ipcRenderer.invoke(IPC.FILE_READ, sessionId, filePath),
-  openInEditor: (sessionId: string, filePath: string, line?: number) =>
-    ipcRenderer.invoke(IPC.FILE_OPEN_IN_EDITOR, sessionId, filePath, line),
+  openInEditor: (sessionId: string, filePath: string, line?: number, opts?: { linkedRepo?: string }) =>
+    ipcRenderer.invoke(IPC.FILE_OPEN_IN_EDITOR, sessionId, filePath, line, opts),
 
   // File revert & diff (for changes review)
   revertFile: (sessionId: string, filePath: string, staged?: boolean, renamedFrom?: string) =>
     ipcRenderer.invoke(IPC.FILE_REVERT, sessionId, filePath, staged, renamedFrom),
-  getFileDiff: (sessionId: string, filePath: string, staged?: boolean, opts?: { base?: string }) =>
+  getFileDiff: (sessionId: string, filePath: string, staged?: boolean, opts?: { base?: string; linkedRepo?: string }) =>
     ipcRenderer.invoke(IPC.FILE_DIFF, sessionId, filePath, staged, opts),
-  getFileLines: (sessionId: string, filePath: string, staged?: boolean) =>
-    ipcRenderer.invoke(IPC.FILE_LINES, sessionId, filePath, staged),
-  getImageDiffContent: (sessionId: string, filePath: string) =>
-    ipcRenderer.invoke(IPC.FILE_CONTENT_DATA_URL, sessionId, filePath),
+  getFileLines: (sessionId: string, filePath: string, staged?: boolean, opts?: { linkedRepo?: string }) =>
+    ipcRenderer.invoke(IPC.FILE_LINES, sessionId, filePath, staged, opts),
+  getImageDiffContent: (sessionId: string, filePath: string, opts?: { linkedRepo?: string }) =>
+    ipcRenderer.invoke(IPC.FILE_CONTENT_DATA_URL, sessionId, filePath, opts),
   stageFile: (sessionId: string, filePath: string) =>
     ipcRenderer.invoke(IPC.FILE_STAGE, sessionId, filePath),
   unstageFile: (sessionId: string, filePath: string) =>
@@ -276,7 +276,7 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_CHECKPOINT_FILE_LINES, sessionId, uuid, scope, filePath),
 
   // Git status
-  getGitStatus: (sessionId: string, opts?: { scope?: 'working' | 'branch'; base?: string; timeout?: number }) =>
+  getGitStatus: (sessionId: string, opts?: { scope?: 'working' | 'branch'; base?: string; timeout?: number; linkedRepo?: string }) =>
     ipcRenderer.invoke(IPC.GIT_STATUS, sessionId, opts),
 
   // PR info
