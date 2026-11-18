@@ -1,6 +1,7 @@
 # Linked Projects: One Thread Working in a Second Project
 
-> **Status: Proposal.** Nothing is built yet. This is a smaller slice of Goal 2
+> **Status: Agreed, not built.** The open questions are settled (see
+> "Decisions"). This is a smaller slice of Goal 2
 > in `docs/projects-plan.md` ("one conversation, several repositories"). It
 > adds linked checkouts next to a thread's own checkout and leaves the
 > existing single-checkout fields alone.
@@ -19,8 +20,9 @@ B. Grove doesn't know about B, so:
 - B can be linked when the thread starts, or part way through.
 - B gets its own git worktree, made by Grove, on the same branch name as the
   thread.
-- Grove shows B's branch, uncommitted changes, ahead/behind and PR status.
-  Read-only: Grove doesn't commit, push or open PRs in B.
+- Grove shows B's branch, uncommitted changes, ahead/behind and PR status,
+  and B's changed files with their diffs in the Changes tab. Read-only: Grove
+  doesn't stage, commit, push or open PRs in B.
 - Deleting the thread deletes B's worktree too, with the same checks as the
   thread's own worktree.
 - Every agent: Claude Code and the ACP agents.
@@ -72,6 +74,12 @@ From the v1 schema in `@agentclientprotocol/sdk` 2.8.0
 - Grove's instructions reach an ACP agent only with a new session
   (`pendingInstructions` is set only after `session/new`). A link made part
   way through is told to the agent in a note at the top of the next message.
+
+An agent that doesn't advertise the capability can still be linked. The path
+goes in the prompt but not in `session/new`, so the agent may refuse to edit
+it. The draft and the link picker say so: "<agent> didn't say it can use
+folders outside the project. It's told where B is, but it may not be able to
+edit it."
 
 Grove's own `AcpInitializeResult` type (`src/main/adapters/acp/protocol.ts`)
 needs the `additionalDirectories` capability added.
@@ -170,21 +178,47 @@ would steer the agent away from B, so it becomes:
 - Never edit B's project folder (its path is given), only the worktree.
 - Run git for B with `git -C <worktree path>`.
 
+B's own instructions:
+
+- **Claude Code.** "By default, CLAUDE.md files from these directories are
+  not loaded." Setting `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1` loads
+  the extra folder's `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` and
+  `.claude/rules/*.md` (except rules with a `paths` field)
+  ([memory docs](https://code.claude.com/docs/en/memory#load-from-additional-directories)).
+  Grove sets it in `extraEnv` for threads with links. An `AGENTS.md` in B
+  doesn't load this way, per the same page, so the prompt names it when B has
+  one and no `CLAUDE.md`.
+- **ACP agents.** How an agent reads instructions from an extra folder is up
+  to the agent, so the prompt names B's `CLAUDE.md` or `AGENTS.md` when there
+  is one.
+
 ## Keeping B's edits in the worktree
 
 `additionalDirectories` gives the agent access. It doesn't stop the agent
 writing elsewhere. So this is best effort:
 
-- **Claude Code.** Grove already has a PreToolUse hook (`limitHook`,
-  `src/main/adapters/claude-code.ts`), which "fires on every tool call, ahead
-  of the permission flow". It gains a check: Edit, Write and NotebookEdit
-  calls whose path is inside B's project folder are denied, and the reason
-  names the worktree path to use instead. Shell commands can't be checked
-  reliably (`cd`, scripts), so a write made from the shell can still land in
-  B's project folder.
+- **Claude Code.** Grove adds deny rules for B's project folder to the
+  settings it already passes to the SDK (`flagSettings` in
+  `src/main/adapters/claude-code.ts`, the SDK's `settings` option, which
+  takes `permissions`). "Deny rules block in every mode, including
+  `bypassPermissions`"
+  ([permission modes docs](https://code.claude.com/docs/en/permission-modes)),
+  and "`Edit` rules apply to all built-in tools that edit files"
+  ([permissions docs](https://code.claude.com/docs/en/permissions)). So one
+  rule, `Edit(//<B's project folder>/**)`, covers Edit, Write and
+  NotebookEdit. Windows paths are matched in POSIX form, so `C:\code\b`
+  becomes `//c/code/b/**` (same page). The rule is left out if B's worktree is
+  inside B's project folder (a custom worktree folder there), or it would
+  block the worktree too. Shell commands aren't covered: a write made from
+  the shell can still land in B's project folder.
+  - Later: `permissions.blockWritesOutsideWorkingDirectories` refuses edits
+    outside the working directories in every mode, but needs Claude Code
+    2.1.314. The SDK in use (0.3.281) runs 2.1.281 (`claudeCodeVersion` in
+    its `package.json`).
 - **ACP agents.** Grove only sees the tool calls an agent asks permission
-  for. The same check runs on those. In an agent's own auto modes nothing is
-  checked.
+  for. For those, Grove's own policy check (`tool-policy.ts`) refuses an edit
+  whose path is inside B's project folder. In an agent's own auto modes
+  nothing is checked.
 - **Read-safe mode.** `readSafeSandbox` lists every checkout in `allowWrite`,
   and the read-only classifier (`session-permissions.ts`,
   `read-only-tools.ts`) counts linked worktrees as inside the project.
@@ -204,6 +238,16 @@ writing elsewhere. So this is best effort:
   plus Open folder and Unlink.
 - **Sidebar.** A thread row with links gets a small link icon. Its tooltip
   names the linked projects.
+- **Changes tab.** A project switcher in the panel header, shown only when the
+  thread has links. Picking B shows B's changed files and diffs read-only.
+  `ChangesReviewPanel` passes `ReviewDiffPanel` its data as callbacks, and
+  `ReviewDiffPanel` hides staging when no `onStage` is passed, so B's view
+  passes none. `GIT_STATUS`, `FILE_DIFF` and `FILE_LINES` take an optional
+  linked project (`repoPath`) and resolve to that link's worktree instead of
+  the thread's. Branch scope compares against B's PR base, else B's default
+  branch, the same order the store uses for A. `gitStatusStore` keys its
+  state by thread and project so A's and B's views don't mix. Viewed marks
+  and review comments (`reviewStore`) are keyed the same way.
 
 ## Delete and cleanup
 
@@ -223,13 +267,13 @@ writing elsewhere. So this is best effort:
   orphan, its links are removed too and B is pruned. A link with
   `pendingRemoval` is retried, as threads are.
 
-## Not in the first version
+## Not covered
 
 Each of these says so in the UI where it matters:
 
-- **Rewind.** Checkpoints are git commits in one repository
-  (`src/main/checkpoints.ts`). Rewinding resets A only. The rewind dialog
-  says B's changes stay.
+- **Rewind** resets A only (decided). Checkpoints are git commits in one
+  repository (`src/main/checkpoints.ts`). The rewind dialog says B's changes
+  stay.
 - **Files made** watches A only (`src/main/turn-files.ts`).
 - **Terminal** opens in A.
 - **Commit, push, Create PR and commit messages** work in A only. In B the
@@ -250,9 +294,9 @@ fills it from the setting. It is useful by itself and is the base for links.
 | Phase | Scope | What the user gets |
 |---|---|---|
 | 0 | `additionalDirectories` in `AdapterConfig`, both adapters, the setting wired | "Additional working directories" works |
-| 1 | Link data, linking at start, branch rules including rename, prompt text, the edit check, Read-safe, delete and sweep, status bar item | Link B when starting a thread and see its state |
-| 2 | Link and unlink part way through (restart and resume) | Link B later in a thread |
-| 3 | Optional: a read-only Changes view for B, checkpoints in B | Review B's diff, rewind both |
+| 1 | Link data, linking at start, branch rules including rename, prompt text and B's CLAUDE.md, the deny rule, Read-safe, delete and sweep, status bar item | Link B when starting a thread and see its state |
+| 2 | Read-only Changes view for B | See B's changed files and diffs |
+| 3 | Link and unlink part way through (restart and resume) | Link B later in a thread |
 
 ## Tests
 
@@ -261,18 +305,22 @@ fills it from the setting. It is useful by itself and is the base for links.
   folder and dropping an orphaned link.
 - `ipc`: `SESSION_CREATE` with `linkedRepos`, and a branch held in B being
   refused.
-- `claude-code` adapter: `additionalDirectories` passed; the hook denying an
-  edit in B's project folder.
+- `claude-code` adapter: `additionalDirectories` passed; the deny rule for
+  B's project folder in the settings, in POSIX form for Windows paths, and left
+  out when B's worktree is inside that folder.
 - `acp-adapter`: the list sent only when advertised, on new, resume and load
   (the fake agent fixture gains the capability).
 - `session-config`: the prompt text with links.
-- Renderer: the draft control, the status bar item, the delete dialog naming
-  a dirty link.
+- `ipc`: `GIT_STATUS`, `FILE_DIFF` and `FILE_LINES` with a linked project,
+  and refusing a project the thread doesn't link.
+- Renderer: the draft control and its ACP warning, the status bar item, the
+  Changes switcher with no staging in B's view, the delete dialog naming a
+  dirty link.
 
 ## To check before building
 
-- Does PreToolUse run in `bypassPermissions` mode? The hook's comment says it
-  runs on every tool call, but this mode needs a test.
+- Does a deny rule in flag settings stop an edit in `bypassPermissions` mode,
+  as the docs say? One test with a real agent settles it.
 - Does a resumed Claude Code session use a changed `appendSystemPrompt` and
   `additionalDirectories`? Expected yes, since both are read at launch, but
   it needs a test.
@@ -282,22 +330,16 @@ fills it from the setting. It is useful by itself and is the base for links.
   but the page couldn't be opened from where this plan was written, so that is
   unconfirmed. Gemini CLI and Copilot CLI are unknown. Checking each agent's
   `initialize` answer settles it.
-- B's CLAUDE.md. The bundled CLI reads a
-  `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD` variable. By its name, extra
-  folders don't load their CLAUDE.md unless it is set. How it behaves needs
-  confirming before Grove sets it.
 
-## Open questions
+## Decisions
 
-1. Should B's uncommitted changes be a count in the status bar only, or also
-   a read-only file list with diffs in the Changes tab? `ReviewDiffPanel`
-   takes its data as callbacks and hides staging when none is passed, so a
-   read-only view is cheap. It would need diff IPC keyed by link.
-2. Is rewinding A only, with a warning, enough for the first version?
-3. ACP agents that don't advertise the capability: allow linking with a
-   warning (the path is in the prompt, but the agent may refuse to edit it),
-   or refuse?
-4. Should Grove load B's CLAUDE.md for the agent?
+1. **B's changes:** the status bar shows the count, and the Changes tab shows
+   B's file list and diffs, read-only (phase 2).
+2. **Rewind:** resets A only, with a warning in the rewind dialog.
+3. **ACP agents without the capability:** linking is allowed, with a
+   warning.
+4. **B's CLAUDE.md:** loaded for Claude Code threads; named in the prompt for
+   ACP agents.
 
 ## Sources
 
@@ -310,6 +352,11 @@ fills it from the setting. It is useful by itself and is the base for links.
   and [additional directories RFD](https://agentclientprotocol.com/rfds/additional-directories)
   cover the same feature but couldn't be opened from where this plan was
   written.
+- [Claude Code memory docs](https://code.claude.com/docs/en/memory#load-from-additional-directories):
+  loading CLAUDE.md from extra folders
+- [Claude Code permissions](https://code.claude.com/docs/en/permissions) and
+  [permission modes](https://code.claude.com/docs/en/permission-modes): deny
+  rules in every mode, `Edit` rule scope, Windows path form
 - [OpenCode ACP docs](https://opencode.ai/docs/cli/acp/) (not opened, see
   above)
 - [git-worktree](https://git-scm.com/docs/git-worktree): `git worktree add`
