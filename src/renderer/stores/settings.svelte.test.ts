@@ -36,6 +36,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   autoDownloadUpdates: true,
   repoColors: {},
   groveCharacters: true,
+  boardView: false,
   diffViewMode: 'unified',
   defaultActivityView: 'summary',
   spellcheck: true,

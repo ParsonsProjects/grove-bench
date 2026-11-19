@@ -6,6 +6,7 @@ import { withSkill } from '../../shared/skill-line.js';
 import { errorMessage } from '../../shared/error-message.js';
 import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
 import { store as sessionStore } from './sessions.svelte.js';
+import { boardStore } from './board.svelte.js';
 import { groupStore } from './groups.svelte.js';
 import { todoStore } from './todo.svelte.js';
 import { messageStore } from './messages.svelte.js';
@@ -204,11 +205,15 @@ class DraftStore {
       void this.refreshKind(repo);
     }
     sessionStore.activeSessionId = null;
+    // The draft takes the main pane, so the board (alpha) gives way.
+    boardStore.close();
   }
 
   /** Bring an existing draft back into view. */
   show(): void {
-    if (this.draft) sessionStore.activeSessionId = null;
+    if (!this.draft) return;
+    sessionStore.activeSessionId = null;
+    boardStore.close();
   }
 
   discard(): void {

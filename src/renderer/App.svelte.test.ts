@@ -8,6 +8,7 @@ import App from './App.svelte';
 import { store } from './stores/sessions.svelte.js';
 import { messageStore } from './stores/messages.svelte.js';
 import { settingsStore } from './stores/settings.svelte.js';
+import { boardStore } from './stores/board.svelte.js';
 import { TURN_SETTLE_MS } from './lib/turn-end.js';
 import { mockGroveBench } from './__mocks__/setup.js';
 
@@ -364,5 +365,53 @@ describe('App: a thread whose history is loading', () => {
     await openLoadingThread(grove);
     expect(await screen.findByText('Loading thread...')).toBeInTheDocument();
     expect(screen.queryByText('Starting agent...')).toBeNull();
+  });
+});
+
+describe('App board (alpha)', () => {
+  afterEach(() => {
+    boardStore.close();
+    mockGroveBench.listRepos.mockResolvedValue([]);
+    mockGroveBench.listWorktrees.mockResolvedValue([]);
+    getOpenTabs.mockResolvedValue([]);
+  });
+
+  function withBoard() {
+    const settings = { ...JSON.parse(JSON.stringify(settingsStore.current)), boardView: true };
+    mockGroveBench.getSettings.mockResolvedValue(settings);
+    settingsStore.current = settings;
+  }
+
+  it('shows the board in the main pane, and gives way when a thread opens', async () => {
+    withBoard();
+    mockGroveBench.listRepos.mockResolvedValue(['/repo']);
+    mockGroveBench.listWorktrees.mockResolvedValue([
+      { id: 'a', branch: 'feat-a', repoPath: '/repo', path: '/wt/a', createdAt: 1, lastActiveAt: 1 },
+    ]);
+    getOpenTabs.mockResolvedValue(['a']);
+    render(App);
+    // Restored at startup: an open tab, asleep until it is opened.
+    expect(await screen.findByText('Pick a thread', {}, { timeout: 5000 })).toBeInTheDocument();
+
+    boardStore.show();
+    expect(await screen.findByRole('heading', { name: 'Review' })).toBeInTheDocument();
+    expect(document.querySelector('[data-board-column="review"] [data-board-card="a"]')).not.toBeNull();
+    expect(screen.queryByText('Pick a thread')).toBeNull();
+
+    store.activeSessionId = 'a';
+    flushSync();
+    expect(boardStore.open).toBe(false);
+    expect(document.querySelector('[data-board]')).toBeNull();
+  });
+
+  it('closes when its setting is turned off', async () => {
+    withBoard();
+    render(App);
+    boardStore.show();
+    expect(await screen.findByText('No open threads', {}, { timeout: 5000 })).toBeInTheDocument();
+
+    settingsStore.current = { ...settingsStore.current, boardView: false };
+    flushSync();
+    expect(boardStore.open).toBe(false);
   });
 });

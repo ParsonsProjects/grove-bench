@@ -2107,6 +2107,10 @@ export interface GroveBenchSettings {
    *  starts up again.
    *  Each status gets its own pose as well as its colour. Default true. */
   groveCharacters: boolean;
+  /** Alpha: a List / Board switch in the sidebar. The board shows the open
+   *  threads as cards in columns by stage (Working, Needs you, Review,
+   *  Done), with optional lanes per project or group. Default false. */
+  boardView: boolean;
 
   // Editor
   /** Default diff view mode in the Changes tab. */

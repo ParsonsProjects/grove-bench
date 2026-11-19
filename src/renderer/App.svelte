@@ -46,6 +46,7 @@
   import type { AppErrorReport } from '../shared/types.js';
   import { isTempBranch } from '../shared/temp-branch.js';
   import { draftStore } from './stores/draft.svelte.js';
+  import { boardStore } from './stores/board.svelte.js';
   import DraftPane from './components/DraftPane.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Notice } from '$lib/components/ui/notice/index.js';
@@ -60,6 +61,13 @@
   // The Skills drawer stays mounted once opened, as Settings and Memory do.
   let skillsPanelOpened = $state(false);
   $effect(() => { if (skillsPanelStore.open) skillsPanelOpened = true; });
+  // The board (alpha), from the sidebar's List / Board switch.
+  const loadBoardPane = lazyComponent(() => import('./components/BoardPane.svelte'));
+  // It gives way when a thread opens from anywhere (a card, the sidebar, the
+  // finder, a notification), and goes when its setting is turned off.
+  $effect(() => {
+    if (store.activeSessionId !== null || !settingsStore.current.boardView) untrack(() => boardStore.close());
+  });
 
   /** Whether a thread's pane (WorkspacePane) is mounted: while it runs or
    *  can be woken. Otherwise the walk shows while it reconnects. */
@@ -541,7 +549,20 @@
 
   <!-- relative: DraftUndoToast centres on this pane, not the window. -->
   <main class="relative flex-1 flex flex-col min-w-0 min-h-0">
-    {#if draftStore.visible}
+    {#if boardStore.open}
+      <svelte:boundary onerror={(e) => console.error('Board crashed:', e)}>
+        {#await loadBoardPane() then BoardPane}
+          <BoardPane />
+        {:catch error}
+          <Notice tone="danger" class="m-3">
+            <p>Couldn't load the board ({errorMessage(error)}). Restart Grove Bench to try again; if that doesn't help, reinstall it.</p>
+          </Notice>
+        {/await}
+        {#snippet failed(error: unknown, reset: () => void)}
+          {@render crashed('The board', error, reset)}
+        {/snippet}
+      </svelte:boundary>
+    {:else if draftStore.visible}
       <svelte:boundary onerror={(e) => console.error('Draft pane crashed:', e)}>
         <DraftPane />
         {#snippet failed(error, reset)}

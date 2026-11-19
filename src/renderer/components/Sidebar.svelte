@@ -1,7 +1,6 @@
 <script lang="ts">
   import { store } from '../stores/sessions.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
-  import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
@@ -20,6 +19,9 @@
   import WandSparklesIcon from '@lucide/svelte/icons/wand-sparkles';
   import FolderIcon from '@lucide/svelte/icons/folder';
   import TerminalIcon from '@lucide/svelte/icons/terminal';
+  import ListIcon from '@lucide/svelte/icons/list';
+  import SquareKanbanIcon from '@lucide/svelte/icons/square-kanban';
+  import { boardStore } from '../stores/board.svelte.js';
   import CheckIcon from '@lucide/svelte/icons/check';
   import XIcon from '@lucide/svelte/icons/x';
   import MinusIcon from '@lucide/svelte/icons/minus';
@@ -46,7 +48,8 @@
   import { isRepoCollapsed } from '../lib/repo-collapse.js';
   import { sortSessions, defaultDirFor } from '../lib/session-sort.js';
   import { triageForSprite, triageCounts, matchesTriageFilter, TRIAGE_FILTERS, TRIAGE_FILTER_LABELS, type TriageFilter, type TriageEntry } from '../lib/session-triage.js';
-  import { sessionSubtitle, pendingPermissionTool, pendingPermissionView, lastTextSnippet, firstPromptSnippet, type SessionSubtitle } from '../lib/session-subtitle.js';
+  import type { SessionSubtitle } from '../lib/session-subtitle.js';
+  import { threadSubtitle as rowSubtitle, SUBTITLE_TONE_CLASS } from '../lib/thread-subtitle.js';
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
   import { goalStore } from '../stores/goals.svelte.js';
   import { prStateFlag, isPrMerged } from '../lib/pr-state.js';
@@ -163,30 +166,6 @@
     if (shellsTooltip) lines.push(shellsTooltip);
     return lines.join('\n');
   }
-
-  /** Context line under a session row: waiting-reason > live activity >
-   *  background agents > last/first message. */
-  function rowSubtitle(session: { id: string; status: SessionStatus }): SessionSubtitle | null {
-    const msgs = messageStore.getMessages(session.id);
-    const loaded = msgs.length > 0;
-    const preview = sessionPreviewStore.get(session.id);
-    const isRunning = messageStore.getIsRunning(session.id);
-    const pendingTool = loaded ? pendingPermissionTool(msgs) : null;
-    const backgroundAgents = backgroundAgentRunning(session) ? backgroundTaskStore.runningAgents(session.id).map((t) => t.description) : [];
-    // Past messages only show when nothing live does, so skip that work while
-    // the agent runs (its reply grows with every update) or waits on you.
-    const quiet = !isRunning && !pendingTool && backgroundAgents.length === 0;
-    const lastText = quiet ? ((loaded ? lastTextSnippet(msgs) : null) ?? (preview?.lastText || null)) : null;
-    const firstPrompt = quiet && !lastText ? ((loaded ? firstPromptSnippet(msgs) : null) ?? (preview?.firstPrompt || null)) : null;
-    const pendingToolView = pendingTool ? pendingPermissionView(msgs) : undefined;
-    return sessionSubtitle({ isRunning, activity: messageStore.getActivity(session.id), pendingTool, pendingToolView, backgroundAgents, lastText, firstPrompt });
-  }
-
-  const SUBTITLE_TONE_CLASS: Record<SessionSubtitle['tone'], string> = {
-    working: 'text-status-working',
-    waiting: 'text-status-attention',
-    context: 'text-muted-foreground',
-  };
 
   function toggleRepoCollapsed(repo: string) {
     const current = isRepoCollapsed(collapsedRepos, repo);
@@ -1411,6 +1390,19 @@
           <svg class="text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
         {/if}
       </button>
+      {#if settingsStore.current.boardView}
+        <button
+          type="button"
+          onclick={() => { if (boardStore.open) boardStore.showList(); else boardStore.show(); }}
+          aria-pressed={boardStore.open}
+          class="w-full flex justify-center py-2 transition-colors {boardStore.open ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+          title={boardStore.open ? 'Back to the thread list' : 'Board: your open threads as cards by stage (alpha)'}
+          aria-label="Board"
+          data-rail-board
+        >
+          <SquareKanbanIcon class="size-3 text-muted-foreground" aria-hidden="true" />
+        </button>
+      {/if}
       <!-- Every open conversation: the triage filter isn't on the rail to explain a shorter list. -->
       {#each store.openConversations as session (session.id)}
         {@const isDestroying = destroying.has(session.id)}
@@ -1458,6 +1450,23 @@
     </button>
     <PanelToggle panel="sidebar" label="sidebar" class="-mr-1" />
   </div>
+
+  <!-- List / Board (alpha, Settings > General > Views): the board takes the
+       main pane, as a thread does. Opening a thread from the list goes back. -->
+  {#if settingsStore.current.boardView}
+    <div class="px-3 pt-2 {collapsed ? 'hidden' : 'flex'}">
+      <Segmented.Root
+        value={boardStore.open ? 'board' : 'list'}
+        onValueChange={(v) => { if (v === 'board') boardStore.show(); else if (v === 'list') boardStore.showList(); }}
+        aria-label="Show threads as"
+        class="w-full"
+        data-board-switch
+      >
+        <Segmented.Item value="list" class="flex-1 justify-center py-1"><ListIcon />List</Segmented.Item>
+        <Segmented.Item value="board" class="flex-1 justify-center py-1" title="Board: your open threads as cards by stage (alpha)"><SquareKanbanIcon />Board</Segmented.Item>
+      </Segmented.Root>
+    </div>
+  {/if}
 
   <!-- No bottom padding: a folded section's heading sits right on the footer. -->
   <div class="flex-1 overflow-auto px-3 pt-3 flex-col {collapsed ? 'hidden' : 'flex'}">

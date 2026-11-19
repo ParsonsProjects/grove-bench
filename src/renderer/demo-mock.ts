@@ -100,6 +100,8 @@ const SETTINGS = {
   autoDownloadUpdates: true,
   repoColors: {},
   groveCharacters: true,
+  // On in the demo, so the board can be tried without opening Settings.
+  boardView: true,
   diffViewMode: 'unified',
   defaultActivityView: 'summary',
   spellcheck: true,

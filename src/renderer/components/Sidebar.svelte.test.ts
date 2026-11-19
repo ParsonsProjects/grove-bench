@@ -23,6 +23,7 @@ import { draftStore } from '../stores/draft.svelte.js';
 import { gitStatusStore } from '../stores/gitStatus.svelte.js';
 import { skillsPanelStore } from '../stores/skillsPanel.svelte.js';
 import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
+import { boardStore } from '../stores/board.svelte.js';
 
 beforeEach(() => {
   // Call counts start from zero in every test, whatever ran before it.
@@ -2490,5 +2491,45 @@ describe('Sidebar sections', () => {
     await fireEvent.click(toggle('projectsSection'));
     await waitFor(() => expect(list.scrollTo).toHaveBeenCalledWith({ top: 800, behavior: 'smooth' }));
     expect(screen.getByRole('button', { name: 'New thread in api' })).toBeInTheDocument();
+  });
+});
+
+describe('Sidebar board switch (alpha)', () => {
+  afterEach(() => {
+    settingsStore.current = { ...settingsStore.current, boardView: false };
+    boardStore.close();
+    panelStore.collapsed = {};
+  });
+
+  it('is hidden while the Board setting is off', () => {
+    render(Sidebar);
+    expect(screen.queryByRole('radiogroup', { name: 'Show threads as' })).toBeNull();
+  });
+
+  it('shows the board in place of the open thread, and List goes back to it', async () => {
+    settingsStore.current = { ...settingsStore.current, boardView: true };
+    render(Sidebar);
+    const choices = screen.getByRole('radiogroup', { name: 'Show threads as' });
+    expect(within(choices).getByRole('radio', { name: 'List' })).toBeChecked();
+
+    await fireEvent.click(within(choices).getByRole('radio', { name: 'Board' }));
+    expect(boardStore.open).toBe(true);
+    expect(store.activeSessionId).toBeNull();
+    expect(within(choices).getByRole('radio', { name: 'Board' })).toBeChecked();
+
+    await fireEvent.click(within(choices).getByRole('radio', { name: 'List' }));
+    expect(boardStore.open).toBe(false);
+    expect(store.activeSessionId).toBe('s1');
+  });
+
+  it('opens the board from the rail when the sidebar is folded', async () => {
+    settingsStore.current = { ...settingsStore.current, boardView: true };
+    const { container } = render(Sidebar);
+    await fireEvent.click(screen.getByLabelText('Collapse sidebar'));
+    const board = container.querySelector('[data-rail-board]') as HTMLButtonElement;
+    expect(board).toHaveAttribute('aria-pressed', 'false');
+    await fireEvent.click(board);
+    expect(boardStore.open).toBe(true);
+    expect(board).toHaveAttribute('aria-pressed', 'true');
   });
 });

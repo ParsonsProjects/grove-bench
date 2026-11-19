@@ -91,6 +91,13 @@
       {/each}
     </div>
   </SettingRow>
+
+  <CheckboxSetting
+    setting="board-view"
+    label="Board (alpha)"
+    description="Adds a List / Board switch to the sidebar. The board shows your open threads as cards in columns: Working, Needs you, Review and Done, with a lane per project or group if you like. Still being tested."
+    bind:checked={settingsStore.draft.boardView}
+  />
 </SettingsGroup>
 
 <SettingsGroup title="Appearance">
