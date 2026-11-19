@@ -9,6 +9,7 @@ import { store } from './stores/sessions.svelte.js';
 import { messageStore } from './stores/messages.svelte.js';
 import { settingsStore } from './stores/settings.svelte.js';
 import { boardStore } from './stores/board.svelte.js';
+import { followUpsStore } from './stores/followUps.svelte.js';
 import { agentMonitorStore } from './stores/agentMonitor.svelte.js';
 import { TURN_SETTLE_MS } from './lib/turn-end.js';
 import { mockGroveBench } from './__mocks__/setup.js';
@@ -425,5 +426,15 @@ describe('App board (alpha)', () => {
     settingsStore.current = { ...settingsStore.current, boardView: false };
     flushSync();
     expect(boardStore.open).toBe(false);
+  });
+});
+
+describe('App New follow-up dialog', () => {
+  it('opens when asked for, from the drawer or the board', async () => {
+    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settingsStore.current)));
+    render(App);
+    followUpsStore.openAdd();
+    expect(await screen.findByRole('dialog', { name: 'New follow-up' }, { timeout: 5000 })).toBeInTheDocument();
+    followUpsStore.closeAdd();
   });
 });

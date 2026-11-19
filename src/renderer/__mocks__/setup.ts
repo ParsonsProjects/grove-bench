@@ -207,6 +207,10 @@ const mockGroveBench = {
   removeBookmark: vi.fn(() => Promise.resolve()),
   updateBookmark: vi.fn(() => Promise.resolve()),
   listFollowUps: vi.fn(() => Promise.resolve([] as import('../../shared/follow-ups.js').FollowUp[] | null)),
+  addFollowUp: vi.fn((repoPath: string, title: string, details: string) => Promise.resolve({
+    followUp: { id: 'new1', repoPath, title, details, createdAt: 0 },
+    existing: false,
+  })),
   setFollowUpDone: vi.fn(() => Promise.resolve()),
   followUpStarted: vi.fn(() => Promise.resolve()),
   removeFollowUp: vi.fn(() => Promise.resolve()),

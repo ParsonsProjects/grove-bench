@@ -9,6 +9,10 @@ import { prStore } from '../stores/pr.svelte.js';
 import { groupStore } from '../stores/groups.svelte.js';
 import { boardStore } from '../stores/board.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
+import { followUpsStore } from '../stores/followUps.svelte.js';
+import { draftStore } from '../stores/draft.svelte.js';
+import { mockGroveBench } from '../__mocks__/setup.js';
+import type { FollowUp } from '../../shared/follow-ups.js';
 
 /** The cards in a column, by their thread's id, in order. */
 function column(stage: string, lane?: string): string[] {
@@ -36,6 +40,8 @@ beforeEach(() => {
     quiet: [{ number: 301, url: 'https://example.test/301', state: 'OPEN', checks: { total: 2, passed: 1, failed: 1, pending: 0 } }],
   };
   groupStore.groups = [];
+  followUpsStore.list = [];
+  followUpsStore.ready = true;
   boardStore.lanes = 'none';
   boardStore.query = '';
   boardStore.show();
@@ -53,6 +59,8 @@ afterEach(() => {
   messageStore.messagesBySession = {};
   prStore.prsBySession = {};
   groupStore.groups = [];
+  followUpsStore.list = [];
+  draftStore.discard();
 });
 
 describe('BoardPane', () => {
@@ -67,7 +75,7 @@ describe('BoardPane', () => {
   it('leaves closed threads off the board', () => {
     render(BoardPane);
     expect(document.querySelector('[data-board-card="closed"]')).toBeNull();
-    expect(screen.getByText('4 open threads')).toBeInTheDocument();
+    expect(screen.getByText('4 open threads, 0 follow-ups')).toBeInTheDocument();
   });
 
   it("shows a card's pull request, and what it is waiting for", () => {
@@ -138,5 +146,91 @@ describe('BoardPane', () => {
     store.sessions = [];
     render(BoardPane);
     expect(screen.getByText('No open threads')).toBeInTheDocument();
+  });
+});
+
+function fu(id: string, extra: Partial<FollowUp> = {}): FollowUp {
+  return { id, repoPath: '/web', title: `Follow-up ${id}`, details: '', createdAt: Date.now() - 60_000, ...extra };
+}
+
+describe('BoardPane follow-ups', () => {
+  it('shows the open follow-ups first, and not the done ones or those being worked on', () => {
+    followUpsStore.list = [
+      fu('f1', { details: 'Cover the expired token path.' }),
+      fu('f2', { doneAt: Date.now() }),
+      fu('f3', { startedSessionIds: ['work'] }),
+      fu('f4', { repoPath: '/gone' }),
+    ];
+    render(BoardPane);
+    const cards = [...document.querySelectorAll('[data-board-column="follow-ups"] [data-board-follow-up]')].map((c) => c.getAttribute('data-board-follow-up'));
+    expect(cards).toEqual(['f1']);
+    expect(screen.getByText('Cover the expired token path.')).toBeInTheDocument();
+    expect(screen.getByText('4 open threads, 1 follow-up')).toBeInTheDocument();
+  });
+
+  it('brings back one whose thread was closed unfinished, to start again', () => {
+    followUpsStore.list = [fu('f1', { startedSessionIds: ['closed'] })];
+    render(BoardPane);
+    const card = screen.getByRole('article', { name: 'Follow-up: Follow-up f1' });
+    expect(within(card).getByText('started before')).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: 'Start another' })).toBeInTheDocument();
+  });
+
+  it('starts a thread from one: the new thread opens with it, and the board closes', async () => {
+    followUpsStore.list = [fu('f1', { details: 'Cover the expired token path.' })];
+    render(BoardPane);
+    await fireEvent.click(screen.getByRole('button', { name: 'Start thread' }));
+    expect(boardStore.open).toBe(false);
+    expect(draftStore.draft?.repoPath).toBe('/web');
+    expect(draftStore.draft?.followUpId).toBe('f1');
+    expect(draftStore.draft?.text).toContain('Cover the expired token path.');
+  });
+
+  it("doesn't take over a new thread you're writing, and says so", async () => {
+    followUpsStore.list = [fu('f1')];
+    boardStore.close();
+    draftStore.open('/web');
+    draftStore.setText('My own idea');
+    boardStore.show();
+    render(BoardPane);
+    await fireEvent.click(screen.getByRole('button', { name: 'Start thread' }));
+    expect(boardStore.open).toBe(true);
+    expect(draftStore.draft?.text).toBe('My own idea');
+    expect(screen.getByText(/You're already writing a new thread/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Show it' }));
+    expect(boardStore.open).toBe(false);
+  });
+
+  it('marks one done', async () => {
+    followUpsStore.list = [fu('f1')];
+    render(BoardPane);
+    await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(mockGroveBench.setFollowUpDone).toHaveBeenCalledWith('f1', true);
+  });
+
+  it("opens the New follow-up dialog from the column's +", async () => {
+    render(BoardPane);
+    await fireEvent.click(screen.getByRole('button', { name: 'New follow-up' }));
+    expect(followUpsStore.addingIn).toEqual({ repoPath: '' });
+    followUpsStore.closeAdd();
+  });
+
+  it('gives a project with only follow-ups its own lane, and filters them by title', async () => {
+    store.sessions = store.sessions.filter((s) => s.repoPath === '/web');
+    followUpsStore.list = [fu('f1', { repoPath: '/api', title: 'Expire old refresh tokens' })];
+    boardStore.lanes = 'project';
+    render(BoardPane);
+    expect([...document.querySelectorAll('[data-board-lane]')].map((l) => l.getAttribute('data-board-lane'))).toEqual(['/web', '/api']);
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter cards' }), { target: { value: 'refresh tokens' } });
+    expect(document.querySelectorAll('[data-board-card]')).toHaveLength(0);
+    expect(document.querySelectorAll('[data-board-follow-up]')).toHaveLength(1);
+  });
+
+  it('shows the board, not the empty screen, when there are only follow-ups', () => {
+    store.sessions = [];
+    followUpsStore.list = [fu('f1')];
+    render(BoardPane);
+    expect(screen.queryByText('No open threads')).toBeNull();
+    expect(screen.getByRole('article', { name: 'Follow-up: Follow-up f1' })).toBeInTheDocument();
   });
 });

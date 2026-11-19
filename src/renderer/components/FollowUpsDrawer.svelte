@@ -27,6 +27,7 @@
   import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
   import { Notice } from '$lib/components/ui/notice/index.js';
   import XIcon from '@lucide/svelte/icons/x';
+  import PlusIcon from '@lucide/svelte/icons/plus';
   import ListTodoIcon from '@lucide/svelte/icons/list-todo';
 
   let projects = $derived(followUpsStore.byProject(store.repos));
@@ -134,6 +135,13 @@
         <Button
           variant="quiet"
           size="icon-2xs"
+          onclick={() => { followUpsStore.notice = null; followUpsStore.openAdd(store.activeSession?.repoPath ?? draftStore.draft?.repoPath ?? ''); }}
+          title="New follow-up: work for a later thread"
+          aria-label="New follow-up"
+        ><PlusIcon /></Button>
+        <Button
+          variant="quiet"
+          size="icon-2xs"
           onclick={() => followUpsStore.toggleDrawer(false)}
           title="Close (Esc)"
           aria-label="Close follow-ups"
@@ -146,6 +154,7 @@
         <Notice tone={followUpsStore.notice.tone} class="mb-2 break-words">{followUpsStore.notice.text}</Notice>
       {/if}
 
+
       {#if !followUpsStore.ready && followUpsStore.loadFailed}
         <Notice tone="danger" class="break-words">
           Couldn't read your follow-ups. Another program may be holding the file.
@@ -157,7 +166,7 @@
         <p class="text-xs text-muted-foreground mt-4 text-center">Loading follow-ups…</p>
       {:else if projects.length === 0}
         <p class="text-xs text-muted-foreground mt-4 text-center">
-          No follow-ups yet. When an agent finds work that belongs in a later thread, such as a bug it noticed on the way, it adds it here for you to start when you're ready.
+          No follow-ups yet. When an agent finds work that belongs in a later thread, such as a bug it noticed on the way, it adds it here for you to start when you're ready. To add one yourself, click <span class="text-foreground">+</span> above.
         </p>
       {/if}
 

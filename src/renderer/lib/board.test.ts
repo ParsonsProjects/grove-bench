@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { boardStage, boardLanes, matchesBoardQuery, prSummary, BOARD_STAGES, type LaneSource } from './board.js';
+import { boardStage, boardLanes, boardFollowUps, matchesBoardQuery, prSummary, BOARD_STAGES, type LaneSource } from './board.js';
+import type { FollowUp } from '../../shared/follow-ups.js';
 import { AGENT_SPRITES, type AgentSpriteState } from './agent-sprite.js';
 
 describe('boardStage', () => {
@@ -115,5 +116,20 @@ describe('matchesBoardQuery', () => {
     expect(matchesBoardQuery('FLAKY grove', fields)).toBe(true);
     expect(matchesBoardQuery('remove-tree', fields)).toBe(true);
     expect(matchesBoardQuery('flaky landing', fields)).toBe(false);
+  });
+});
+
+describe('boardFollowUps', () => {
+  const f = (id: string, extra: Partial<FollowUp> = {}): FollowUp => ({ id, repoPath: '/web', title: id, details: '', createdAt: 0, ...extra });
+  const open = new Set(['running-thread']);
+
+  it('keeps open follow-ups in known projects, oldest first', () => {
+    const list = [f('a'), f('b', { doneAt: 1 }), f('c', { repoPath: '/removed' }), f('d')];
+    expect(boardFollowUps(list, ['/web'], (id) => open.has(id)).map((x) => x.followUp.id)).toEqual(['a', 'd']);
+  });
+
+  it('leaves out one whose thread is open, and brings back one whose thread closed', () => {
+    const list = [f('a', { startedSessionIds: ['running-thread'] }), f('b', { startedSessionIds: ['closed-thread'] })];
+    expect(boardFollowUps(list, ['/web'], (id) => open.has(id))).toEqual([{ followUp: list[1], startedBefore: true }]);
   });
 });

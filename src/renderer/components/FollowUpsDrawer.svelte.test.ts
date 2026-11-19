@@ -155,3 +155,22 @@ describe('FollowUpsDrawer', () => {
     expect(followUpsStore.drawerOpen).toBe(false);
   });
 });
+
+describe('FollowUpsDrawer: adding one by hand', () => {
+  afterEach(() => {
+    followUpsStore.closeAdd();
+  });
+
+  it('opens the New follow-up dialog in the project on screen', async () => {
+    store.sessions = [{ id: 's1', branch: 'feat', repoPath: '/repo-b', status: 'running' }] as any;
+    store.activeSessionId = 's1';
+    render(FollowUpsDrawer);
+    await fireEvent.click(screen.getByRole('button', { name: 'New follow-up' }));
+    expect(followUpsStore.addingIn).toEqual({ repoPath: '/repo-b' });
+  });
+
+  it('says how to add one in the empty list', () => {
+    render(FollowUpsDrawer);
+    expect(screen.getByText(/To add one yourself, click/)).toBeInTheDocument();
+  });
+});

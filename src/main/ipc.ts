@@ -2267,6 +2267,15 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.FOLLOW_UPS_LIST, () => followUps.listFollowUps());
 
+  // Added by hand, from the Follow-ups drawer or the board. Nothing names
+  // the thread it came from: it came from you.
+  ipcMain.handle(IPC.FOLLOW_UP_ADD, (_event, repoPath: unknown, title: unknown, details: unknown) => {
+    if (typeof repoPath !== 'string' || !repoPath || typeof title !== 'string' || typeof details !== 'string') {
+      throw new Error('A follow-up needs a project and a title.');
+    }
+    return followUps.addFollowUp({ repoPath, title, details });
+  });
+
   ipcMain.handle(IPC.FOLLOW_UP_SET_DONE, (_event, id: string, done: boolean) => {
     if (done) followUps.markFollowUpDone(id);
     else followUps.reopenFollowUp(id);

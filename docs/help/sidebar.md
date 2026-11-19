@@ -34,8 +34,9 @@ Click a thread to switch to it. The workspace will show that thread's activity, 
 
 ## Board (alpha)
 
-Turn on **Board (alpha)** in Settings → General (The grove) to get a **List** / **Board** switch under the search box. **Board** shows every open thread as a card in the main pane, in a column for its stage:
+Turn on **Board (alpha)** in Settings → General (The grove) to get a **List** / **Board** switch under the search box. **Board** shows every open thread as a card in the main pane, in a column for its stage, after a column of work for later:
 
+- **Follow-ups**: open [follow-ups](follow-ups.md), work an agent or you left for a later thread. **Start thread** opens a new thread with it as the first message, **Done** marks it done, and **+** adds one. One leaves the column while a thread started from it is open, and comes back, with **Start another**, if that thread is closed before the work is done
 - **Working**: the agent is working or starting up
 - **Needs you**: a permission prompt or question is waiting, or the thread stopped with an error. These cards have an amber edge
 - **Review**: finished for now. It stays here until its pull request is merged or closed
@@ -43,7 +44,7 @@ Turn on **Board (alpha)** in Settings → General (The grove) to get a **List** 
 
 A card shows the thread's status (its grove character or dot), its name, project and branch, the same line the sidebar shows under it (what the agent is doing or last said), and its pull request with how it stands (for example **Checks failing**, **Approved** or **Merged**). Click a card to open its thread; the board closes. Click **List** to go back to the thread you had open before. Closed threads aren't on the board.
 
-**Lanes** splits the board into a row per **Project**, or per **Group** (with a last row for the threads in no group). **Filter cards** keeps the cards whose name, branch, project, line or pull request number has every word you type. The lanes and filter go back to **None** and empty when Grove Bench restarts. With the sidebar folded to its rail, the board button under **+** opens and closes the board.
+**Lanes** splits the board into a row per **Project**, or per **Group** (with a last row for the threads and follow-ups in no group). **Filter cards** keeps the cards whose name, branch, project, line or pull request number has every word you type, and the follow-ups whose title, details or project has them. The lanes and filter go back to **None** and empty when Grove Bench restarts. With the sidebar folded to its rail, the board button under **+** opens and closes the board.
 
 ## Collapsing the sidebar
 

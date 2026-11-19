@@ -8,13 +8,14 @@
  */
 
 import type { PrInfo } from '../../shared/types.js';
+import type { FollowUp } from '../../shared/follow-ups.js';
 import type { AgentSpriteState } from './agent-sprite.js';
 
 export type BoardStage = 'working' | 'needs-you' | 'review' | 'done';
 
 export const BOARD_STAGES: readonly BoardStage[] = ['working', 'needs-you', 'review', 'done'];
 
-export const BOARD_STAGE_LABELS: Record<BoardStage, string> = {
+const BOARD_STAGE_LABELS: Record<BoardStage, string> = {
   working: 'Working',
   'needs-you': 'Needs you',
   review: 'Review',
@@ -22,12 +23,46 @@ export const BOARD_STAGE_LABELS: Record<BoardStage, string> = {
 };
 
 /** The line under a column's heading, saying what lands there. */
-export const BOARD_STAGE_HINTS: Record<BoardStage, string> = {
+const BOARD_STAGE_HINTS: Record<BoardStage, string> = {
   working: 'The agent is working.',
   'needs-you': 'Waiting for you, or failed.',
-  review: 'Finished for now, not merged yet.',
-  done: 'Its pull request was merged or closed.',
+  review: 'Finished, not merged yet.',
+  done: 'PR merged or closed.',
 };
+
+/** The board's columns: work not started yet (follow-ups, shared/follow-ups.ts),
+ *  then the threads' stages. */
+export type BoardColumn = 'follow-ups' | BoardStage;
+
+export const BOARD_COLUMNS: readonly BoardColumn[] = ['follow-ups', ...BOARD_STAGES];
+
+export const BOARD_COLUMN_LABELS: Record<BoardColumn, string> = {
+  'follow-ups': 'Follow-ups',
+  ...BOARD_STAGE_LABELS,
+};
+
+export const BOARD_COLUMN_HINTS: Record<BoardColumn, string> = {
+  'follow-ups': 'Work for a later thread.',
+  ...BOARD_STAGE_HINTS,
+};
+
+/** The follow-ups the board's first column shows: open ones in a project
+ *  still in Grove Bench, unless a thread started from one is open (that
+ *  thread's card stands for it). One whose thread was closed before the work
+ *  was done comes back, `startedBefore`, oldest first as in the drawer. */
+export function boardFollowUps(
+  list: readonly FollowUp[],
+  repos: readonly string[],
+  isOpenThread: (sessionId: string) => boolean,
+): { followUp: FollowUp; startedBefore: boolean }[] {
+  const known = new Set(repos);
+  return list.flatMap((f) => {
+    if (f.doneAt !== undefined || !known.has(f.repoPath)) return [];
+    const started = f.startedSessionIds ?? [];
+    if (started.some(isOpenThread)) return [];
+    return [{ followUp: f, startedBefore: started.length > 0 }];
+  });
+}
 
 /** The column a thread's card is in, from its status (the colour its
  *  character or square wears) and its primary PR. Null for a thread being

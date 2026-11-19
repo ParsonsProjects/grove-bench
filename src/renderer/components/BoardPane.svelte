@@ -2,62 +2,122 @@
   import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
   import * as Segmented from '$lib/components/ui/segmented/index.js';
   import { SectionLabel } from '$lib/components/ui/section-label/index.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import { Notice } from '$lib/components/ui/notice/index.js';
+  import PlusIcon from '@lucide/svelte/icons/plus';
   import AlphaBadge from './AlphaBadge.svelte';
   import BoardCard from './BoardCard.svelte';
+  import BoardFollowUpCard from './BoardFollowUpCard.svelte';
   import { store } from '../stores/sessions.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { prStore } from '../stores/pr.svelte.js';
   import { groupStore } from '../stores/groups.svelte.js';
   import { boardStore } from '../stores/board.svelte.js';
+  import { followUpsStore } from '../stores/followUps.svelte.js';
+  import { draftStore } from '../stores/draft.svelte.js';
   import { sessionSpriteState } from '../lib/session-sprite-state.js';
   import { getRepoColor } from '../lib/repo-colors.js';
   import { threadSubtitle } from '../lib/thread-subtitle.js';
+  import { ipcErrorText } from '../lib/mcp-errors.js';
   import {
-    BOARD_STAGES,
-    BOARD_STAGE_LABELS,
-    BOARD_STAGE_HINTS,
+    BOARD_COLUMNS,
+    BOARD_COLUMN_LABELS,
+    BOARD_COLUMN_HINTS,
     BOARD_LANES,
     BOARD_LANE_LABELS,
     boardStage,
+    boardFollowUps,
     boardLanes,
     matchesBoardQuery,
+    type BoardColumn,
     type BoardLanes,
-    type BoardStage,
   } from '../lib/board.js';
+  import type { FollowUp } from '../../shared/follow-ups.js';
 
   /**
-   * The board (alpha): every open thread as a card, in a column by stage.
-   * Lanes split it into a row per project or per group. A card opens its
-   * thread, which closes the board. Shown in the main pane in place of a
-   * thread (App.svelte), from the sidebar's List / Board switch.
+   * The board (alpha): work for later as follow-ups, then every open thread
+   * as a card, in a column by stage. Lanes split it into a row per project
+   * or per group. A thread's card opens it; a follow-up's Start thread opens
+   * the new thread with it as the first message. Either closes the board.
+   * Shown in the main pane in place of a thread (App.svelte), from the
+   * sidebar's List / Board switch.
    */
 
   /** What a column says when it has no card (with lanes off). */
-  const EMPTY: Record<BoardStage, string> = {
+  const EMPTY: Record<BoardColumn, string> = {
+    'follow-ups': 'Nothing for later. Agents add follow-ups here, and + adds one yourself.',
     working: 'No agent is working.',
     'needs-you': 'Nothing is waiting for you.',
     review: 'Nothing to review.',
     done: 'No merged or closed pull requests.',
   };
 
-  const all = $derived(store.openConversations.flatMap((session) => {
+  /** Column headings' marks and counts wear the status colour for the two
+   *  stages that are a status; the rest stay quiet. */
+  const COLUMN_TONE: Partial<Record<BoardColumn, { mark: string; text: string }>> = {
+    working: { mark: 'bg-status-working motion-safe:animate-pulse', text: 'text-status-working' },
+    'needs-you': { mark: 'bg-status-attention motion-safe:animate-pulse', text: 'text-status-attention' },
+  };
+
+  type ThreadItem = {
+    kind: 'thread';
+    id: string;
+    repoPath: string;
+    column: BoardColumn;
+    branch: string;
+    name: string;
+    projectName: string;
+    state: ReturnType<typeof sessionSpriteState>;
+    pr: ReturnType<typeof prStore.getPr>;
+    subtitle: ReturnType<typeof threadSubtitle>;
+  };
+  type FollowUpItem = {
+    kind: 'follow-up';
+    id: string;
+    repoPath: string;
+    column: BoardColumn;
+    followUp: FollowUp;
+    startedBefore: boolean;
+    projectName: string;
+  };
+  type Item = ThreadItem | FollowUpItem;
+
+  const threads = $derived(store.openConversations.flatMap((session): ThreadItem[] => {
     const pr = prStore.getPr(session.id);
     const state = sessionSpriteState(session);
     const stage = boardStage(state, pr);
     if (!stage) return [];
-    const name = session.displayName || session.branch || 'New thread';
-    const projectName = store.repoDisplayName(session.repoPath);
-    const subtitle = threadSubtitle(session);
-    return [{ id: session.id, repoPath: session.repoPath, branch: session.branch, name, projectName, state, stage, pr, subtitle }];
+    return [{
+      kind: 'thread',
+      id: session.id,
+      repoPath: session.repoPath,
+      column: stage,
+      branch: session.branch,
+      name: session.displayName || session.branch || 'New thread',
+      projectName: store.repoDisplayName(session.repoPath),
+      state,
+      pr,
+      subtitle: threadSubtitle(session),
+    }];
   }));
 
-  const shown = $derived(all.filter((c) => matchesBoardQuery(boardStore.query, [
-    c.name,
-    c.branch,
-    c.projectName,
-    c.subtitle?.text,
-    c.pr ? `#${c.pr.number}` : null,
-  ])));
+  const openThreadIds = $derived(new Set(store.openConversations.map((s) => s.id)));
+
+  const followUps = $derived(boardFollowUps(followUpsStore.list, store.repos, (id) => openThreadIds.has(id)).map(
+    ({ followUp, startedBefore }): FollowUpItem => ({
+      kind: 'follow-up',
+      id: `follow-up:${followUp.id}`,
+      repoPath: followUp.repoPath,
+      column: 'follow-ups',
+      followUp,
+      startedBefore,
+      projectName: store.repoDisplayName(followUp.repoPath),
+    }),
+  ));
+
+  const shown = $derived([...followUps, ...threads].filter((item) => matchesBoardQuery(boardStore.query, item.kind === 'thread'
+    ? [item.name, item.branch, item.projectName, item.subtitle?.text, item.pr ? `#${item.pr.number}` : null]
+    : [item.followUp.title, item.followUp.details, item.projectName])));
 
   const lanes = $derived(boardLanes(shown, boardStore.lanes, {
     repos: store.repos,
@@ -65,23 +125,42 @@
     groups: groupStore.groups,
   }));
 
-  const counts = $derived(Object.fromEntries(BOARD_STAGES.map((s) => [s, shown.filter((c) => c.stage === s).length])) as Record<BoardStage, number>);
+  const counts = $derived(Object.fromEntries(BOARD_COLUMNS.map((c) => [c, shown.filter((i) => i.column === c).length])) as Record<BoardColumn, number>);
 
   const repoColor = (path: string) => getRepoColor(store.repos, path, settingsStore.current.repoColors);
+  const showProject = $derived(boardStore.lanes !== 'project' && store.repos.length > 1);
+  /** Nothing to draw: no open thread and no follow-up. */
+  const empty = $derived(threads.length === 0 && followUps.length === 0);
 
-  /** Column headings' marks and counts wear the status colour for the two
-   *  stages that are a status; Review and Done stay quiet. */
-  const STAGE_TONE: Partial<Record<BoardStage, { mark: string; text: string }>> = {
-    working: { mark: 'bg-status-working motion-safe:animate-pulse', text: 'text-status-working' },
-    'needs-you': { mark: 'bg-status-attention motion-safe:animate-pulse', text: 'text-status-attention' },
-  };
+  /** Why the last follow-up action didn't happen, until the next one. */
+  let notice = $state<{ tone: 'warning' | 'danger'; text: string } | null>(null);
+
+  function startFollowUp(f: FollowUp) {
+    // A new thread being written is only shown, so the follow-up would be
+    // lost from view: say so here instead, as the drawer does.
+    if (draftStore.hasMessage) {
+      notice = { tone: 'warning', text: "You're already writing a new thread. Send or discard it, then start this follow-up." };
+      return;
+    }
+    notice = null;
+    draftStore.openFollowUp(f);
+  }
+
+  async function markDone(f: FollowUp) {
+    try {
+      await followUpsStore.setDone(f.id, true);
+      notice = null;
+    } catch (e) {
+      notice = { tone: 'danger', text: ipcErrorText(e, "That couldn't be saved.") };
+    }
+  }
 </script>
 
 <div class="flex flex-col h-full min-h-0 bg-background" data-board>
   <PanelHeader title="Board">
     <AlphaBadge />
     <span class="text-caption text-muted-foreground truncate">
-      {all.length} open {all.length === 1 ? 'thread' : 'threads'}
+      {threads.length} open {threads.length === 1 ? 'thread' : 'threads'}, {followUps.length} {followUps.length === 1 ? 'follow-up' : 'follow-ups'}
     </span>
     {#snippet actions()}
       <span class="flex items-center gap-1.5">
@@ -107,36 +186,60 @@
     {/snippet}
   </PanelHeader>
 
-  {#if all.length === 0}
+  {#if empty}
     <div class="flex-1 flex flex-col items-center justify-center gap-2 p-6 text-center">
       <p class="font-pixel text-base text-foreground/90">No open threads</p>
-      <p class="text-xs text-muted-foreground">Start one with New thread in the sidebar (Ctrl+N). Its card shows up here.</p>
+      <p class="text-xs text-muted-foreground">Start one with New thread in the sidebar (Ctrl+N), or add a follow-up for later. Their cards show up here.</p>
+      <Button variant="subtle" size="xs" onclick={() => followUpsStore.openAdd()}>
+        <PlusIcon />New follow-up
+      </Button>
     </div>
   {:else}
     <div class="flex-1 min-h-0 overflow-auto px-3 pb-3">
-      {#if shown.length === 0}
+      {#if notice}
+        <Notice tone={notice.tone} class="mt-3 break-words">
+          {notice.text}
+          {#snippet actions()}
+            {#if notice?.tone === 'warning'}
+              <Button variant="link" size="2xs" onclick={() => draftStore.show()}>Show it</Button>
+            {/if}
+          {/snippet}
+        </Notice>
+      {/if}
+      {#if shown.length === 0 && boardStore.query.trim()}
         <p class="pt-3 text-xs text-muted-foreground" role="status">No cards match "{boardStore.query.trim()}".</p>
       {/if}
       <div
-        class="grid grid-cols-[repeat(4,minmax(13rem,1fr))] gap-1.5 min-w-[54rem]
+        class="grid grid-cols-[repeat(5,minmax(13rem,1fr))] gap-1.5 min-w-[67rem]
           {boardStore.lanes === 'none' ? 'grid-rows-[auto_1fr] min-h-full' : ''}"
       >
         <!-- Column headings, kept in view while the lanes scroll. -->
-        {#each BOARD_STAGES as stage (stage)}
-          {@const tone = STAGE_TONE[stage]}
-          <div class="sticky top-0 z-10 bg-background pt-3 pb-1 px-1 flex flex-col gap-0.5" title={BOARD_STAGE_HINTS[stage]}>
-            <span class="flex items-center gap-1.5">
+        {#each BOARD_COLUMNS as column (column)}
+          {@const tone = COLUMN_TONE[column]}
+          <div class="sticky top-0 z-10 bg-background pt-3 pb-1 px-1 flex flex-col gap-0.5" title={BOARD_COLUMN_HINTS[column]}>
+            <!-- One height for every heading, the Follow-ups one with its + included. -->
+            <span class="flex items-center gap-1.5 h-5">
               {#if tone}<span class="w-1.5 h-1.5 shrink-0 {tone.mark}" aria-hidden="true"></span>{/if}
-              <SectionLabel as="h2">{BOARD_STAGE_LABELS[stage]}</SectionLabel>
-              <span class="text-micro font-bold {tone?.text ?? 'text-muted-foreground'}">{counts[stage]}</span>
+              <SectionLabel as="h2">{BOARD_COLUMN_LABELS[column]}</SectionLabel>
+              <span class="text-micro font-bold {tone?.text ?? 'text-muted-foreground'}">{counts[column]}</span>
+              {#if column === 'follow-ups'}
+                <Button
+                  variant="quiet"
+                  size="icon-2xs"
+                  class="ml-auto"
+                  onclick={() => followUpsStore.openAdd()}
+                  title="New follow-up: work for a later thread"
+                  aria-label="New follow-up"
+                ><PlusIcon /></Button>
+              {/if}
             </span>
-            <span class="text-caption text-muted-foreground truncate">{BOARD_STAGE_HINTS[stage]}</span>
+            <span class="text-caption text-muted-foreground truncate">{BOARD_COLUMN_HINTS[column]}</span>
           </div>
         {/each}
 
         {#each lanes as lane (lane.key)}
           {#if lane.label !== null}
-            <div class="col-span-4 flex items-center gap-1.5 pt-2 min-w-0" data-board-lane={lane.key}>
+            <div class="col-span-5 flex items-center gap-1.5 pt-2 min-w-0" data-board-lane={lane.key}>
               {#each lane.repoPaths as path (path)}
                 {@const color = repoColor(path)}
                 {#if color}<span class="w-2 h-2 shrink-0" style="background-color: {color}" aria-hidden="true"></span>{/if}
@@ -146,30 +249,42 @@
               <span class="flex-1 h-px bg-border" aria-hidden="true"></span>
             </div>
           {/if}
-          {#each BOARD_STAGES as stage (stage)}
-            {@const inCell = lane.cards.filter((c) => c.stage === stage)}
+          {#each BOARD_COLUMNS as column (column)}
+            {@const inCell = lane.cards.filter((c: Item) => c.column === column)}
             <section
-              aria-label={lane.label ? `${lane.label}: ${BOARD_STAGE_LABELS[stage]}` : BOARD_STAGE_LABELS[stage]}
+              aria-label={lane.label ? `${lane.label}: ${BOARD_COLUMN_LABELS[column]}` : BOARD_COLUMN_LABELS[column]}
               class="flex flex-col gap-1 p-1 min-h-11 min-w-0 bg-sidebar border border-border"
-              data-board-column={stage}
+              data-board-column={column}
             >
-              {#each inCell as card (card.id)}
-                <BoardCard
-                  id={card.id}
-                  name={card.name}
-                  branch={card.branch}
-                  projectName={card.projectName}
-                  projectColor={repoColor(card.repoPath)}
-                  showProject={boardStore.lanes !== 'project' && store.repos.length > 1}
-                  state={card.state}
-                  subtitle={card.subtitle}
-                  pr={card.pr}
-                  waiting={stage === 'needs-you'}
-                  onopen={() => boardStore.openThread(card.id)}
-                />
+              {#each inCell as item (item.id)}
+                {#if item.kind === 'follow-up'}
+                  <BoardFollowUpCard
+                    followUp={item.followUp}
+                    startedBefore={item.startedBefore}
+                    projectName={item.projectName}
+                    projectColor={repoColor(item.repoPath)}
+                    {showProject}
+                    onstart={() => startFollowUp(item.followUp)}
+                    ondone={() => void markDone(item.followUp)}
+                  />
+                {:else}
+                  <BoardCard
+                    id={item.id}
+                    name={item.name}
+                    branch={item.branch}
+                    projectName={item.projectName}
+                    projectColor={repoColor(item.repoPath)}
+                    {showProject}
+                    state={item.state}
+                    subtitle={item.subtitle}
+                    pr={item.pr}
+                    waiting={column === 'needs-you'}
+                    onopen={() => boardStore.openThread(item.id)}
+                  />
+                {/if}
               {:else}
-                {#if boardStore.lanes === 'none' && shown.length > 0}
-                  <p class="px-1 py-2 text-caption text-muted-foreground">{EMPTY[stage]}</p>
+                {#if boardStore.lanes === 'none' && !boardStore.query.trim()}
+                  <p class="px-1 py-2 text-caption text-muted-foreground">{EMPTY[column]}</p>
                 {/if}
               {/each}
             </section>

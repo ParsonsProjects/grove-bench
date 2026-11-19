@@ -2,13 +2,23 @@
 
 Follow-ups are work for a later thread. While an agent works on what you asked, it often spots something else that needs doing: a bug on the way, a test it left out, a refactor that would help. Instead of doing it now or only mentioning it, the agent adds a follow-up, and you start a thread from it when you're ready.
 
-Every agent can add them: Claude Code and the ACP agents (Gemini CLI, Copilot CLI, OpenCode and custom agents). Follow-ups belong to a project, and every thread in that project sees a new one at once, whatever branch it is on.
+Every agent can add them: Claude Code and the ACP agents (Gemini CLI, Copilot CLI, OpenCode and custom agents). You can add them too (see [Adding one yourself](#adding-one-yourself)). Follow-ups belong to a project, and every thread in that project sees a new one at once, whatever branch it is on.
 
 ## Opening the list
 
 Click the list icon in the sidebar footer, next to bookmarks (it is on the rail too when the sidebar is folded). The number on it is how many follow-ups are open across your projects (a removed project's aren't counted). The list opens beside the thread you're in, or beside a new thread or the landing screen. Press `Esc` or the **✕** to close it.
 
 Follow-ups are grouped by project, oldest first, so they stay in the order they came up. Each shows what to do, when it was added, the thread that added it (click its name to open it, if the thread is still open), and the details the agent wrote for the next thread. Long details fold to four lines; **Show more** opens them.
+
+## Adding one yourself
+
+Click **+** at the top of the list (or in the board's Follow-ups column) to open **New follow-up**. Write what needs doing, and if you like the details a thread with none of your context needs to start: where, why, and what done looks like. With more than one project, pick the one it belongs to (it starts in the project of the thread you're in). Click **Add follow-up**, or press `Ctrl+Enter` in the details. **Cancel** or `Esc` closes it without adding anything.
+
+One you add works like an agent's: start a thread from it, and that thread's agent marks it done. If the project already has an open follow-up with the same title, Grove Bench says so and doesn't add it twice.
+
+## On the board
+
+With **Board (alpha)** on, the board's first column, **Follow-ups**, shows the same open follow-ups beside your threads (see [Board](sidebar.md#board-alpha)). Its **+** adds one, **Start thread** and **Done** work as they do here, and a follow-up leaves the column while a thread started from it is open: that thread's card stands for it. If the thread is closed before the work is done, the follow-up comes back, marked **Started before**, with **Start another**.
 
 ## Starting a thread from one
 

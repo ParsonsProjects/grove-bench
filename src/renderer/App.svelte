@@ -60,6 +60,8 @@
   // Loaded the first time it opens (Ctrl+R or the search button).
   const loadSessionFinder = lazyComponent(() => import('./components/SessionFinder.svelte'));
   const loadBackgroundAgentDialog = lazyComponent(() => import('./components/BackgroundAgentDialog.svelte'));
+  // New follow-up, from the + in the Follow-ups drawer or the board.
+  const loadFollowUpDialog = lazyComponent(() => import('./components/FollowUpDialog.svelte'));
   const loadUsageDialog = lazyComponent(() => import('./components/UsageDialog.svelte'));
   const loadSkillsPanel = lazyComponent(() => import('./components/SkillsPanel.svelte'));
   const loadAgentMonitor = lazyComponent(() => import('./components/AgentMonitorDialog.svelte'));
@@ -683,6 +685,12 @@
 {#if store.finderOpen}
   {#await loadSessionFinder() then SessionFinder}
     <SessionFinder onclose={() => store.finderOpen = false} />
+  {/await}
+{/if}
+
+{#if followUpsStore.addingIn}
+  {#await loadFollowUpDialog() then FollowUpDialog}
+    <FollowUpDialog />
   {/await}
 {/if}
 

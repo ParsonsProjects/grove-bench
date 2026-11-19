@@ -265,6 +265,12 @@ class DraftStore {
     if (this.draft) this.draft.text = text;
   }
 
+  /** A draft with a message or files of its own: opening a follow-up would
+   *  only show it (openFollowUp), so the board says so instead. */
+  get hasMessage(): boolean {
+    return !!this.draft && hasMessage(this.draft);
+  }
+
   /** Open the draft in a follow-up's project with the follow-up as its first
    *  message, to look over and send. A draft with a message or files of its
    *  own is only shown, so nothing typed is lost: false. */

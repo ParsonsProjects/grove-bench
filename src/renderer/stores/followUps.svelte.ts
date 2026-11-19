@@ -113,6 +113,33 @@ class FollowUpsStore {
     return window.groveBench.removeFollowUp(id);
   }
 
+  /** Add one by hand (FollowUpForm). Resolves with what main kept: an open
+   *  one with the same title instead, when there is one (`existing`). The
+   *  list shows it at once, without waiting for main's change. */
+  async add(repoPath: string, title: string, details: string): Promise<{ followUp: FollowUp; existing: boolean }> {
+    const result = await window.groveBench.addFollowUp(repoPath, title, details);
+    if (this.ready && !result.existing) this.list = applyFollowUpsChange(this.list, { upserted: [result.followUp], removed: [] });
+    return result;
+  }
+
+  /** The New follow-up dialog is open (FollowUpDialog), for this project
+   *  (empty: the first one; the dialog can change it). */
+  addingIn = $state<{ repoPath: string } | null>(null);
+
+  openAdd(repoPath = ''): void {
+    this.addingIn = { repoPath };
+  }
+
+  closeAdd(): void {
+    this.addingIn = null;
+  }
+
+  /** How many open follow-ups a project has: main takes no more than
+   *  FOLLOW_UP_LIMITS.openPerProject. */
+  openIn(repoPath: string): number {
+    return this.list.filter((f) => f.repoPath === repoPath && f.doneAt === undefined).length;
+  }
+
   /** Note the thread started from it. Only shown in the drawer, so a
    *  failure is logged, not thrown. */
   async started(id: string, sessionId: string): Promise<void> {
