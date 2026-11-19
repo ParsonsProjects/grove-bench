@@ -2268,7 +2268,8 @@ export interface GroveBenchSettings {
  * - 'summary':  hides thinking and non-essential tool calls
  * - 'focus':    only user prompts, assistant text, question blocks (with
  *               the answer given), unanswered permission blocks, errors,
- *               turn results and the calls that start subagents
+ *               turns that ended with errors and the calls that start
+ *               subagents
  */
 export type ActivityViewMode = 'detailed' | 'summary' | 'focus';
 export const ACTIVITY_VIEW_MODES: readonly ActivityViewMode[] = ['detailed', 'summary', 'focus'];

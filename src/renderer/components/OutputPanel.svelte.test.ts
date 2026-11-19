@@ -78,6 +78,42 @@ describe('OutputPanel — status messages', () => {
   });
 });
 
+describe("OutputPanel: a turn's end", () => {
+  const done: ChatMessage = { kind: 'result', id: 'r1', subtype: 'success', isError: false, totalCostUsd: 0, durationMs: 800 };
+  const failed: ChatMessage = { ...done, id: 'r2', subtype: 'error_during_execution', isError: true, errors: ['Tool crashed'] };
+
+  beforeEach(() => {
+    store.activeSessionId = SID;
+  });
+  afterEach(() => messageStore.setViewMode(SID, 'detailed'));
+
+  it('shows "done" with its cost and time outside Focus', () => {
+    messageStore.setViewMode(SID, 'summary');
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'Fix it' }, done] };
+    const { getByText } = render(OutputPanel, { sessionId: SID });
+    expect(getByText(/done/)).toHaveTextContent('$0.0000');
+    expect(getByText(/done/)).toHaveTextContent('0.8s');
+  });
+
+  it('hides a turn that went fine in Focus', () => {
+    messageStore.setViewMode(SID, 'focus');
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'Fix it' }, done] };
+    const { queryByText } = render(OutputPanel, { sessionId: SID });
+    expect(queryByText(/done/)).toBeNull();
+    expect(queryByText(/\$0\.0000/)).toBeNull();
+  });
+
+  it('keeps a turn that ended with errors in Focus, without its cost and time', () => {
+    messageStore.setViewMode(SID, 'focus');
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'Fix it' }, failed] };
+    const { getByText, queryByText } = render(OutputPanel, { sessionId: SID });
+    expect(getByText(/completed with errors/)).toBeInTheDocument();
+    expect(getByText('Tool crashed')).toBeInTheDocument();
+    expect(queryByText(/\$0\.0000/)).toBeNull();
+    expect(queryByText(/0\.8s/)).toBeNull();
+  });
+});
+
 describe('OutputPanel — rewind from a user message', () => {
   it('offers Rewind on user messages that have a checkpoint and opens the dialog on that message', async () => {
     store.activeSessionId = SID;
@@ -1223,6 +1259,25 @@ describe('OutputPanel: the first turn', () => {
     await tick();
     expect(arrivalScene.for(SID)).not.toBeNull();
     expect(container.querySelector('svg.walk')).not.toBeNull();
+  });
+
+  it('ends at a turn that ends without a reply, though Focus hides its end', async () => {
+    messageStore.setViewMode(SID, 'focus');
+    store.sessions = [session('running')];
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'Fix it' }] };
+    arrivalScene.begin(SID);
+    const { container } = render(OutputPanel, { sessionId: SID });
+    expect(container.querySelector('svg.walk')).not.toBeNull();
+
+    messageStore.messagesBySession = { [SID]: [
+      { kind: 'user', id: 'u1', text: 'Fix it' },
+      { kind: 'result', id: 'r1', subtype: 'success', isError: false },
+    ] };
+    messageStore.isRunning = { [SID]: false };
+    await tick();
+    expect(arrivalScene.for(SID)).toBeNull();
+    expect(container.querySelector('svg.walk')).toBeNull();
+    messageStore.setViewMode(SID, 'detailed');
   });
 
   it('ends when the agent stops without a reply', async () => {

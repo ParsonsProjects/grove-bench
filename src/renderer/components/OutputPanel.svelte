@@ -238,7 +238,10 @@
   // "Thinking..." instead.
   let session = $derived(store.sessions.find((s) => s.id === sessionId));
   let agentLive = $derived(session?.status === 'starting' || session?.status === 'installing' || session?.status === 'running');
-  let replied = $derived(hasAgentReply(filteredMessages) || !!streamingText || hasUnloadedEvents);
+  // A turn's end counts even where Focus hides it (it went fine).
+  let replied = $derived(
+    hasAgentReply(filteredMessages) || thread.some((m) => m.kind === 'result') || !!streamingText || hasUnloadedEvents,
+  );
   let arrival = $derived(
     settingsStore.current.groveCharacters && agentLive && !replied ? arrivalScene.for(sessionId) : null,
   );

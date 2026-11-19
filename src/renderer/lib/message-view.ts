@@ -120,8 +120,12 @@ export function isMessageVisible(msg: ChatMessage, mode: MessageViewMode): boole
       // Questions stay visible once answered: the block shows the user's
       // reply, which is part of the conversation the user needs to follow.
       return true;
+    case 'result':
+      // A turn that went fine needs nothing from the user: its "done" line
+      // (cost, time) is noise here. One that ended with errors stays.
+      return msg.isError;
     default:
-      // user, text, error, git_identity_missing, files_kept, result. Every assistant text block is kept: agents
+      // user, text, error, git_identity_missing, files_kept. Every assistant text block is kept: agents
       // routinely split one answer across several blocks (findings, then next
       // steps), so keeping only the last would hide the part that matters.
       // The notes written while working fold into one line instead
@@ -201,6 +205,8 @@ export function foldNarration(visible: ChatMessage[], notes: Set<string>): Threa
  * Whether a chat, as filtered for its view mode, shows anything from the
  * agent yet: a message other than the user's own and the app's notes. The end
  * of a turn (result, error) counts, so a turn that ends without a reply does.
+ * Focus hides a turn that ended fine, so check the unfiltered thread for one
+ * too (OutputPanel).
  */
 export function hasAgentReply(visible: ChatMessage[]): boolean {
   return visible.some((m) => m.kind !== 'user' && m.kind !== 'system' && m.kind !== 'git_identity_missing' && m.kind !== 'files_kept');
