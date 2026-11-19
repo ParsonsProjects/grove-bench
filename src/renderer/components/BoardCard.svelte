@@ -1,5 +1,6 @@
 <script lang="ts">
   import GitBranchIcon from '@lucide/svelte/icons/git-branch';
+  import ListTodoIcon from '@lucide/svelte/icons/list-todo';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import AgentSprite from './AgentSprite.svelte';
   import StatusDot from './StatusDot.svelte';
@@ -9,13 +10,16 @@
   import { AGENT_SPRITES, type AgentSpriteState } from '../lib/agent-sprite.js';
   import type { SessionSubtitle } from '../lib/session-subtitle.js';
   import type { PrInfo } from '../../shared/types.js';
+  import type { FollowUp } from '../../shared/follow-ups.js';
 
   /**
    * A thread on the board: its status (the character or square the sidebar
    * shows), name, project and branch, the line the sidebar shows under it,
-   * and its pull request. The whole card opens the thread.
+   * and its pull request. The card opens the thread. One started from a
+   * follow-up names it along the bottom, a button of its own that shows it
+   * in the Follow-ups drawer.
    */
-  let { id, name, branch, projectName, projectColor, showProject, state, subtitle, pr, waiting, onopen }: {
+  let { id, name, branch, projectName, projectColor, showProject, state, subtitle, pr, waiting, followUp = null, onopen, onfollowup }: {
     id: string;
     name: string;
     branch: string;
@@ -28,7 +32,10 @@
     pr: PrInfo | null;
     /** In Needs you: drawn with an amber edge, like a waiting prompt. */
     waiting: boolean;
+    /** The follow-up the thread was started from, if it was. */
+    followUp?: FollowUp | null;
     onopen: () => void;
+    onfollowup?: () => void;
   } = $props();
 
   const prBadge = $derived(pr ? prSummary(pr) : null);
@@ -41,12 +48,12 @@
   ].filter(Boolean).join('. '));
 </script>
 
+<div class="w-full min-w-0 flex flex-col bg-card border {waiting ? 'border-status-attention/60' : 'border-border'}">
 <button
   type="button"
   onclick={onopen}
-  class="w-full min-w-0 flex flex-col gap-1 px-2 py-1.5 text-left bg-card border transition-colors hover:bg-accent
-    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring
-    {waiting ? 'border-status-attention/60' : 'border-border'}"
+  class="w-full min-w-0 flex flex-col gap-1 px-2 py-1.5 text-left transition-colors hover:bg-accent
+    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
   title="{label}. Click to open the thread"
   aria-label={label}
   data-board-card={id}
@@ -79,3 +86,20 @@
     </span>
   {/if}
 </button>
+{#if followUp}
+  <button
+    type="button"
+    onclick={onfollowup}
+    class="w-full min-w-0 flex items-center gap-1.5 px-2 py-1 text-left border-t border-border text-caption text-muted-foreground
+      transition-colors hover:bg-accent hover:text-foreground
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+    title="Started from the follow-up “{followUp.title}”{followUp.doneAt !== undefined ? ', now done' : ''}. Click to show it in Follow-ups"
+    aria-label="Started from the follow-up {followUp.title}{followUp.doneAt !== undefined ? ', done' : ''}. Show it in Follow-ups"
+    data-board-card-follow-up={followUp.id}
+  >
+    <ListTodoIcon class="size-3 shrink-0" aria-hidden="true" />
+    <span class="truncate min-w-0">{followUp.title}</span>
+    {#if followUp.doneAt !== undefined}<span class="shrink-0 text-status-unread">done</span>{/if}
+  </button>
+{/if}
+</div>

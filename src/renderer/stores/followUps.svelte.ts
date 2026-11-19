@@ -38,6 +38,9 @@ class FollowUpsStore {
   expanded = $state(new Set<string>());
   /** Projects whose done follow-ups are shown. */
   showDone = $state(new Set<string>());
+  /** The follow-up the drawer was opened to show (reveal): highlighted,
+   *  and scrolled to, until the drawer closes or another is shown. */
+  revealId = $state<string | null>(null);
 
   private unsubscribe: (() => void) | null = null;
   /** Changes that arrived before the list was read, applied to it once it is. */
@@ -105,6 +108,25 @@ class FollowUpsStore {
     return this.list.find((f) => f.id === id);
   }
 
+  /** The follow-up a thread was started from (Start thread notes it once
+   *  the thread starts), or undefined. One started more than once (Start
+   *  another) names each of its threads. */
+  startedFrom(sessionId: string): FollowUp | undefined {
+    return this.list.find((f) => f.startedSessionIds?.includes(sessionId));
+  }
+
+  /** Open the drawer at one follow-up: its details in full, and its
+   *  project's done ones shown when it is done, so it is on screen. */
+  reveal(id: string): void {
+    const f = this.get(id);
+    if (!f) return;
+    this.expanded = new Set([...this.expanded, id]);
+    if (f.doneAt !== undefined) this.showDone = new Set([...this.showDone, f.repoPath]);
+    this.notice = null;
+    this.revealId = id;
+    this.toggleDrawer(true);
+  }
+
   setDone(id: string, done: boolean): Promise<void> {
     return window.groveBench.setFollowUpDone(id, done);
   }
@@ -154,7 +176,10 @@ class FollowUpsStore {
     const wasOpen = this.drawerOpen;
     this.drawerOpen = open ?? !this.drawerOpen;
     if (this.drawerOpen && !wasOpen) this.opening = nextOpening();
-    if (!this.drawerOpen) this.notice = null;
+    if (!this.drawerOpen) {
+      this.notice = null;
+      this.revealId = null;
+    }
   }
 }
 

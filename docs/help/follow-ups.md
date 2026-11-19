@@ -18,7 +18,7 @@ One you add works like an agent's: start a thread from it, and that thread's age
 
 ## On the board
 
-With **Board (alpha)** on, the board's first column, **Follow-ups**, shows the same open follow-ups beside your threads (see [Board](sidebar.md#board-alpha)). Its **+** adds one, **Start thread** and **Done** work as they do here, and a follow-up leaves the column while a thread started from it is open: that thread's card stands for it. If the thread is closed before the work is done, the follow-up comes back, marked **Started before**, with **Start another**.
+With **Board (alpha)** on, the board's first column, **Follow-ups**, shows the same open follow-ups beside your threads (see [Board](sidebar.md#board-alpha)). Its **+** adds one, **Start thread** and **Done** work as they do here, and a follow-up leaves the column while a thread started from it is open: that thread's card stands for it, and names the follow-up along its bottom. Click that line to open this list at the follow-up, shown in full. If the thread is closed before the work is done, the follow-up comes back, marked **Started before**, with **Start another**.
 
 ## Starting a thread from one
 

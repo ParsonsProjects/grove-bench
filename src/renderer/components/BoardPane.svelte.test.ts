@@ -234,3 +234,37 @@ describe('BoardPane follow-ups', () => {
     expect(screen.getByRole('article', { name: 'Follow-up: Follow-up f1' })).toBeInTheDocument();
   });
 });
+
+describe('BoardPane: a thread started from a follow-up', () => {
+  afterEach(() => {
+    followUpsStore.toggleDrawer(false);
+  });
+
+  it('names the follow-up on its card, and shows it in Follow-ups from there', async () => {
+    followUpsStore.list = [fu('f1', { title: 'Cover the expired token path', startedSessionIds: ['work'] })];
+    render(BoardPane);
+    const link = screen.getByRole('button', { name: /Started from the follow-up Cover the expired token path/ });
+    // Its thread's card stands for it, so it isn't in the Follow-ups column.
+    expect(document.querySelector('[data-board-follow-up="f1"]')).toBeNull();
+    await fireEvent.click(link);
+    expect(followUpsStore.drawerOpen).toBe(true);
+    expect(followUpsStore.revealId).toBe('f1');
+    // Showing the follow-up doesn't open the thread.
+    expect(boardStore.open).toBe(true);
+    expect(store.activeSessionId).toBeNull();
+  });
+
+  it('says when the follow-up is done', () => {
+    followUpsStore.list = [fu('f1', { startedSessionIds: ['quiet'], doneAt: Date.now() })];
+    render(BoardPane);
+    const link = document.querySelector<HTMLElement>('[data-board-card-follow-up="f1"]')!;
+    expect(within(link).getByText('done')).toBeInTheDocument();
+  });
+
+  it('finds the thread by its follow-up in the filter', async () => {
+    followUpsStore.list = [fu('f1', { title: 'Expire old refresh tokens', startedSessionIds: ['quiet'] })];
+    render(BoardPane);
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter cards' }), { target: { value: 'refresh tokens' } });
+    expect([...document.querySelectorAll('[data-board-card]')].map((c) => c.getAttribute('data-board-card'))).toEqual(['quiet']);
+  });
+});

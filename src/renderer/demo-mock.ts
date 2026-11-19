@@ -55,6 +55,12 @@ const demoFollowUps: FollowUp[] = [
     createdAt: now - 3 * 60 * min, fromSessionId: 's-oauth', fromLabel: 'claude/fix-oauth-refresh', fromBranch: 'claude/fix-oauth-refresh',
   },
   {
+    id: 'e7f310', repoPath: REPO_B, title: 'Find out why the login e2e test is flaky',
+    details: 'It fails about one run in ten on CI, always on the redirect after sign-in. Done when it passes 50 runs in a row.',
+    createdAt: now - 27 * 60 * min, fromSessionId: 's-perf', fromLabel: 'claude/perf-audit', fromBranch: 'claude/perf-audit',
+    startedSessionIds: ['s-e2e'],
+  },
+  {
     id: '51ee02', repoPath: REPO_B, title: 'Drop the unused retry helper', details: '',
     createdAt: now - 2 * 24 * 60 * min, doneAt: now - 26 * 60 * min, doneBySessionId: 's-perf', doneNote: 'Removed retryWithJitter and its test.',
   },

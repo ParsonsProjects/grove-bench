@@ -87,6 +87,14 @@
     }
   }
 
+  // The follow-up the drawer was opened to show (a board card's link), in view.
+  $effect(() => {
+    const id = followUpsStore.revealId;
+    if (!listEl || !id) return;
+    // Ids are short hex (main/follow-ups.ts), safe in a selector as they are.
+    listEl.querySelector<HTMLElement>(`[data-follow-up="${id}"]`)?.scrollIntoView?.({ block: 'nearest' });
+  });
+
   // Focused as it opens, so Esc and the arrow keys work on it.
   let listEl = $state<HTMLDivElement | null>(null);
   $effect(() => {
@@ -190,7 +198,12 @@
           {#each project.open as f (f.id)}
             {@const started = startedThread(f)}
             {@const long = f.details.length > 220 || f.details.split('\n').length > 4}
-            <article class="mb-2 border border-border bg-card/80 p-2" aria-label={f.title}>
+            <article
+              class="mb-2 border bg-card/80 p-2 {followUpsStore.revealId === f.id ? 'border-ring' : 'border-border'}"
+              aria-label={f.title}
+              aria-current={followUpsStore.revealId === f.id ? 'true' : undefined}
+              data-follow-up={f.id}
+            >
               <div class="text-xs font-medium text-foreground break-words">{f.title}</div>
               {@render origin(f)}
               {#if f.details}
@@ -245,7 +258,12 @@
             {#if followUpsStore.showDone.has(project.repoPath)}
               {#each project.done as f (f.id)}
                 {@const by = threadName(f.doneBySessionId)}
-                <article class="mt-1 mb-2 border border-border/60 p-2" aria-label={f.title}>
+                <article
+                  class="mt-1 mb-2 border p-2 {followUpsStore.revealId === f.id ? 'border-ring' : 'border-border/60'}"
+                  aria-label={f.title}
+                  aria-current={followUpsStore.revealId === f.id ? 'true' : undefined}
+                  data-follow-up={f.id}
+                >
                   <div class="text-xs text-muted-foreground line-through break-words">{f.title}</div>
                   <div class="mt-0.5 text-caption text-muted-foreground">
                     Done {formatAge(f.doneAt ?? 0)}

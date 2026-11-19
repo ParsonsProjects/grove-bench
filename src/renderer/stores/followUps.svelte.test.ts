@@ -173,3 +173,36 @@ describe('followUpsStore New follow-up dialog', () => {
     followUpsStore.closeAdd();
   });
 });
+
+describe('followUpsStore.startedFrom and reveal', () => {
+  it('finds the follow-up a thread was started from', () => {
+    followUpsStore.list = [fu('a', '/r'), fu('b', '/r', { startedSessionIds: ['s1', 's2'] })];
+    expect(followUpsStore.startedFrom('s2')?.id).toBe('b');
+    expect(followUpsStore.startedFrom('s3')).toBeUndefined();
+  });
+
+  it('opens the drawer at a follow-up, in full, and forgets it when the drawer closes', () => {
+    followUpsStore.list = [fu('a', '/r')];
+    followUpsStore.expanded = new Set();
+    followUpsStore.reveal('a');
+    expect(followUpsStore.drawerOpen).toBe(true);
+    expect(followUpsStore.revealId).toBe('a');
+    expect(followUpsStore.expanded.has('a')).toBe(true);
+    followUpsStore.toggleDrawer(false);
+    expect(followUpsStore.revealId).toBeNull();
+  });
+
+  it("shows its project's done ones when it is done", () => {
+    followUpsStore.list = [fu('a', '/r', { doneAt: 5 })];
+    followUpsStore.showDone = new Set();
+    followUpsStore.reveal('a');
+    expect(followUpsStore.showDone.has('/r')).toBe(true);
+    followUpsStore.toggleDrawer(false);
+  });
+
+  it('does nothing for one that is gone', () => {
+    followUpsStore.list = [];
+    followUpsStore.reveal('zz');
+    expect(followUpsStore.drawerOpen).toBe(false);
+  });
+});

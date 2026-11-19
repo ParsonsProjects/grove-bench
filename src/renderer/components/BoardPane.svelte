@@ -70,6 +70,8 @@
     state: ReturnType<typeof sessionSpriteState>;
     pr: ReturnType<typeof prStore.getPr>;
     subtitle: ReturnType<typeof threadSubtitle>;
+    /** The follow-up it was started from, if it was. */
+    followUp: FollowUp | null;
   };
   type FollowUpItem = {
     kind: 'follow-up';
@@ -98,6 +100,7 @@
       state,
       pr,
       subtitle: threadSubtitle(session),
+      followUp: followUpsStore.startedFrom(session.id) ?? null,
     }];
   }));
 
@@ -116,7 +119,7 @@
   ));
 
   const shown = $derived([...followUps, ...threads].filter((item) => matchesBoardQuery(boardStore.query, item.kind === 'thread'
-    ? [item.name, item.branch, item.projectName, item.subtitle?.text, item.pr ? `#${item.pr.number}` : null]
+    ? [item.name, item.branch, item.projectName, item.subtitle?.text, item.pr ? `#${item.pr.number}` : null, item.followUp?.title]
     : [item.followUp.title, item.followUp.details, item.projectName])));
 
   const lanes = $derived(boardLanes(shown, boardStore.lanes, {
@@ -279,7 +282,9 @@
                     subtitle={item.subtitle}
                     pr={item.pr}
                     waiting={column === 'needs-you'}
+                    followUp={item.followUp}
                     onopen={() => boardStore.openThread(item.id)}
+                    onfollowup={() => { if (item.followUp) followUpsStore.reveal(item.followUp.id); }}
                   />
                 {/if}
               {:else}

@@ -174,3 +174,16 @@ describe('FollowUpsDrawer: adding one by hand', () => {
     expect(screen.getByText(/To add one yourself, click/)).toBeInTheDocument();
   });
 });
+
+describe('FollowUpsDrawer: showing one follow-up', () => {
+  it('marks the follow-up it was opened to show, done ones included', () => {
+    followUpsStore.list = [fu({ id: 'aa0001', title: 'Open one' }), fu({ id: 'aa0002', title: 'Finished one', doneAt: Date.now() })];
+    followUpsStore.drawerOpen = false;
+    followUpsStore.reveal('aa0002');
+    render(FollowUpsDrawer);
+    const shown = screen.getByRole('article', { name: 'Finished one' });
+    expect(shown).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByRole('article', { name: 'Open one' })).not.toHaveAttribute('aria-current');
+    followUpsStore.toggleDrawer(false);
+  });
+});
