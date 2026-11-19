@@ -1,5 +1,23 @@
 import fs from 'node:fs/promises';
 
+/** Names Windows keeps for devices, with any extension too (AUX.ts is AUX). */
+const DEVICE_NAME = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]|conin\$|conout\$)$/i;
+
+/**
+ * `name` as a file name Windows takes: the characters it doesn't allow in a
+ * name (path separators among them) become spaces, runs of spaces one, at
+ * most `max` characters,
+ * and no dots or spaces at the end. A device name (CON, or CON.txt) gets
+ * `devicePrefix` in front. '' when nothing is left.
+ */
+export function safeFileName(name: string, max: number, devicePrefix: string): string {
+  // eslint-disable-next-line no-control-regex
+  const safe = name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max).replace(/[. ]+$/, '');
+  // Windows reads the name before the extension without its trailing spaces.
+  const stem = safe.split('.')[0].trimEnd();
+  return safe && DEVICE_NAME.test(stem) ? `${devicePrefix}${safe}` : safe;
+}
+
 /**
  * Recursively delete a directory, with `fs.rm`. One that isn't there counts
  * as deleted. Errors (EBUSY, EPERM, … while another process holds a file)

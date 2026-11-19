@@ -18,7 +18,7 @@
   import { isCovered, sameBounds, toBounds, tooltipCovers } from '$lib/preview-viewport.js';
   import { loadErrorHint } from '$lib/preview-text.js';
   import { ipcErrorText } from '$lib/mcp-errors.js';
-  import { formatAge } from '$lib/format-age.js';
+  import { formatAge } from '../../shared/format-age.js';
   import type { PreviewBounds } from '../../shared/types.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Notice } from '$lib/components/ui/notice/index.js';

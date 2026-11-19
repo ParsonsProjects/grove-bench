@@ -6,7 +6,8 @@
  */
 import type { ToolView } from '../../shared/tool-view.js';
 import type { SkillDirs } from '../skills.js';
-import type { AgentStage, AgentEvent, MemoryEntry, TokenCounts, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, McpSupport, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment, ImageMediaType } from '../../shared/types.js';
+import type { FollowUp } from '../../shared/follow-ups.js';
+import type { AgentStage, AgentEvent, MemoryEntry, ModelTotals, TokenCounts, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, McpSupport, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment, ImageMediaType } from '../../shared/types.js';
 
 // ─── Capability Flags ───
 
@@ -143,6 +144,19 @@ export interface MemoryOperations {
   delete(path: string): boolean;
 }
 
+// ─── Follow-up Operations ───
+
+/** Follow-ups (shared/follow-ups.ts) for the session's project, as its
+ *  agent sees them: what it adds is recorded as from this thread, and it
+ *  can only see and close its own project's. Failures throw with a message
+ *  for the agent. */
+export interface FollowUpOperations {
+  add(input: { title: string; details: string }): { followUp: FollowUp; existing: boolean };
+  /** Open ones, oldest first; with `includeDone`, done ones after them. */
+  list(opts: { includeDone?: boolean }): FollowUp[];
+  done(id: string, note?: string): FollowUp;
+}
+
 // ─── Preview (browser) Operations ───
 
 /** Where to click or type: a CSS selector, the visible text of a clickable
@@ -208,6 +222,8 @@ export interface AdapterConfig {
   /** Memory operations for this session's repo. Adapters decide how to surface
    *  these to the agent (e.g. Claude Code registers them as an SDK MCP server). */
   memoryOperations?: MemoryOperations | null;
+  /** Follow-ups for this session's project (grove-followups). */
+  followUpOperations?: FollowUpOperations | null;
   /** Browser operations on the conversation's Preview page. Unset when the
    *  user turned the agent's browser tools off. */
   previewOperations?: PreviewOperations | null;
@@ -223,6 +239,9 @@ export interface AdapterConfig {
   priorCostUsd?: number | null;
   /** The running token totals it had reached, for the same reason. */
   priorTokens?: TokenCounts | null;
+  /** And each model's running totals (lastRunningModels), so the first
+   *  turn after resuming splits by what it did rather than by the totals. */
+  priorModels?: Record<string, ModelTotals> | null;
   onPermissionRequest: PermissionHandler;
   /** Called before a tool call runs, wherever the adapter can hold one:
    *  every call for Claude Code (a PreToolUse hook), the calls the agent

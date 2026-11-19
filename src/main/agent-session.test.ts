@@ -32,6 +32,19 @@ vi.mock('node:fs', () => ({
   mkdirSync: vi.fn(),
 }));
 
+/** What the usage ledger was given, kept in memory instead of on disk. */
+const usageLedger = vi.hoisted(() => ({ records: [] as unknown[] }));
+vi.mock('./usage-ledger.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('./usage-ledger.js')>();
+  return {
+    ...real,
+    UsageLedger: class {
+      record(r: unknown) { usageLedger.records.push(r); }
+      read() { return Promise.resolve({ records: usageLedger.records, backfilling: false }); }
+    },
+  };
+});
+
 // Mock dependencies
 vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), close: vi.fn() },
@@ -50,6 +63,7 @@ vi.mock('./worktree-manager.js', () => ({
     writeAgentSettings: vi.fn().mockResolvedValue(undefined),
     list: vi.fn().mockResolvedValue([]),
     getWorktreeOrManifest: vi.fn().mockResolvedValue(undefined),
+    threadLabels: vi.fn().mockResolvedValue(new Map()),
   },
 }));
 /** The agent host killing a mock agent's process tree (killProcessTree). */
@@ -1322,6 +1336,26 @@ describe('AgentSessionManager limits', () => {
     expect(last[1].spendUsd).toBeCloseTo(0.5);
 
     await sessionManager.destroySession('test-spend');
+  });
+
+  it('records each turn for the Usage dialog, stamped with when it ended', async () => {
+    const win = makeMockWindow();
+    usageLedger.records.length = 0;
+    await sessionManager.createSession({ id: 'test-ledger', branch: 'feat/usage', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    const models = [{ model: 'opus', input: 900, output: 40, costUsd: 0.4 }];
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false, totalCostUsd: 0.4, sessionCostUsd: 0.4, turnTokens: { input: 900, output: 40 }, durationMs: 1200, models });
+    await vi.waitFor(() => expect(usageLedger.records).toHaveLength(1));
+    const result = sessionManager.getEventHistory('test-ledger').find((e) => e.type === 'result');
+    expect(result).toMatchObject({ at: expect.any(Number) });
+    expect(usageLedger.records[0]).toEqual({
+      at: (result as { at: number }).at, thread: 'test-ledger', repoPath: '/repo', title: 'feat/usage', agent: 'mock',
+      usd: 0.4, tokens: { input: 900, output: 40 }, ms: 1200, models,
+    });
+    // Not in the manifest (the mock's is empty): shown as removed.
+    expect((await sessionManager.usageSummary(null)).byThread).toEqual([expect.objectContaining({ thread: 'test-ledger', title: 'feat/usage', removed: true, usd: 0.4 })]);
+
+    await sessionManager.destroySession('test-ledger');
   });
 
   it('adds up each turn\'s tokens for the thread and saves them, even with no cost', async () => {

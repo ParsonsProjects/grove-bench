@@ -25,12 +25,14 @@ src/
     worktree-manager.ts
     agent-session.ts   # Session lifecycle management
     session-*.ts       # Session types, event log + history, permission prompts, limits, skills, agent config, streamed text merged before IPC
+    usage-ledger.ts    # Every turn's cost, tokens, time and models across threads (usage-ledger.jsonl), for the Usage dialog
     agent-utils.ts     # Agent helper utilities
     terminal.ts        # node-pty management
     app-state.ts       # Persistent app state
     window-state.ts    # Window position/size persistence
     memory.ts          # Project memory system
     memory-autosave.ts # Auto-save memory on interval
+    follow-ups.ts      # Work agents leave for later threads (follow-ups.json), for the grove-followups tools and the Follow-ups drawer
     skill-schedules.ts # Skills run in a new thread on a schedule (docs/skill-schedules-plan.md)
     skill-sharing.ts   # Skills every agent can use: .agents/skills, with links in .claude/skills for Claude Code
     settings.ts        # User settings
@@ -56,7 +58,7 @@ src/
       claude-accounts.ts # Other Claude accounts: one adapter each, with its own CLAUDE_CONFIG_DIR
       acp/             # Agent Client Protocol adapter (Gemini CLI, Copilot CLI, OpenCode, custom agents)
       file-attachments.ts # How attached files reach each agent (by path; audio inline for ACP agents that take it)
-      grove-tools.ts   # Grove's memory and Preview tools, defined once
+      grove-tools.ts   # Grove's memory, Preview and follow-up tools, defined once
       grove-mcp-http.ts # Those tools over MCP HTTP, for agents other than Claude Code
       mcp-bridge/      # stdio bridge to that server, for agents without HTTP MCP (2nd Vite entry)
       preview-mcp-server.ts # Agent browser tools (grove-preview)

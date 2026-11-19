@@ -8,6 +8,7 @@ import {
   uniquifyFileName,
   base64Size,
   dataUrlData,
+  dataUrlMediaType,
   formatFileSize,
   attachmentPayload,
   reattach,
@@ -397,6 +398,17 @@ describe('extractClipboardImages', () => {
 
 // ─── Data helpers ───
 
+describe('dataUrlMediaType', () => {
+  it('reads the type of a base64 data URL, and nothing else', () => {
+    expect(dataUrlMediaType('data:image/png;base64,iVBOR')).toBe('image/png');
+    expect(dataUrlMediaType('data:image/svg+xml;base64,PHN2Zy8+')).toBe('image/svg+xml');
+    expect(dataUrlMediaType('data:image/svg+xml,<svg/>')).toBe('');
+    expect(dataUrlMediaType('data:;base64,AAAA')).toBe('');
+    expect(dataUrlMediaType('https://example.com/a.png')).toBe('');
+    expect(dataUrlMediaType('')).toBe('');
+  });
+});
+
 describe('dataUrlData and base64Size', () => {
   it('takes the base64 data off a data: URL', () => {
     expect(dataUrlData('data:application/pdf;base64,JVBERi0=')).toBe('JVBERi0=');
@@ -502,7 +514,7 @@ describe('reattach', () => {
       throw new Error('ipc failed');
     });
     const attached = await reattach({
-      images: [{ file: png, name: 'gone.png' }, { name: 'remote.png', url: 'https://example.com/a.png' }],
+      images: [{ file: png, name: 'gone.png' }, { name: 'out/shot.png', path: 'out/shot.png' }],
       attachments: [{ file: pdf, name: 'spec.pdf', mediaType: 'application/pdf', size: 3 }, { name: 'unsaved.zip', mediaType: 'application/zip', size: 3 }],
     }, read);
 

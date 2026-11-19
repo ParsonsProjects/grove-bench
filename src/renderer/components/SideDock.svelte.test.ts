@@ -12,9 +12,11 @@ vi.mock('dompurify', () => ({
 import SideDock from './SideDock.svelte';
 // SideDock loads it on first use; loaded here, that import resolves at once.
 import './SubagentPanel.svelte';
+import './FollowUpsDrawer.svelte';
 import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
 import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
 import { bookmarkStore } from '../stores/bookmarks.svelte.js';
+import { followUpsStore } from '../stores/followUps.svelte.js';
 import { messageStore, type ChatMessage } from '../stores/messages.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
 import { dockStore, DOCK_MIN_WIDTH, DOCK_THREAD_MIN_WIDTH } from '../stores/dock.svelte.js';
@@ -42,11 +44,12 @@ afterEach(() => {
   markdownPreviewStore.close();
   subagentPanelStore.close();
   bookmarkStore.toggleDrawer(false);
+  followUpsStore.toggleDrawer(false);
 });
 
 describe('SideDock', () => {
   it('shows nothing while no panel is open', () => {
-    const { container } = render(SideDock, { sessionId: SID, bookmarks: true });
+    const { container } = render(SideDock, { sessionId: SID, shared: true });
     expect(container.querySelector('[data-dock]')).toBeNull();
   });
 
@@ -100,8 +103,8 @@ describe('SideDock', () => {
   });
 
   it('docks Bookmarks where it is told to, with or without a thread', async () => {
-    const thread = render(SideDock, { sessionId: SID, bookmarks: false });
-    const landing = render(SideDock, { bookmarks: true });
+    const thread = render(SideDock, { sessionId: SID, shared: false });
+    const landing = render(SideDock, { shared: true });
     bookmarkStore.toggleDrawer(true);
     await tick();
     expect(within(thread.container).queryByRole('complementary', { name: 'Bookmarks' })).toBeNull();
@@ -110,6 +113,21 @@ describe('SideDock', () => {
     expect(panel.contains(document.activeElement)).toBe(true);
     pressEsc(document.activeElement!);
     expect(bookmarkStore.drawerOpen).toBe(false);
+  });
+
+  it('docks Follow-ups where Bookmarks docks, over Bookmarks when opened after it', async () => {
+    const thread = render(SideDock, { sessionId: SID, shared: false });
+    const landing = render(SideDock, { shared: true });
+    bookmarkStore.toggleDrawer(true);
+    followUpsStore.toggleDrawer(true);
+    await tick();
+    await tick();
+    expect(within(thread.container).queryByRole('complementary', { name: 'Follow-ups' })).toBeNull();
+    expect(landing.container.querySelector('[data-dock]')?.getAttribute('data-dock')).toBe('followups');
+    expect(await within(landing.container).findByRole('complementary', { name: 'Follow-ups' })).toBeInTheDocument();
+    followUpsStore.toggleDrawer(false);
+    await tick();
+    expect(landing.container.querySelector('[data-dock]')?.getAttribute('data-dock')).toBe('bookmarks');
   });
 
   it('takes the keyboard for a new opening, not when it mounts again', async () => {
@@ -135,15 +153,15 @@ describe('SideDock', () => {
   });
 
   it('leaves the keyboard be when Bookmarks moves to the thread you switched to', async () => {
-    const first = render(SideDock, { sessionId: SID, bookmarks: true });
+    const first = render(SideDock, { sessionId: SID, shared: true });
     bookmarkStore.toggleDrawer(true);
     await tick();
     expect(within(first.container).getByRole('complementary', { name: 'Bookmarks' }).contains(document.activeElement)).toBe(true);
 
     const box = document.body.appendChild(document.createElement('textarea'));
     box.focus();
-    await first.rerender({ sessionId: SID, bookmarks: false });
-    const second = render(SideDock, { sessionId: 'other', bookmarks: true });
+    await first.rerender({ sessionId: SID, shared: false });
+    const second = render(SideDock, { sessionId: 'other', shared: true });
     await tick();
     expect(within(second.container).getByRole('complementary', { name: 'Bookmarks' })).toBeInTheDocument();
     expect(document.activeElement).toBe(box);
@@ -196,7 +214,7 @@ describe('SideDock', () => {
   });
 
   it('never docks a thread\'s panels where there is no thread', async () => {
-    const { container } = render(SideDock, { bookmarks: true });
+    const { container } = render(SideDock, { shared: true });
     markdownPreviewStore.show('# Plan', 'PLAN.md', SID);
     await tick();
     expect(container.querySelector('[data-dock]')).toBeNull();

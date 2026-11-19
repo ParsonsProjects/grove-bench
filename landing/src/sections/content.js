@@ -91,6 +91,7 @@ export const INCLUDED = [
   'a real terminal for every thread',
   'permission modes, checkpoints and rewind',
   'project memory shared across threads',
+  'cost, tokens and time across every thread and model',
   'updates that download in the background',
 ];
 

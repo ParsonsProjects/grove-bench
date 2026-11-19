@@ -37,12 +37,15 @@
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
   import { groupStore } from './stores/groups.svelte.js';
   import { todoStore } from './stores/todo.svelte.js';
+  import { followUpsStore } from './stores/followUps.svelte.js';
   import { schedulesStore } from './stores/schedules.svelte.js';
   import { skillsPanelStore } from './stores/skillsPanel.svelte.js';
+  import { agentMonitorStore } from './stores/agentMonitor.svelte.js';
   import { goalStore } from './stores/goals.svelte.js';
   import { panelStore } from './stores/panels.svelte.js';
   import { previewStore } from './stores/preview.svelte.js';
   import { backgroundAgentStore } from './stores/background-agent.svelte.js';
+  import { usageReportStore } from './stores/usageReport.svelte.js';
   import type { AppErrorReport } from '../shared/types.js';
   import { isTempBranch } from '../shared/temp-branch.js';
   import { draftStore } from './stores/draft.svelte.js';
@@ -57,7 +60,12 @@
   // Loaded the first time it opens (Ctrl+R or the search button).
   const loadSessionFinder = lazyComponent(() => import('./components/SessionFinder.svelte'));
   const loadBackgroundAgentDialog = lazyComponent(() => import('./components/BackgroundAgentDialog.svelte'));
+  const loadUsageDialog = lazyComponent(() => import('./components/UsageDialog.svelte'));
   const loadSkillsPanel = lazyComponent(() => import('./components/SkillsPanel.svelte'));
+  const loadAgentMonitor = lazyComponent(() => import('./components/AgentMonitorDialog.svelte'));
+  // Mounted once opened, so its close animation plays.
+  let agentMonitorOpened = $state(false);
+  $effect(() => { if (agentMonitorStore.open) agentMonitorOpened = true; });
   // The Skills drawer stays mounted once opened, as Settings and Memory do.
   let skillsPanelOpened = $state(false);
   $effect(() => { if (skillsPanelStore.open) skillsPanelOpened = true; });
@@ -308,6 +316,10 @@
       e.preventDefault();
       settingsStore.panelOpen = !settingsStore.panelOpen;
     }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'a') {
+      e.preventDefault();
+      agentMonitorStore.toggle();
+    }
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === 'n') {
       e.preventDefault();
       // A draft in the project of the conversation being looked at.
@@ -411,6 +423,7 @@
     void bookmarkStore.load();
     void groupStore.load();
     void todoStore.load();
+    void followUpsStore.load();
     // Listens before the restore ends: main's scheduler starts after it.
     schedulesStore.init();
     void panelStore.load();
@@ -662,7 +675,7 @@
   <!-- Bookmarks, docked here when no thread shows (the draft, the landing, a
        thread still reconnecting). In a thread it docks in the thread's pane,
        above its bottom bar. -->
-  <SideDock bookmarks={!threadPaneShown} />
+  <SideDock shared={!threadPaneShown} />
 </div>
 <AnalyticsConsent visible={showAnalyticsConsent} />
 </div>
@@ -676,6 +689,19 @@
 {#if backgroundAgentStore.ask}
   {#await loadBackgroundAgentDialog() then BackgroundAgentDialog}
     <BackgroundAgentDialog />
+  {/await}
+{/if}
+
+{#if usageReportStore.open}
+  {#await loadUsageDialog() then UsageDialog}
+    <UsageDialog />
+  {/await}
+{/if}
+
+<!-- Opened from the title bar's activity counts, or Ctrl+Shift+A. -->
+{#if agentMonitorStore.open || agentMonitorOpened}
+  {#await loadAgentMonitor() then AgentMonitorDialog}
+    <AgentMonitorDialog />
   {/await}
 {/if}
 

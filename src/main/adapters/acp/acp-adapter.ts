@@ -41,7 +41,7 @@ import { isReadOnlyToolCall } from '../../read-only-tools.js';
 import { loadAgentSignIn, loadModelCatalog, saveAgentSignIn, saveModelCatalog } from '../../app-state.js';
 import { catalogs, installFor } from '../../catalogs.js';
 import { AUDIO_INLINE_BUDGET_BYTES, inlineAudioType } from '../file-attachments.js';
-import { memoryServer, previewServer, type GroveServer } from '../grove-tools.js';
+import { followUpsServer, memoryServer, previewServer, type GroveServer } from '../grove-tools.js';
 import { startGroveMcpHttp, type GroveMcpHttp } from '../grove-mcp-http.js';
 import { stdioBridgeLaunch } from '../mcp-bridge/launch.js';
 import { listSkills as listSkillsIn, writeSkill, SHARED_SKILL_DIRS, type SkillDirs } from '../../skills.js';
@@ -791,7 +791,7 @@ class AcpQuery {
     });
   }
 
-  /** Grove's memory and Preview tools. They are served over HTTP on this
+  /** Grove's memory, Preview and follow-up tools. They are served over HTTP on this
    *  computer; an agent that can connect by address (the optional
    *  mcpCapabilities.http) gets the address, and any other starts Grove's
    *  stdio bridge to it (stdio is the one transport every agent supports). */
@@ -799,6 +799,7 @@ class AcpQuery {
     const servers: GroveServer[] = [];
     if (this.config.memoryOperations) servers.push(memoryServer(this.config.memoryOperations));
     if (this.config.previewOperations) servers.push(previewServer(this.config.previewOperations));
+    if (this.config.followUpOperations) servers.push(followUpsServer(this.config.followUpOperations));
     if (servers.length === 0) return [];
     this.mcp = await startGroveMcpHttp(servers);
     const http = this.init?.agentCapabilities?.mcpCapabilities?.http === true;
@@ -1006,6 +1007,11 @@ class AcpQuery {
         : stopReason === 'max_tokens' ? `${this.def.displayName} hit its output token limit.`
           : stopReason === 'max_turn_requests' ? `${this.def.displayName} hit its limit of model requests for one turn.`
             : null);
+    // usage_update's cost covers the whole session: this turn's is the rise.
+    const turnCostUsd = this.sessionCost !== undefined ? this.runningCost.turnCost(this.sessionCost, failed) : undefined;
+    // ACP reports one model per session: the whole turn is the one chosen
+    // when it ended (a switch mid-turn is rare).
+    const model = this.models?.current || this.config.model || '';
     this.emit({
       type: 'result',
       subtype: stopReason === 'max_turn_requests' ? 'error_max_turns' : failed ? 'error_during_execution' : 'success',
@@ -1014,11 +1020,9 @@ class AcpQuery {
       durationMs: Date.now() - started,
       numTurns: this.turns,
       ...(this.contextSize ? { contextWindow: this.contextSize } : {}),
-      // usage_update's cost covers the whole session: this turn's is the rise.
-      ...(this.sessionCost !== undefined
-        ? { totalCostUsd: this.runningCost.turnCost(this.sessionCost, failed), sessionCostUsd: this.sessionCost }
-        : {}),
+      ...(turnCostUsd !== undefined ? { totalCostUsd: turnCostUsd, sessionCostUsd: this.sessionCost } : {}),
       ...(turnTokens ? { turnTokens } : {}),
+      ...(model ? { models: [{ model, input: turnTokens?.input ?? 0, output: turnTokens?.output ?? 0, ...(turnCostUsd !== undefined ? { costUsd: turnCostUsd } : {}) }] } : {}),
     });
   }
 

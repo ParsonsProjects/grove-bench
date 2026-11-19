@@ -26,6 +26,8 @@ const servers = vi.hoisted(() => ({
 }));
 vi.mock('./memory-mcp-server.js', () => ({ createMemoryMcpServer: servers.createMemoryMcpServer }));
 vi.mock('./preview-mcp-server.js', () => ({ createPreviewMcpServer: servers.createPreviewMcpServer }));
+const toSdkMcpServer = vi.hoisted(() => vi.fn((server: { name: string }) => Promise.resolve({ server: server.name })));
+vi.mock('./sdk-mcp.js', () => ({ toSdkMcpServer }));
 
 import { ClaudeCodeAdapter, CONTEXT_1M_BETA, LIMIT_STOP_REASON, THINKING_LEVEL_TOKENS, setSdkForTests } from './claude-code.js';
 import { ResumeNotFoundError, type AdapterConfig, type AdapterEvent, type AgentQueryHandle, type PermissionResponse } from './types.js';
@@ -254,6 +256,12 @@ describe('ClaudeCodeAdapter.start(): what it asks the SDK for', () => {
     expect(servers.createPreviewMcpServer.mock.calls[0][0]).toBe(previewOperations);
   });
 
+  it("serves Grove's follow-up tools to the agent when the thread has them", async () => {
+    const followUpOperations = { add: vi.fn(), list: vi.fn(), done: vi.fn() } as unknown as NonNullable<AdapterConfig['followUpOperations']>;
+    expect((await start({ followUpOperations })).options.mcpServers).toEqual({ 'grove-followups': { server: 'grove-followups' } });
+    expect((await start({})).options.mcpServers).toBeUndefined();
+  });
+
   it('holds each tool call for the thread\'s limits, for longer than Grove waits for an answer', async () => {
     const beforeToolUse = vi.fn(() => Promise.resolve<'continue' | 'stop'>('stop'));
     const { options } = await start({ beforeToolUse });
@@ -408,6 +416,21 @@ describe('ClaudeCodeAdapter.start(): the events', () => {
       expect((await drain(handle))[0]).toMatchObject({
         totalCostUsd: 7, sessionCostUsd: 7,
         turnTokens: { input: 700, output: 70 }, sessionTokens: { input: 700, output: 70 },
+      });
+    });
+
+    it('split a resumed turn by model from the totals each had reached', async () => {
+      const both = { ...result, modelUsage: { 'claude-opus-4-8': { inputTokens: 700, outputTokens: 70 }, 'claude-haiku-4-5': { inputTokens: 100, outputTokens: 10 } } };
+      const { handle, fake } = await start({
+        resumeSessionId: 's1', priorCostUsd: 5, priorTokens: { input: 500, output: 50 },
+        priorModels: { 'claude-opus-4-8': { input: 500, output: 50, costUsd: 5 } },
+      });
+      fake.send(both);
+      fake.end();
+      // 300 in this turn: Opus's 200 more and Haiku's 100, new since.
+      expect((await drain(handle))[0]).toMatchObject({
+        turnTokens: { input: 300, output: 30 },
+        models: [{ model: 'claude-opus-4-8', input: 200, output: 20 }, { model: 'claude-haiku-4-5', input: 100, output: 10 }],
       });
     });
   });

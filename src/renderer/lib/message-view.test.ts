@@ -86,6 +86,12 @@ describe('isMessageVisible', () => {
     expect(isMessageVisible(tool({ id: '3', toolName: 'mcp__grove-memory__save_memory' }), 'summary')).toBe(false);
   });
 
+  it('in summary mode shows adding a follow-up and marking one done, but not listing them', () => {
+    expect(isMessageVisible(tool({ id: '1', toolName: 'mcp__grove-followups__followup_add' }), 'summary')).toBe(true);
+    expect(isMessageVisible(tool({ id: '2', toolName: 'mcp__grove-followups__followup_done' }), 'summary')).toBe(true);
+    expect(isMessageVisible(tool({ id: '3', toolName: 'mcp__grove-followups__followup_list' }), 'summary')).toBe(false);
+  });
+
   it("in summary mode shows another agent's MCP calls and calls Grove can't place, but not its own or to-do lists", () => {
     const acp = (id: string, toolName: string, view: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
       tool({ id, toolName, toolView: { kind: 'other', ...view }, toolCategory: 'other', ...extra } as never);
@@ -150,10 +156,17 @@ describe('isMessageVisible', () => {
     expect(isMessageVisible(question('4', true), 'focus')).toBe(true);
   });
 
-  it('in focus mode keeps user prompts, errors, and turn results', () => {
+  it('in focus mode keeps user prompts, errors, and turns that ended with errors', () => {
     expect(isMessageVisible({ kind: 'user', id: '1', text: 'hi' }, 'focus')).toBe(true);
     expect(isMessageVisible({ kind: 'error', id: '2', text: 'boom' }, 'focus')).toBe(true);
-    expect(isMessageVisible({ kind: 'result', id: '3', subtype: 'success', isError: false }, 'focus')).toBe(true);
+    expect(isMessageVisible({ kind: 'result', id: '3', subtype: 'error_during_execution', isError: true }, 'focus')).toBe(true);
+  });
+
+  it('hides a turn that ended fine in focus mode only', () => {
+    const done: ChatMessage = { kind: 'result', id: '1', subtype: 'success', isError: false, totalCostUsd: 0, durationMs: 800 };
+    expect(isMessageVisible(done, 'focus')).toBe(false);
+    expect(isMessageVisible(done, 'summary')).toBe(true);
+    expect(isMessageVisible(done, 'detailed')).toBe(true);
   });
 });
 
@@ -188,7 +201,7 @@ describe('filterVisibleMessages', () => {
       text('t4'),
     ];
     const visible = filterVisibleMessages(turn, 'focus').map((m) => m.id);
-    expect(visible).toEqual(['u1', 't1', 't2', 't3', 'r1', 'u2', 't4']);
+    expect(visible).toEqual(['u1', 't1', 't2', 't3', 'u2', 't4']);
   });
 
   it('focus mode keeps every question, unresolved permissions, and drops resolved permissions', () => {

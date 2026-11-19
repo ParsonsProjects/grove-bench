@@ -12,6 +12,7 @@
   import { agentsStore } from '../stores/agents.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
+  import { usageReportStore } from '../stores/usageReport.svelte.js';
   import { formatUsd } from '../../shared/limits.js';
   import { formatTokens } from '../lib/context-usage.js';
   import type { ThreadUsage } from '../../shared/types.js';
@@ -25,7 +26,8 @@
     sessionId: string;
     /** The popup is open: ask for the thread's and today's figures. */
     active: boolean;
-    /** Called before Settings opens at Limits & alerts. */
+    /** Called before Settings opens at Limits & alerts, or the Usage
+     *  dialog opens. */
     onclose?: () => void;
   } = $props();
 
@@ -131,7 +133,12 @@
     {/if}
     {reportsPlanUsage ? 'Tokens in count what the model read, prompt cache included.' : 'Tokens as the agent reported them.'}
   </p>
-  <Button variant="link" size="inline" class="mt-2" onclick={() => { onclose?.(); settingsStore.openAt('limits'); }}>
-    Limits & alerts
-  </Button>
+  <div class="mt-2 flex gap-3">
+    <Button variant="link" size="inline" onclick={() => { onclose?.(); usageReportStore.open = true; }} data-testid="all-usage">
+      All usage
+    </Button>
+    <Button variant="link" size="inline" onclick={() => { onclose?.(); settingsStore.openAt('limits'); }}>
+      Limits & alerts
+    </Button>
+  </div>
 {/if}

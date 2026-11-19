@@ -453,7 +453,7 @@
         {/if}
       </div>
     </div>
-    <SideDock {sessionId} bookmarks={store.activeSessionId === sessionId} />
+    <SideDock {sessionId} shared={store.activeSessionId === sessionId} />
   </div>
 
   <StatusBar {sessionId} />

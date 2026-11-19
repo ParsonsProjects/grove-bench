@@ -1032,3 +1032,53 @@ describe('draftStore.startThread', () => {
     store.clearError();
   });
 });
+
+describe('draftStore.openFollowUp', () => {
+  const followUp = {
+    id: 'a1b2c3', repoPath: '/repo/two', title: 'Add tests', details: 'Cover refresh()', createdAt: 0,
+    fromLabel: 'Fix login', fromBranch: 'claude/login',
+  };
+
+  it("opens the draft in the follow-up's project with it as the first message", () => {
+    expect(draftStore.openFollowUp(followUp)).toBe(true);
+    expect(draftStore.draft).toMatchObject({ repoPath: '/repo/two', followUpId: 'a1b2c3' });
+    expect(draftStore.draft?.text).toBe('Add tests\n\nCover refresh()\n\n'
+      + '(This is follow-up a1b2c3. It was added in the thread "Fix login" (branch claude/login). When it\'s done, mark it done with followup_done.)');
+    expect(draftStore.visible).toBe(true);
+  });
+
+  it("leaves a draft with a message of its own as it is, and shows it", () => {
+    draftStore.open('/repo/one');
+    draftStore.setText('my own words');
+    store.activeSessionId = 's1';
+    expect(draftStore.openFollowUp(followUp)).toBe(false);
+    expect(draftStore.draft).toMatchObject({ repoPath: '/repo/one', text: 'my own words' });
+    expect(draftStore.draft).not.toHaveProperty('followUpId');
+    expect(store.activeSessionId).toBeNull();
+  });
+
+  it('notes the thread against the follow-up once it starts', async () => {
+    draftStore.openFollowUp(followUp);
+    await settle();
+    expect(await draftStore.start()).toBe(true);
+    expect(mockGroveBench.followUpStarted).toHaveBeenCalledWith('a1b2c3', 'new1');
+  });
+
+  it('drops the link when the draft moves to another project', async () => {
+    draftStore.openFollowUp(followUp);
+    draftStore.open('/repo/one');
+    expect(draftStore.draft).toMatchObject({ repoPath: '/repo/one' });
+    expect(draftStore.draft).not.toHaveProperty('followUpId');
+    await settle();
+    await draftStore.start();
+    expect(mockGroveBench.followUpStarted).not.toHaveBeenCalled();
+  });
+
+  it("doesn't note a thread that didn't start", async () => {
+    createSessionMock().mockRejectedValue(new Error('no'));
+    draftStore.openFollowUp(followUp);
+    await settle();
+    expect(await draftStore.start()).toBe(false);
+    expect(mockGroveBench.followUpStarted).not.toHaveBeenCalled();
+  });
+});

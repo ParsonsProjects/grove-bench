@@ -6,6 +6,7 @@
 
 import type { ThreadItems } from '../shared/thread-items.js';
 import type { SkillSchedule, SkillScheduleInput } from '../shared/skill-schedules.js';
+import type { FollowUp } from '../shared/follow-ups.js';
 
 // Capture uncaught errors (a template error can kill Svelte's effect loop).
 const errs: string[] = [];
@@ -33,6 +34,31 @@ const CLAUDE_MODE_OPTIONS = [
 
 const REPO_A = 'C:/dev/grove-bench';
 const REPO_B = 'C:/dev/api-service';
+
+/** Work the demo threads' agents left for later threads. */
+const demoFollowUps: FollowUp[] = [
+  {
+    id: '3fa2c1', repoPath: REPO_A, title: 'Collapse the sidebar footer into a menu below 260px',
+    details: 'The footer icons wrap onto two rows when the sidebar is narrow (Sidebar.svelte, footerTools). '
+      + 'Move everything but Settings into an overflow menu under 260px. Done when the footer stays one row at the narrowest width.',
+    createdAt: now - 40 * min, fromSessionId: 's-sidebar', fromLabel: 'Sidebar revamp', fromBranch: 'claude/sidebar-revamp',
+  },
+  {
+    id: '8b10e4', repoPath: REPO_A, title: 'Add a test for the retry banner on a second 401',
+    details: 'The banner hides after the first retry, but a second 401 should show it again. Cover it in SignInBanner.svelte.test.ts.',
+    createdAt: now - 90 * min, fromSessionId: 's-oauth-ui', fromLabel: 'Sign-in retry banner', fromBranch: 'claude/fix-oauth-refresh',
+    startedSessionIds: ['s-readme'],
+  },
+  {
+    id: 'c2d9a7', repoPath: REPO_B, title: 'Expire refresh tokens that were issued before the key rotation',
+    details: 'Found while fixing the refresh: tokens signed with the old key still pass verify() in auth/tokens.ts.',
+    createdAt: now - 3 * 60 * min, fromSessionId: 's-oauth', fromLabel: 'claude/fix-oauth-refresh', fromBranch: 'claude/fix-oauth-refresh',
+  },
+  {
+    id: '51ee02', repoPath: REPO_B, title: 'Drop the unused retry helper', details: '',
+    createdAt: now - 2 * 24 * 60 * min, doneAt: now - 26 * 60 * min, doneBySessionId: 's-perf', doneNote: 'Removed retryWithJitter and its test.',
+  },
+];
 
 /** Branches checked out per project: main in each project folder, the
  *  threads' branches in their copies, and a worktree made outside Grove Bench. */
@@ -514,6 +540,7 @@ const api: Record<string, unknown> = {
     setTimeout(() => void seedSessions(), 150);
   },
   listBookmarks: async () => [],
+  listFollowUps: async () => structuredClone(demoFollowUps),
   getOpenTabs: async () => [],
   getCollapsedRepos: async () => ({ [REPO_A]: false, [REPO_B]: false }),
   getSessionSort: async () => ({ key: 'age', dir: 'desc' }),
@@ -705,7 +732,33 @@ const api: Record<string, unknown> = {
   getCachedUsage: async () => null,
   getDailySpend: async () => 3.42,
   getThreadUsage: async () => ({ spendUsd: 1.84, tokens: { input: 1_240_000, output: 45_300 } }),
+  getUsageSummary: async (since: number | null) => {
+    // A week's figures, scaled down for shorter ranges.
+    const share = since === null ? 1.6 : now - since < 26 * 60 * min ? 0.2 : now - since < 8 * 24 * 60 * min ? 1 : 1.4;
+    const t = (usd: number, input: number, output: number, ms: number, turns: number) => ({
+      usd: usd * share, input: Math.round(input * share), output: Math.round(output * share), ms: Math.round(ms * share), turns: turns === 0 ? 0 : Math.max(1, Math.round(turns * share)),
+    });
+    return {
+      total: t(14.62, 9_800_000, 312_000, 4.1 * 60 * 60 * 1000, 96),
+      byModel: [
+        { model: 'claude-opus-5-5', agent: 'claude-code', ...t(12.9, 8_100_000, 270_000, 3.5 * 60 * 60 * 1000, 78) },
+        { model: 'claude-haiku-5-5', agent: 'claude-code', ...t(0.42, 1_100_000, 22_000, 0, 0) },
+        { model: 'gpt-5.5-codex', agent: 'codex', ...t(1.3, 600_000, 20_000, 0.6 * 60 * 60 * 1000, 18) },
+      ],
+      byThread: [
+        { thread: 's-sidebar', title: 'Sidebar revamp', repoPath: REPO_A, agent: 'claude-code', removed: false, lastAt: now - 20 * min, ...t(6.1, 4_200_000, 130_000, 1.7 * 60 * 60 * 1000, 40) },
+        { thread: 's-e2e', title: 'Flaky e2e retries', repoPath: REPO_B, agent: 'claude-code', removed: false, lastAt: now - 3 * 60 * min, ...t(4.4, 3_000_000, 98_000, 1.2 * 60 * 60 * 1000, 30) },
+        { thread: 's-old-parser', title: 'Try the new parser', repoPath: REPO_A, agent: 'codex', removed: true, lastAt: now - 2 * 24 * 60 * min, ...t(1.3, 600_000, 20_000, 0.6 * 60 * 60 * 1000, 18) },
+      ],
+      undated: since === null ? t(2.1, 1_400_000, 41_000, 0.5 * 60 * 60 * 1000, 12) : { usd: 0, input: 0, output: 0, ms: 0, turns: 0 },
+      recordingSince: now - 9 * 24 * 60 * min,
+      backfilling: false,
+    };
+  },
   exportThread: async () => null,
+  // A thread image's Download and Open file location (no disk in a browser).
+  downloadImage: async (_sessionId: string, _source: unknown, name?: string) => name?.split(/[\\/]/).pop() || 'image.png',
+  showImageInFolder: async () => true,
   switchAgent: async () => {},
   // Mirrors the Claude Code adapter's declared controls (for Opus 5.5, the
   // default model) so the status bar

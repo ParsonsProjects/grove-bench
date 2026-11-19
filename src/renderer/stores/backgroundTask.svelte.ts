@@ -22,7 +22,7 @@ const AUTO_REMOVE_MS = 3000;
 /** Task types that are an agent at work: a subagent, or a workflow run here
  *  or remotely. Not a background shell ('local_bash'): that can be a dev
  *  server that never ends. */
-const AGENT_TASK_TYPES = new Set(['local_agent', 'local_workflow', 'remote_agent']);
+export const AGENT_TASK_TYPES: ReadonlySet<string> = new Set(['local_agent', 'local_workflow', 'remote_agent']);
 
 /** Task types that are a command left running: a background shell (a dev
  *  server, a watcher) or a monitor. The Monitor tool's watch command is a

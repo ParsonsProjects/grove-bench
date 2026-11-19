@@ -8,20 +8,30 @@ on:
       - '*.md'
       # Only top-level docs: docs/help/*.md is bundled into the app.
       - 'docs/*.md'
+  # Every pull request starts the jobs, so their checks always report: a job
+  # left out by path filtering never starts, and the pull request waits on
+  # it. One that only changes what pushes ignore ends each job after its
+  # first steps (scripts/ci-needs-checks.mjs, which mirrors the list above).
   pull_request:
     branches: [main]
-    paths-ignore:
-      - 'landing/**'
-      - '*.md'
-      - 'docs/*.md'
 
 jobs:
   test:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The merge commit and its first parent (the base), to see what
+          # the pull request changes.
+          fetch-depth: 2
+
+      - name: Anything to check?
+        # Before setup-node: the runner's own Node runs it.
+        id: changes
+        run: node scripts/ci-needs-checks.mjs
 
       - uses: actions/setup-node@v7
+        if: steps.changes.outputs.checks == 'true'
         with:
           node-version: 24
           cache: npm
@@ -31,20 +41,24 @@ jobs:
         # setup): the type check, tests and Vite build don't need them, since
         # node-pty is mocked and electron is aliased in tests. Packaging is
         # checked by the Package workflow.
+        if: steps.changes.outputs.checks == 'true'
         run: npm ci --ignore-scripts
 
       - name: Type check
         # tsc for .ts files, then svelte-check for the TypeScript in .svelte
         # components, which tsc skips.
+        if: steps.changes.outputs.checks == 'true'
         run: npm run typecheck
 
       - name: Run tests
         # In a random order, so a test that only passes after (or without)
         # another one fails here. The log prints the seed; reproduce with
         # npx vitest run --sequence.shuffle --sequence.seed=<seed>
+        if: steps.changes.outputs.checks == 'true'
         run: npm test -- --sequence.shuffle
 
       - name: Build
+        if: steps.changes.outputs.checks == 'true'
         run: npm run build
 
   lint:
@@ -54,14 +68,25 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The merge commit and its first parent (the base), to see what
+          # the pull request changes.
+          fetch-depth: 2
+
+      - name: Anything to check?
+        # Before setup-node: the runner's own Node runs it.
+        id: changes
+        run: node scripts/ci-needs-checks.mjs
 
       - uses: actions/setup-node@v7
+        if: steps.changes.outputs.checks == 'true'
         with:
           node-version: 24
           cache: npm
 
       - name: Install dependencies
         id: install
+        if: steps.changes.outputs.checks == 'true'
         run: npm ci --ignore-scripts
 
       # Each check runs even when the one before it fails, so one push shows
@@ -69,9 +94,11 @@ jobs:
       - name: Lint
         # Errors listed in eslint-suppressions.json don't fail it, but one
         # that's fixed and still listed does: run npm run lint:prune.
+        if: steps.changes.outputs.checks == 'true'
         run: npm run lint
 
       - name: Unused files, exports and dependencies
+        # Skipped with the install when there's nothing to check.
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: npm run knip
 
@@ -79,7 +106,7 @@ jobs:
         # ESLint lets eslint-suppressions.json grow and keeps entries for
         # deleted files. This fails on both (scripts/check-lint-suppressions.mjs,
         # which needs no install).
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.changes.outputs.checks == 'true' }}
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |

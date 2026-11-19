@@ -1,8 +1,8 @@
 /**
  * The dock: a column on the right of a thread, between its tab bar and its
  * bottom bar (the status bar and message box), where the Focus panel, a
- * subagent's thread and Bookmarks open beside the thread instead of over
- * it. The message box and the thread stay in reach while you read.
+ * subagent's thread, Bookmarks and Follow-ups open beside the thread
+ * instead of over it. The message box and the thread stay in reach while you read.
  *
  * One column shows one panel: the one opened last. Panels opened before it
  * stay open underneath, scrolled where they were, and show again when it
@@ -10,7 +10,7 @@
  * last had (nextOpening), so there is no second record to keep in step.
  * Where each panel docks is SideDock's business.
  */
-export type DockPanel = 'focus' | 'subagent' | 'bookmarks';
+export type DockPanel = 'focus' | 'subagent' | 'bookmarks' | 'followups';
 
 /** The narrowest a docked panel gets, and the room it always leaves the
  *  thread beside it (px). */

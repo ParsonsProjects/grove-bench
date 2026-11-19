@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, cleanup, fireEvent, screen, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
@@ -75,6 +75,42 @@ describe('OutputPanel — status messages', () => {
 
     expect(getByRole('note')).toHaveTextContent('Runs without a sandbox');
     expect(getByText('Connecting...').closest('[role="note"]')).toBeNull();
+  });
+});
+
+describe("OutputPanel: a turn's end", () => {
+  const done: ChatMessage = { kind: 'result', id: 'r1', subtype: 'success', isError: false, totalCostUsd: 0, durationMs: 800 };
+  const failed: ChatMessage = { ...done, id: 'r2', subtype: 'error_during_execution', isError: true, errors: ['Tool crashed'] };
+
+  beforeEach(() => {
+    store.activeSessionId = SID;
+  });
+  afterEach(() => messageStore.setViewMode(SID, 'detailed'));
+
+  it('shows "done" with its cost and time outside Focus', () => {
+    messageStore.setViewMode(SID, 'summary');
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'Fix it' }, done] };
+    const { getByText } = render(OutputPanel, { sessionId: SID });
+    expect(getByText(/done/)).toHaveTextContent('$0.0000');
+    expect(getByText(/done/)).toHaveTextContent('0.8s');
+  });
+
+  it('hides a turn that went fine in Focus', () => {
+    messageStore.setViewMode(SID, 'focus');
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'Fix it' }, done] };
+    const { queryByText } = render(OutputPanel, { sessionId: SID });
+    expect(queryByText(/done/)).toBeNull();
+    expect(queryByText(/\$0\.0000/)).toBeNull();
+  });
+
+  it('keeps a turn that ended with errors in Focus, without its cost and time', () => {
+    messageStore.setViewMode(SID, 'focus');
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'Fix it' }, failed] };
+    const { getByText, queryByText } = render(OutputPanel, { sessionId: SID });
+    expect(getByText(/completed with errors/)).toBeInTheDocument();
+    expect(getByText('Tool crashed')).toBeInTheDocument();
+    expect(queryByText(/\$0\.0000/)).toBeNull();
+    expect(queryByText(/0\.8s/)).toBeNull();
   });
 });
 
@@ -1225,6 +1261,25 @@ describe('OutputPanel: the first turn', () => {
     expect(container.querySelector('svg.walk')).not.toBeNull();
   });
 
+  it('ends at a turn that ends without a reply, though Focus hides its end', async () => {
+    messageStore.setViewMode(SID, 'focus');
+    store.sessions = [session('running')];
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'Fix it' }] };
+    arrivalScene.begin(SID);
+    const { container } = render(OutputPanel, { sessionId: SID });
+    expect(container.querySelector('svg.walk')).not.toBeNull();
+
+    messageStore.messagesBySession = { [SID]: [
+      { kind: 'user', id: 'u1', text: 'Fix it' },
+      { kind: 'result', id: 'r1', subtype: 'success', isError: false },
+    ] };
+    messageStore.isRunning = { [SID]: false };
+    await tick();
+    expect(arrivalScene.for(SID)).toBeNull();
+    expect(container.querySelector('svg.walk')).toBeNull();
+    messageStore.setViewMode(SID, 'detailed');
+  });
+
   it('ends when the agent stops without a reply', async () => {
     store.sessions = [session('running')];
     arrivalScene.begin(SID);
@@ -1502,7 +1557,38 @@ describe('OutputPanel: notes while working', () => {
 });
 
 describe('OutputPanel images from the agent', () => {
+  // The lightbox loads on first use (LazyImageLightbox). Load it here once,
+  // since transforming it cold can take longer than a test waits for the
+  // dialog on a slow runner, as with Help (TitleBar.svelte.test.ts).
+  beforeAll(async () => { await import('./ImageLightbox.svelte'); }, 30_000);
+
   const SHOT = { file: `${'a'.repeat(32)}.png` };
+
+  it('steps through the images of the whole thread, and gives a thumbnail only its own menu', async () => {
+    const MOCK = { file: `${'b'.repeat(32)}.png`, name: 'mock.png' };
+    messageStore.messagesBySession = {
+      [SID]: [
+        { kind: 'user', id: 'u1', text: 'Match this', uuid: 'uuid-1', images: [MOCK] },
+        { kind: 'tool_call', id: 't1', toolName: 'mcp__playwright__browser_take_screenshot', toolInput: {}, toolUseId: 'tu1', uuid: 'u1', pending: false, images: [SHOT] },
+      ],
+    };
+    messageStore.setViewMode(SID, 'focus');
+    render(OutputPanel, { sessionId: SID });
+    await tick();
+
+    await fireEvent.contextMenu(screen.getByRole('button', { name: 'View mock.png' }), { clientX: 5, clientY: 5 });
+    // The image menu loads with the lightbox's code; the thread's would show at once.
+    const menu = await screen.findByRole('menu', { name: 'Image actions' });
+    expect(screen.getAllByRole('menu')).toHaveLength(1);
+    expect(within(menu).getAllByRole('menuitem').map((i) => i.textContent?.trim())).toEqual(['Download', 'Open file location']);
+    await fireEvent.keyDown(window, { key: 'Escape' });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'View mock.png' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByTestId('lightbox-position')).toHaveTextContent('1 of 2');
+    await fireEvent.keyDown(dialog, { key: 'ArrowRight' });
+    expect(dialog.querySelector('img')).toHaveAttribute('src', `grove-attachment://image/${SID}/${SHOT.file}`);
+  });
 
   it('keeps a screenshot a tool returned in Focus, without the tool call', async () => {
     messageStore.messagesBySession = {

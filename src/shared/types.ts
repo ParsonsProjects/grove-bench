@@ -4,6 +4,7 @@ import type { LimitKind } from './limits.js';
 import type { ThreadItems } from './thread-items.js';
 import type { ScheduleOutcome, SkillSchedule, SkillScheduleInput } from './skill-schedules.js';
 import type { CiLogTail } from './ci-log.js';
+import type { FollowUp, FollowUpsChange } from './follow-ups.js';
 
 // ─── Worktree ───
 
@@ -244,6 +245,75 @@ export interface ThreadUsage {
   tokens: TokenCounts;
 }
 
+/** One model's part of a turn: its tokens (as TokenCounts) and, when the
+ *  agent reports cost, its share of the turn's cost. */
+export interface ModelTurnUsage extends TokenCounts {
+  model: string;
+  costUsd?: number;
+}
+
+/** One model's running totals over a query, keyed in the result by the
+ *  provider's own name for it, so a resumed query can tell each turn's
+ *  share (running-cost.ts). */
+export interface ModelTotals extends TokenCounts {
+  costUsd: number;
+}
+
+/** One turn in the usage ledger (main's usage-ledger.ts), kept after its
+ *  thread is gone so all-time figures don't shrink. */
+export interface UsageRecord {
+  /** When the turn ended (epoch ms). For a turn from before turns were
+   *  stamped, the time of the prompt before it, or none when that isn't
+   *  known either. */
+  at?: number;
+  thread: string;
+  /** The thread's project and name when the turn ended, for a thread that
+   *  has since been removed. */
+  repoPath?: string;
+  title?: string;
+  /** The agent's adapter id. */
+  agent: string;
+  /** The turn's cost, as turnSpend counts it (0 when none was reported). */
+  usd: number;
+  tokens: TokenCounts;
+  /** How long the turn took, as the agent reported it. */
+  ms: number;
+  /** The models that did the turn, the thread's main model (which the
+   *  turn's time goes to) first. None for turns from before models were
+   *  recorded, or whose agent didn't name one. */
+  models?: ModelTurnUsage[];
+  /** Added up from a thread's history when the ledger began, so `at` is the
+   *  prompt's time, not the turn's end. */
+  backfilled?: true;
+}
+
+/** Cost, tokens, time and turns, added up. */
+export interface UsageTotals extends TokenCounts {
+  usd: number;
+  ms: number;
+  turns: number;
+}
+
+/** Usage across every thread over a range, for the Usage dialog. */
+export interface UsageSummary {
+  total: UsageTotals;
+  /** By model and agent. Turns with no model recorded (from before models
+   *  were, or whose agent didn't name one) are under model '' for their
+   *  agent. A turn and its time go to the thread's main model. Largest cost
+   *  first, then most tokens. */
+  byModel: (UsageTotals & { model: string; agent: string })[];
+  /** By thread, largest cost first, then most tokens. `removed`: the thread
+   *  is gone; title and project are from when it last ran. */
+  byThread: (UsageTotals & { thread: string; title: string; repoPath: string; agent: string; removed: boolean; lastAt?: number })[];
+  /** Turns whose date isn't known (from before turns were stamped, with no
+   *  prompt time either): counted only in all-time figures. */
+  undated: UsageTotals;
+  /** When live recording began (epoch ms), or null before any turn ended. */
+  recordingSince: number | null;
+  /** Still adding up threads' older history (first open only). */
+  backfilling: boolean;
+}
+
 /** What a denied tool call tells the agent when the user typed no reply. */
 export const DEFAULT_DENY_MESSAGE = 'User denied permission';
 /** What "Approve and start fresh…" tells the agent as it declines the plan
@@ -282,7 +352,11 @@ export type AgentEvent =
    *  `turnTokens`: the tokens this turn used, when the agent says;
    *  `sessionTokens`: the conversation's running total it came from (Claude
    *  Code reports totals, which a resume starts from). */
-  | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; sessionCostUsd?: number; turnTokens?: TokenCounts; sessionTokens?: TokenCounts; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number }
+  /** `at`: when the turn ended (epoch ms), stamped by main; older history
+   *  has none. `models`: the turn's tokens and cost by model, the thread's
+   *  main model first. `sessionModels`: each model's running totals, to
+   *  resume from (Claude Code). */
+  | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; sessionCostUsd?: number; turnTokens?: TokenCounts; sessionTokens?: TokenCounts; models?: ModelTurnUsage[]; sessionModels?: Record<string, ModelTotals>; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number; at?: number }
   | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean; toolCategory?: ToolCategory; toolView?: ToolView; planText?: string }
   | { type: 'thinking'; thinking: string; uuid: string; parentToolUseId?: string }
   | { type: 'partial_text'; text: string }
@@ -1247,6 +1321,15 @@ export interface StoredImage {
   name?: string;
 }
 
+/** Where an image the thread shows is, so main can save a copy to Downloads
+ *  or show it in its folder: a saved copy (and the worktree file it was
+ *  copied from, for one the agent made), a file in the worktree, or one just
+ *  sent, whose saved copy main finds by its content. */
+export type ImageSource =
+  | { kind: 'stored'; file: string; path?: string }
+  | { kind: 'worktree'; path: string }
+  | { kind: 'inline'; data: string; mediaType: string };
+
 // ─── Files the agent made ───
 
 /** What kind of file the agent made in a turn, which decides how the thread
@@ -1503,6 +1586,12 @@ export interface GroveBenchAPI {
   /** Open a file in the conversation's worktree that the agent made or
    *  linked to (main/worktree-files.ts). */
   openWorktreeFile(sessionId: string, filePath: string): Promise<OpenWorktreeFileResult>;
+  /** Save a copy of an image in the thread to the Downloads folder, under
+   *  `name` (a number added if it's taken). The name it was saved under, or
+   *  null when the image is gone. */
+  downloadImage(sessionId: string, source: ImageSource, name?: string): Promise<string | null>;
+  /** Show an image in the thread in its folder. False when it's gone. */
+  showImageInFolder(sessionId: string, source: ImageSource): Promise<boolean>;
   respondToPermission(sessionId: string, decision: PermissionDecision): Promise<boolean>;
   /** Answer an MCP elicitation. False when it already resolved or timed out. */
   respondToElicitation(sessionId: string, requestId: string, response: McpElicitationResponse): Promise<boolean>;
@@ -1512,6 +1601,8 @@ export interface GroveBenchAPI {
   getDailySpend(): Promise<number>;
   /** What one thread has used over its life: spend and tokens, as its agent reported them. */
   getThreadUsage(sessionId: string): Promise<ThreadUsage>;
+  /** Usage across every thread since `since` (epoch ms; null for all time). */
+  getUsageSummary(since: number | null): Promise<UsageSummary>;
   onAgentEvent(sessionId: string, callback: (event: AgentEvent) => void): () => void;
   offAgentEvent(sessionId: string): void;
   getEventHistory(sessionId: string): Promise<AgentEvent[]>;
@@ -1540,6 +1631,16 @@ export interface GroveBenchAPI {
   addBookmark(bookmark: Omit<Bookmark, 'id' | 'createdAt'>): Promise<Bookmark>;
   removeBookmark(id: string): Promise<void>;
   updateBookmark(id: string, patch: Partial<Pick<Bookmark, 'note' | 'eventIndex'>>): Promise<void>;
+
+  // Follow-ups (shared/follow-ups.ts)
+  /** Every project's follow-ups, or null while the file can't be read. */
+  listFollowUps(): Promise<FollowUp[] | null>;
+  setFollowUpDone(id: string, done: boolean): Promise<void>;
+  followUpStarted(id: string, sessionId: string): Promise<void>;
+  removeFollowUp(id: string): Promise<void>;
+  /** What changed in each save, by an agent or another window
+   *  (applyFollowUpsChange applies it to the list). */
+  onFollowUpsChanged(callback: (change: FollowUpsChange) => void): () => void;
 
   // Prerequisites
   /** Full check of git + agent CLI (spawns processes; excludes gh). */
@@ -2171,7 +2272,8 @@ export interface GroveBenchSettings {
  * - 'summary':  hides thinking and non-essential tool calls
  * - 'focus':    only user prompts, assistant text, question blocks (with
  *               the answer given), unanswered permission blocks, errors,
- *               turn results and the calls that start subagents
+ *               turns that ended with errors and the calls that start
+ *               subagents
  */
 export type ActivityViewMode = 'detailed' | 'summary' | 'focus';
 export const ACTIVITY_VIEW_MODES: readonly ActivityViewMode[] = ['detailed', 'summary', 'focus'];
@@ -2485,6 +2587,8 @@ export const IPC = {
   ATTACHMENT_OPEN: 'attachment:open',
   ATTACHMENT_READ: 'attachment:read',
   WORKTREE_FILE_OPEN: 'worktree:openFile',
+  IMAGE_DOWNLOAD: 'image:download',
+  IMAGE_SHOW_IN_FOLDER: 'image:showInFolder',
   AGENT_PERMISSION: 'agent:permission',
   AGENT_HISTORY: 'agent:history',
   AGENT_HISTORY_PAGE: 'agent:history-page',
@@ -2564,6 +2668,7 @@ export const IPC = {
   AGENT_LIMIT: 'agent:limit',
   LIMITS_DAILY_SPEND: 'limits:dailySpend',
   LIMITS_THREAD_USAGE: 'limits:threadUsage',
+  USAGE_SUMMARY: 'usage:summary',
   MCP_CONFIG_LIST: 'mcpConfig:list',
   MCP_CONFIG_ADD: 'mcpConfig:add',
   MCP_CONFIG_REMOVE: 'mcpConfig:remove',
@@ -2629,6 +2734,14 @@ export const IPC = {
   BOOKMARK_ADD: 'bookmarks:add',
   BOOKMARK_REMOVE: 'bookmarks:remove',
   BOOKMARK_UPDATE: 'bookmarks:update',
+  FOLLOW_UPS_LIST: 'followUps:list',
+  /** Renderer → main: mark one done (true) or open it again (false). */
+  FOLLOW_UP_SET_DONE: 'followUps:setDone',
+  /** Renderer → main: a thread was started from one. */
+  FOLLOW_UP_STARTED: 'followUps:started',
+  FOLLOW_UP_REMOVE: 'followUps:remove',
+  /** Main → renderer: what changed in the follow-ups (an agent added one, say). */
+  FOLLOW_UPS_CHANGED: 'followUps:changed',
   FIND_EVENT_INDEX_BY_UUID: 'agent:findEventIndexByUuid',
   MEMORY_LIST: 'memory:list',
   MEMORY_READ: 'memory:read',

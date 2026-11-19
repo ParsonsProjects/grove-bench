@@ -120,6 +120,8 @@ describe('AcpAdapter', () => {
     const second = await until(handle, 'result');
 
     expect(first.at(-1)).toMatchObject({ type: 'result', totalCostUsd: 0.01, sessionCostUsd: 0.01 });
+    // The whole turn goes to the session's model.
+    expect((first.at(-1) as { models?: unknown }).models).toEqual([expect.objectContaining({ costUsd: 0.01 })]);
     expect((second.at(-1) as { totalCostUsd: number }).totalCostUsd).toBeCloseTo(0.01, 10);
     expect((second.at(-1) as { sessionCostUsd: number }).sessionCostUsd).toBeCloseTo(0.02, 10);
     expect(first.filter((e) => e.type === 'usage').at(-1)).toEqual({ type: 'usage', inputTokens: 900, outputTokens: 40 });
@@ -319,6 +321,22 @@ describe('AcpAdapter', () => {
     const turn = await until(handle, 'result');
     const text = (turn.find((e) => e.type === 'assistant_text') as { text: string }).text;
     expect(JSON.parse(text)).toEqual([{ type: 'http', name: 'grove-memory', auth: true }]);
+    handle.close();
+  });
+
+  it("serves Grove's follow-up tools beside memory", async () => {
+    const adapter = new AcpAdapter(def());
+    const memoryOperations = { list: () => [], read: () => null, write: () => {}, delete: () => false };
+    const followUpOperations = { add: vi.fn(), list: vi.fn(() => []), done: vi.fn() } as never;
+    const handle = await adapter.start(config({ memoryOperations, followUpOperations }));
+    await until(handle, 'system_init');
+    handle.sendMessage({ text: 'mcp' });
+    const turn = await until(handle, 'result');
+    const text = (turn.find((e) => e.type === 'assistant_text') as { text: string }).text;
+    expect(JSON.parse(text)).toEqual([
+      { type: 'http', name: 'grove-memory', auth: true },
+      { type: 'http', name: 'grove-followups', auth: true },
+    ]);
     handle.close();
   });
 

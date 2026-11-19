@@ -9,6 +9,7 @@ export const SETTINGS_SECTIONS = [
   { id: 'git', grove: 'Branches & roots', label: 'Git & worktrees', description: 'How new threads get their branch and worktree.' },
   { id: 'notifications', grove: 'Bells', label: 'Notifications', description: 'Desktop notifications and taskbar alerts.' },
   { id: 'limits', grove: 'Fences', label: 'Limits & alerts', description: 'Plan usage alerts, and limits on spend and long turns that pause a thread to ask you.' },
+  { id: 'usage', grove: 'The harvest', label: 'Usage', description: 'Cost, tokens and agent time across every thread and model.' },
   { id: 'background', grove: 'Tending', label: 'Background work', description: 'Project memory, prompt and skill suggestions, thread goals and sleeping idle threads.' },
   { id: 'mcp', grove: 'Tool shed', label: 'MCP servers', description: 'Servers that give agents extra tools.' },
   { id: 'plugins', grove: 'Seed packets', label: 'Plugins', description: 'Add and manage plugins.' },
@@ -75,6 +76,7 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'daily-spend-limit', section: 'limits', label: 'Daily spend limit', keywords: 'cost budget dollars money cap day today pause' },
   { id: 'turn-tool-call-limit', section: 'limits', label: 'Tool calls per turn', keywords: 'runaway steps cap pause' },
   { id: 'turn-minutes-limit', section: 'limits', label: 'Minutes per turn', keywords: 'time runaway cap long pause' },
+  { id: 'usage-report', section: 'usage', label: 'Usage across threads', keywords: 'cost spend dollars tokens time models history report total' },
 
   { id: 'memory-auto-save', section: 'background', label: 'Auto-save project memory' },
   { id: 'memory-compact-timeout', section: 'background', label: 'Compaction timeout', keywords: 'memory seconds' },
