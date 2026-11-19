@@ -6,10 +6,9 @@
   import StatusDot from './StatusDot.svelte';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { prSummary } from '../lib/board.js';
-  import { SUBTITLE_TONE_CLASS } from '../lib/thread-subtitle.js';
+  import { threadSubtitle, SUBTITLE_TONE_CLASS } from '../lib/thread-subtitle.js';
   import { AGENT_SPRITES, type AgentSpriteState } from '../lib/agent-sprite.js';
-  import type { SessionSubtitle } from '../lib/session-subtitle.js';
-  import type { PrInfo } from '../../shared/types.js';
+  import type { PrInfo, SessionStatus } from '../../shared/types.js';
   import type { FollowUp } from '../../shared/follow-ups.js';
 
   /**
@@ -19,7 +18,7 @@
    * follow-up names it along the bottom, a button of its own that shows it
    * in the Follow-ups drawer.
    */
-  let { id, name, branch, projectName, projectColor, showProject, state, subtitle, pr, waiting, followUp = null, onopen, onfollowup }: {
+  let { id, name, branch, projectName, projectColor, showProject, state, status, pr, waiting, followUp = null, onopen, onfollowup }: {
     id: string;
     name: string;
     branch: string;
@@ -28,7 +27,9 @@
     /** Off in a project's lane, which already names it. */
     showProject: boolean;
     state: AgentSpriteState;
-    subtitle: SessionSubtitle | null;
+    /** For the line under the name, which the card works out itself, so a
+     *  stream in another thread doesn't touch this card. */
+    status: SessionStatus;
     pr: PrInfo | null;
     /** In Needs you: drawn with an amber edge, like a waiting prompt. */
     waiting: boolean;
@@ -38,6 +39,7 @@
     onfollowup?: () => void;
   } = $props();
 
+  const subtitle = $derived(threadSubtitle({ id, status }));
   const prBadge = $derived(pr ? prSummary(pr) : null);
   /** Read out in full: the card's lines are cut short when it is narrow. */
   const label = $derived([

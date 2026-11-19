@@ -78,6 +78,12 @@
   $effect(() => {
     if (store.activeSessionId !== null || !settingsStore.current.boardView) untrack(() => boardStore.close());
   });
+  // Its Review and Done columns follow the threads' PRs, so they refresh
+  // faster while it shows (prStore.setBoardShowing).
+  $effect(() => {
+    const showing = boardStore.open;
+    untrack(() => prStore.setBoardShowing(showing));
+  });
 
   /** Whether a thread's pane (WorkspacePane) is mounted: while it runs or
    *  can be woken. Otherwise the walk shows while it reconnects. */

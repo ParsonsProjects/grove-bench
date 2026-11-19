@@ -18,6 +18,7 @@
   import { sessionSpriteState } from '../lib/session-sprite-state.js';
   import { getRepoColor } from '../lib/repo-colors.js';
   import { threadSubtitle } from '../lib/thread-subtitle.js';
+  import { threadLabel } from '../lib/thread-label.js';
   import { ipcErrorText } from '../lib/mcp-errors.js';
   import {
     BOARD_COLUMNS,
@@ -33,6 +34,7 @@
     type BoardLanes,
   } from '../lib/board.js';
   import type { FollowUp } from '../../shared/follow-ups.js';
+  import type { SessionStatus } from '../../shared/types.js';
 
   /**
    * The board (alpha): work for later as follow-ups, then every open thread
@@ -69,7 +71,9 @@
     projectName: string;
     state: ReturnType<typeof sessionSpriteState>;
     pr: ReturnType<typeof prStore.getPr>;
-    subtitle: ReturnType<typeof threadSubtitle>;
+    /** For the card's own line under the name (threadSubtitle), worked out
+     *  in the card so a stream in one thread updates that card alone. */
+    status: SessionStatus;
     /** The follow-up it was started from, if it was. */
     followUp: FollowUp | null;
   };
@@ -95,11 +99,11 @@
       repoPath: session.repoPath,
       column: stage,
       branch: session.branch,
-      name: session.displayName || session.branch || 'New thread',
+      name: threadLabel(session),
       projectName: store.repoDisplayName(session.repoPath),
       state,
       pr,
-      subtitle: threadSubtitle(session),
+      status: session.status,
       followUp: followUpsStore.startedFrom(session.id) ?? null,
     }];
   }));
@@ -118,9 +122,15 @@
     }),
   ));
 
-  const shown = $derived([...followUps, ...threads].filter((item) => matchesBoardQuery(boardStore.query, item.kind === 'thread'
-    ? [item.name, item.branch, item.projectName, item.subtitle?.text, item.pr ? `#${item.pr.number}` : null, item.followUp?.title]
-    : [item.followUp.title, item.followUp.details, item.projectName])));
+  // With no filter, no card's line is worked out here: only the cards do that.
+  const shown = $derived.by((): Item[] => {
+    const all = [...followUps, ...threads];
+    const query = boardStore.query.trim();
+    if (!query) return all;
+    return all.filter((item) => matchesBoardQuery(query, item.kind === 'thread'
+      ? [item.name, item.branch, item.projectName, threadSubtitle(item)?.text, item.pr ? `#${item.pr.number}` : null, item.followUp?.title]
+      : [item.followUp.title, item.followUp.details, item.projectName]));
+  });
 
   const lanes = $derived(boardLanes(shown, boardStore.lanes, {
     repos: store.repos,
@@ -132,8 +142,18 @@
 
   const repoColor = (path: string) => getRepoColor(store.repos, path, settingsStore.current.repoColors);
   const showProject = $derived(boardStore.lanes !== 'project' && store.repos.length > 1);
-  /** Nothing to draw: no open thread and no follow-up. */
-  const empty = $derived(threads.length === 0 && followUps.length === 0);
+  /** Nothing to draw: no open thread, and no follow-up once they are read
+   *  (until then the column says it is loading, or that it couldn't read them). */
+  const empty = $derived(threads.length === 0 && followUps.length === 0 && followUpsStore.ready);
+  /** A follow-up belongs to a project, so there has to be one to add it to. */
+  const canAddFollowUp = $derived(store.repos.length > 0);
+
+  /** What the Follow-ups column says with no card in it. */
+  const followUpsEmpty = $derived(
+    followUpsStore.ready ? EMPTY['follow-ups']
+      : followUpsStore.loadFailed ? "Couldn't read your follow-ups."
+        : 'Loading follow-ups…',
+  );
 
   /** Why the last follow-up action didn't happen, until the next one. */
   let notice = $state<{ tone: 'warning' | 'danger'; text: string } | null>(null);
@@ -193,9 +213,11 @@
     <div class="flex-1 flex flex-col items-center justify-center gap-2 p-6 text-center">
       <p class="font-pixel text-base text-foreground/90">No open threads</p>
       <p class="text-xs text-muted-foreground">Start one with New thread in the sidebar (Ctrl+N), or add a follow-up for later. Their cards show up here.</p>
-      <Button variant="subtle" size="xs" onclick={() => followUpsStore.openAdd()}>
-        <PlusIcon />New follow-up
-      </Button>
+      {#if canAddFollowUp}
+        <Button variant="subtle" size="xs" onclick={() => followUpsStore.openAdd()}>
+          <PlusIcon />New follow-up
+        </Button>
+      {/if}
     </div>
   {:else}
     <div class="flex-1 min-h-0 overflow-auto px-3 pb-3">
@@ -206,6 +228,14 @@
             {#if notice?.tone === 'warning'}
               <Button variant="link" size="2xs" onclick={() => draftStore.show()}>Show it</Button>
             {/if}
+          {/snippet}
+        </Notice>
+      {/if}
+      {#if !followUpsStore.ready && followUpsStore.loadFailed}
+        <Notice tone="danger" class="mt-3 break-words">
+          Couldn't read your follow-ups. Another program may be holding the file.
+          {#snippet actions()}
+            <Button variant="link" size="2xs" onclick={() => void followUpsStore.load()}>Try again</Button>
           {/snippet}
         </Notice>
       {/if}
@@ -231,7 +261,8 @@
                   size="icon-2xs"
                   class="ml-auto"
                   onclick={() => followUpsStore.openAdd()}
-                  title="New follow-up: work for a later thread"
+                  disabled={!canAddFollowUp}
+                  title={canAddFollowUp ? 'New follow-up: work for a later thread' : 'Add a project first: a follow-up belongs to one'}
                   aria-label="New follow-up"
                 ><PlusIcon /></Button>
               {/if}
@@ -279,7 +310,7 @@
                     projectColor={repoColor(item.repoPath)}
                     {showProject}
                     state={item.state}
-                    subtitle={item.subtitle}
+                    status={item.status}
                     pr={item.pr}
                     waiting={column === 'needs-you'}
                     followUp={item.followUp}
@@ -289,7 +320,7 @@
                 {/if}
               {:else}
                 {#if boardStore.lanes === 'none' && !boardStore.query.trim()}
-                  <p class="px-1 py-2 text-caption text-muted-foreground">{EMPTY[column]}</p>
+                  <p class="px-1 py-2 text-caption text-muted-foreground">{column === 'follow-ups' ? followUpsEmpty : EMPTY[column]}</p>
                 {/if}
               {/each}
             </section>

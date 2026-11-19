@@ -52,6 +52,7 @@
   import { triageForSprite, triageCounts, matchesTriageFilter, TRIAGE_FILTERS, TRIAGE_FILTER_LABELS, type TriageFilter, type TriageEntry } from '../lib/session-triage.js';
   import type { SessionSubtitle } from '../lib/session-subtitle.js';
   import { threadSubtitle as rowSubtitle, SUBTITLE_TONE_CLASS } from '../lib/thread-subtitle.js';
+  import { threadLabel as sessionRowLabel } from '../lib/thread-label.js';
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
   import { goalStore } from '../stores/goals.svelte.js';
   import { prStateFlag, isPrMerged } from '../lib/pr-state.js';
@@ -939,26 +940,6 @@
     return s.displayName || s.branch;
   }
 
-  /** '#n ' prefix when multiple sessions in the repo share this branch, so
-   *  same-branch sessions (e.g. several agents on one worktree) stay
-   *  distinguishable. Mirrors the old tab bar's numbering. */
-  function branchIndex(s: { id: string; repoPath: string; branch: string }): string {
-    const siblings = store.sessionsForRepo(s.repoPath).filter((x) => x.branch === s.branch);
-    if (siblings.length <= 1) return '';
-    const idx = siblings.findIndex((x) => x.id === s.id);
-    return `#${idx + 1} `;
-  }
-
-  /** Visible row label: a user/auto name when set, else the branch with a '#n'
-   *  prefix when shared. A conversation in a folder without git has no branch
-   *  and is named after its first turn, so until then it's "New conversation".
-   *  Kept separate from sessionLabel so rename prefill and no-op detection use
-   *  the plain name without the index. */
-  function sessionRowLabel(s: { id: string; repoPath: string; displayName?: string | null; branch: string }): string {
-    if (s.displayName) return s.displayName;
-    return s.branch ? branchIndex(s) + s.branch : 'New thread';
-  }
-
   function startRename(sessionId: string, currentLabel: string) {
     renamingSessionId = sessionId;
     renameValue = currentLabel;
@@ -1399,7 +1380,7 @@
         onclick={openDraftRow}
         disabled={!draftStore.draft && !store.canCreate}
         class="w-full flex justify-center py-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed
-          {draftStore.visible ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50 disabled:hover:bg-transparent'}"
+          {draftStore.visible && !boardStore.open ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50 disabled:hover:bg-transparent'}"
         title={draftStore.draft ? 'New thread, not started yet' : newConversationHint}
         aria-label={draftStore.draft ? 'New thread, not started yet' : 'New thread'}
         data-rail-draft
@@ -1547,7 +1528,7 @@
         <button
           type="button"
           onclick={openDraftRow}
-          class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left transition-colors {draftStore.visible ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+          class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left transition-colors {draftStore.visible && !boardStore.open ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
           title="New thread, not started yet"
           data-draft-row
         >

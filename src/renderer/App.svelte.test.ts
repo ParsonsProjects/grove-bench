@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte';
 
@@ -382,8 +382,16 @@ describe('App: a thread whose history is loading', () => {
 });
 
 describe('App board (alpha)', () => {
+  // The settings as they were, so these tests leave the board off after them.
+  let settingsBefore: typeof settingsStore.current;
+  beforeEach(() => {
+    settingsBefore = JSON.parse(JSON.stringify(settingsStore.current)) as typeof settingsStore.current;
+  });
+
   afterEach(() => {
     boardStore.close();
+    settingsStore.current = settingsBefore;
+    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settingsBefore)));
     mockGroveBench.listRepos.mockResolvedValue([]);
     mockGroveBench.listWorktrees.mockResolvedValue([]);
     getOpenTabs.mockResolvedValue([]);

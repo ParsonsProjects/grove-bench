@@ -195,6 +195,7 @@ class PrStore {
   private pollMs = POLL_MS;
   private getPolledSessionIds: (() => string[]) | null = null;
   private nextAlertId = 1;
+  private boardShowing = false;
 
   /** Every PR tied to the session, primary first. */
   getPrs(sessionId: string): PrInfo[] {
@@ -416,6 +417,9 @@ class PrStore {
    *  they land). The rest wait for IDLE_POLL_MS between refreshes. */
   private pollsEverySweep(sessionId: string, now: number): boolean {
     if (sessionId === this.viewingId) return true;
+    // The board shows every thread's PR, and its Review and Done columns
+    // follow them; threads without one have nothing to move them.
+    if (this.boardShowing && this.getPrs(sessionId).length > 0) return true;
     const auto = this.getAuto(sessionId);
     if (auto.fixCi || auto.addressReviews) return true;
     const viewed = this.lastViewed.get(sessionId);
@@ -442,6 +446,7 @@ class PrStore {
   stopGlobalPolling(): void {
     if (this.globalTimer) clearTimeout(this.globalTimer);
     this.globalTimer = null;
+    this.boardShowing = false;
     for (const id of [...this.settleTimers.keys()]) this.clearSettleTimer(id);
     this.getPolledSessionIds = null;
     this.pollMs = POLL_MS;
@@ -451,11 +456,27 @@ class PrStore {
   }
 
   private onVisibilityChange = (): void => {
-    if (document.hidden || this.sweeping || !this.getPolledSessionIds) return;
+    if (document.hidden) return;
+    this.sweepNow();
+  };
+
+  /** Run the next sweep now rather than when its timer is due. */
+  private sweepNow(): void {
+    if (this.sweeping || !this.getPolledSessionIds) return;
     if (this.globalTimer) clearTimeout(this.globalTimer);
     this.globalTimer = null;
     void this.sweep();
-  };
+  }
+
+  /** The board (alpha) is on screen, or no longer is. While it is, threads
+   *  with a PR refresh every sweep (pollsEverySweep), and one sweep runs as it
+   *  opens, so a PR merged meanwhile moves its card to Done within a minute,
+   *  not the idle five. Still one thread at a time, as every sweep is. */
+  setBoardShowing(showing: boolean): void {
+    if (showing === this.boardShowing) return;
+    this.boardShowing = showing;
+    if (showing) this.sweepNow();
+  }
 
   /** One pass over every polled session. Sequential to avoid a burst of
    *  parallel gh processes, but bounded per session so a stuck fetch can't

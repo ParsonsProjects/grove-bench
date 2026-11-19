@@ -200,6 +200,15 @@ describe('followUpsStore.startedFrom and reveal', () => {
     followUpsStore.toggleDrawer(false);
   });
 
+  it('counts each reveal, the same follow-up again included', () => {
+    followUpsStore.list = [fu('a', '/r')];
+    const before = followUpsStore.revealCount;
+    followUpsStore.reveal('a');
+    followUpsStore.reveal('a');
+    expect(followUpsStore.revealCount).toBe(before + 2);
+    followUpsStore.toggleDrawer(false);
+  });
+
   it('does nothing for one that is gone', () => {
     followUpsStore.list = [];
     followUpsStore.reveal('zz');

@@ -268,3 +268,59 @@ describe('BoardPane: a thread started from a follow-up', () => {
     expect([...document.querySelectorAll('[data-board-card]')].map((c) => c.getAttribute('data-board-card'))).toEqual(['quiet']);
   });
 });
+
+describe('BoardPane follow-ups loading', () => {
+  afterEach(() => {
+    followUpsStore.ready = true;
+    followUpsStore.loadFailed = false;
+  });
+
+  it("says follow-ups are loading, and doesn't call the board empty meanwhile", () => {
+    store.sessions = [];
+    followUpsStore.ready = false;
+    render(BoardPane);
+    expect(screen.queryByText('No open threads')).toBeNull();
+    expect(screen.getByText('Loading follow-ups…')).toBeInTheDocument();
+  });
+
+  it("says when follow-ups couldn't be read, with Try again", async () => {
+    followUpsStore.ready = false;
+    followUpsStore.loadFailed = true;
+    mockGroveBench.listFollowUps.mockResolvedValueOnce([]);
+    render(BoardPane);
+    expect(screen.getByText("Couldn't read your follow-ups.")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(mockGroveBench.listFollowUps).toHaveBeenCalled();
+  });
+});
+
+describe('BoardPane with no project', () => {
+  it("doesn't offer a follow-up there is no project for", () => {
+    store.repos = [];
+    store.sessions = [];
+    render(BoardPane);
+    expect(screen.getByText('No open threads')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New follow-up' })).toBeNull();
+  });
+});
+
+describe('BoardPane cards', () => {
+  it('names threads on one branch as the sidebar does, #1 and #2', () => {
+    store.sessions = [
+      { id: 'one', branch: 'main', repoPath: '/web', status: 'running' },
+      { id: 'two', branch: 'main', repoPath: '/web', status: 'running' },
+    ] as any;
+    render(BoardPane);
+    const name = (id: string) => document.querySelector(`[data-board-card="${id}"]`)!.getAttribute('aria-label');
+    expect(name('one')).toMatch(/^#1 main\./);
+    expect(name('two')).toMatch(/^#2 main\./);
+  });
+
+  it("filters by the line under a thread's name, which the card works out", async () => {
+    render(BoardPane);
+    const line = document.querySelector('[data-board-card="wait"]')!.getAttribute('aria-label')!.split('. ')[2];
+    expect(line).toBeTruthy();
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter cards' }), { target: { value: line } });
+    expect([...document.querySelectorAll('[data-board-card]')].map((c) => c.getAttribute('data-board-card'))).toEqual(['wait']);
+  });
+});

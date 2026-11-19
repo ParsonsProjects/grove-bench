@@ -2522,6 +2522,20 @@ describe('Sidebar board switch (alpha)', () => {
     expect(store.activeSessionId).toBe('s1');
   });
 
+  it("doesn't show a new thread being written as selected while the board shows", async () => {
+    settingsStore.current = { ...settingsStore.current, boardView: true };
+    render(Sidebar);
+    draftStore.open('/repo-a');
+    await tick();
+    const row = () => document.querySelector('[data-draft-row]') as HTMLElement;
+    expect(row()).toHaveClass('bg-sidebar-accent');
+    boardStore.show();
+    await tick();
+    expect(row()).not.toHaveClass('bg-sidebar-accent');
+    boardStore.showList();
+    draftStore.discard();
+  });
+
   it('opens the board from the rail when the sidebar is folded', async () => {
     settingsStore.current = { ...settingsStore.current, boardView: true };
     const { container } = render(Sidebar);

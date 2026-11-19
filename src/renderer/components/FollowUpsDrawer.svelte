@@ -90,6 +90,8 @@
   // The follow-up the drawer was opened to show (a board card's link), in view.
   $effect(() => {
     const id = followUpsStore.revealId;
+    // Again on each reveal, the same follow-up included.
+    void followUpsStore.revealCount;
     if (!listEl || !id) return;
     // Ids are short hex (main/follow-ups.ts), safe in a selector as they are.
     listEl.querySelector<HTMLElement>(`[data-follow-up="${id}"]`)?.scrollIntoView?.({ block: 'nearest' });

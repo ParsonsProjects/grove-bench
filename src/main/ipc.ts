@@ -2269,11 +2269,16 @@ export function registerHandlers() {
 
   // Added by hand, from the Follow-ups drawer or the board. Nothing names
   // the thread it came from: it came from you.
-  ipcMain.handle(IPC.FOLLOW_UP_ADD, (_event, repoPath: unknown, title: unknown, details: unknown) => {
+  ipcMain.handle(IPC.FOLLOW_UP_ADD, async (_event, repoPath: unknown, title: unknown, details: unknown) => {
     if (typeof repoPath !== 'string' || !repoPath || typeof title !== 'string' || typeof details !== 'string') {
       throw new Error('A follow-up needs a project and a title.');
     }
-    return followUps.addFollowUp({ repoPath, title, details });
+    // Only a project Grove Bench lists: one for any other path would never
+    // show, in the drawer's count or on the board.
+    if (!listProjects(await worktreeManager.listRepos()).includes(repoPath)) {
+      throw new Error("That project isn't in Grove Bench any more. Add it again, or pick another.");
+    }
+    return followUps.addFollowUp({ repoPath, title, details, byUser: true });
   });
 
   ipcMain.handle(IPC.FOLLOW_UP_SET_DONE, (_event, id: string, done: boolean) => {

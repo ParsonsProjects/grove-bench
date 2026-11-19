@@ -51,6 +51,24 @@ describe('FollowUpDialog', () => {
     expect(mockGroveBench.addFollowUp).toHaveBeenCalledWith('/repo-b', 'Add tests', 'For the refresh path.');
   });
 
+  it('keeps what was typed when the project list changes while it is open', async () => {
+    followUpsStore.openAdd('/repo-b');
+    render(FollowUpDialog);
+    await fill('Add tests', 'For the refresh path.');
+    store.repos = [...store.repos, '/repo-c'];
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Project' })).toBeInTheDocument());
+    expect(screen.getByLabelText('What needs doing')).toHaveValue('Add tests');
+    expect(screen.getByLabelText(/^Details/)).toHaveValue('For the refresh path.');
+  });
+
+  it('says a project is needed when there is none', () => {
+    store.repos = [];
+    followUpsStore.openAdd();
+    render(FollowUpDialog);
+    expect(screen.getByRole('status')).toHaveTextContent('Add a project first');
+    expect(screen.getByRole('button', { name: 'Add follow-up' })).toBeDisabled();
+  });
+
   it('starts in the first project when opened for none', () => {
     followUpsStore.openAdd();
     render(FollowUpDialog);

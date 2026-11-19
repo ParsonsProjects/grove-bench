@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import * as Select from '$lib/components/ui/select/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -25,14 +26,18 @@
   let saving = $state(false);
   let message = $state<{ tone: 'warning' | 'danger'; text: string } | null>(null);
 
-  // Fresh each time it opens, in the project it was opened for.
+  // Fresh each time it opens, in the project it was opened for. Only the
+  // opening is tracked: a change to the project list while it is open (a
+  // thread starting in a new project) mustn't wipe what was typed.
   $effect(() => {
     const opened = asked;
     if (!opened) return;
-    repo = opened.repoPath && store.repos.includes(opened.repoPath) ? opened.repoPath : (store.repos[0] ?? '');
-    title = '';
-    details = '';
-    message = null;
+    untrack(() => {
+      repo = opened.repoPath && store.repos.includes(opened.repoPath) ? opened.repoPath : (store.repos[0] ?? '');
+      title = '';
+      details = '';
+      message = null;
+    });
   });
 
   const canAdd = $derived(!!title.trim() && !!repo && !saving);
@@ -111,6 +116,9 @@
               </Select.Content>
             </Select.Root>
           </div>
+        {/if}
+        {#if store.repos.length === 0}
+          <p class="text-xs text-status-attention" role="status">Add a project first: a follow-up belongs to one.</p>
         {/if}
         {#if message}
           <p class="text-xs {message.tone === 'danger' ? 'text-destructive' : 'text-status-attention'}" role="status">{message.text}</p>

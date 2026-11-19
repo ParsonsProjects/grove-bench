@@ -41,6 +41,8 @@ class FollowUpsStore {
   /** The follow-up the drawer was opened to show (reveal): highlighted,
    *  and scrolled to, until the drawer closes or another is shown. */
   revealId = $state<string | null>(null);
+  /** Counts reveals, so showing the same follow-up again scrolls to it again. */
+  revealCount = $state(0);
 
   private unsubscribe: (() => void) | null = null;
   /** Changes that arrived before the list was read, applied to it once it is. */
@@ -124,6 +126,7 @@ class FollowUpsStore {
     if (f.doneAt !== undefined) this.showDone = new Set([...this.showDone, f.repoPath]);
     this.notice = null;
     this.revealId = id;
+    this.revealCount++;
     this.toggleDrawer(true);
   }
 

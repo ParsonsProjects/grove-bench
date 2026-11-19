@@ -122,6 +122,9 @@ export interface FollowUpInput {
   fromSessionId?: string;
   fromLabel?: string;
   fromBranch?: string;
+  /** Added by hand (the New follow-up dialog): a refusal speaks to the
+   *  person, not to an agent. */
+  byUser?: boolean;
 }
 
 /** Add a follow-up to its project. One with the same title that is still
@@ -136,7 +139,9 @@ export function addFollowUp(input: FollowUpInput, now = Date.now()): { followUp:
   if (same) return { followUp: same, existing: true };
   if (open.length >= FOLLOW_UP_LIMITS.openPerProject) {
     throw new Error(`This project already has ${open.length} open follow-ups, the most it can have. `
-      + 'Ask the user to clear some in the Follow-ups drawer, or mark finished ones done.');
+      + (input.byUser
+        ? 'Mark finished ones done, or delete some, first.'
+        : 'Ask the user to clear some in the Follow-ups drawer, or mark finished ones done.'));
   }
   const followUp: FollowUp = {
     id: newId(list),
