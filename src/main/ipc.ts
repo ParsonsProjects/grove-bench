@@ -42,6 +42,7 @@ import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
+import * as followUps from './follow-ups.js';
 import { deleteSchedule, listSchedules, recordScheduleRun, saveSchedule } from './skill-schedules.js';
 import { linkSkills, setSkillReach, skillSharing } from './skill-sharing.js';
 import { CLAUDE_SKILL_DIRS, markWorktreeOnly, readSkillFile, readsSharedSkills, saveSkillFile, type SkillDirs } from './skills.js';
@@ -2260,6 +2261,30 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.BOOKMARK_UPDATE, (_event, id: string, patch: Partial<Pick<import('../shared/types.js').Bookmark, 'note' | 'eventIndex'>>) => {
     bookmarks.updateBookmark(id, patch);
+  });
+
+  // ─── Follow-ups ───
+
+  ipcMain.handle(IPC.FOLLOW_UPS_LIST, () => followUps.listFollowUps());
+
+  ipcMain.handle(IPC.FOLLOW_UP_SET_DONE, (_event, id: string, done: boolean) => {
+    if (done) followUps.markFollowUpDone(id);
+    else followUps.reopenFollowUp(id);
+  });
+
+  ipcMain.handle(IPC.FOLLOW_UP_STARTED, (_event, id: string, sessionId: string) => {
+    followUps.markFollowUpStarted(id, sessionId);
+  });
+
+  ipcMain.handle(IPC.FOLLOW_UP_REMOVE, (_event, id: string) => {
+    followUps.removeFollowUp(id);
+  });
+
+  // An agent adding one (or another window changing one) shows at once.
+  followUps.onFollowUpsChanged((change) => {
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send(IPC.FOLLOW_UPS_CHANGED, change);
+    }
   });
 
   // ─── Settings ───

@@ -41,7 +41,7 @@ import { isReadOnlyToolCall } from '../../read-only-tools.js';
 import { loadAgentSignIn, loadModelCatalog, saveAgentSignIn, saveModelCatalog } from '../../app-state.js';
 import { catalogs, installFor } from '../../catalogs.js';
 import { AUDIO_INLINE_BUDGET_BYTES, inlineAudioType } from '../file-attachments.js';
-import { memoryServer, previewServer, type GroveServer } from '../grove-tools.js';
+import { followUpsServer, memoryServer, previewServer, type GroveServer } from '../grove-tools.js';
 import { startGroveMcpHttp, type GroveMcpHttp } from '../grove-mcp-http.js';
 import { stdioBridgeLaunch } from '../mcp-bridge/launch.js';
 import { listSkills as listSkillsIn, writeSkill, SHARED_SKILL_DIRS, type SkillDirs } from '../../skills.js';
@@ -791,7 +791,7 @@ class AcpQuery {
     });
   }
 
-  /** Grove's memory and Preview tools. They are served over HTTP on this
+  /** Grove's memory, Preview and follow-up tools. They are served over HTTP on this
    *  computer; an agent that can connect by address (the optional
    *  mcpCapabilities.http) gets the address, and any other starts Grove's
    *  stdio bridge to it (stdio is the one transport every agent supports). */
@@ -799,6 +799,7 @@ class AcpQuery {
     const servers: GroveServer[] = [];
     if (this.config.memoryOperations) servers.push(memoryServer(this.config.memoryOperations));
     if (this.config.previewOperations) servers.push(previewServer(this.config.previewOperations));
+    if (this.config.followUpOperations) servers.push(followUpsServer(this.config.followUpOperations));
     if (servers.length === 0) return [];
     this.mcp = await startGroveMcpHttp(servers);
     const http = this.init?.agentCapabilities?.mcpCapabilities?.http === true;

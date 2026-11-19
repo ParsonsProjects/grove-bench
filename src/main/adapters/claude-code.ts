@@ -32,6 +32,8 @@ import { attachedFilesNote } from './file-attachments.js';
 import { checkKeyWithGet, type KeyCheckFetch } from './key-check.js';
 import { createMemoryMcpServer } from './memory-mcp-server.js';
 import { createPreviewMcpServer } from './preview-mcp-server.js';
+import { followUpsServer } from './grove-tools.js';
+import { toSdkMcpServer } from './sdk-mcp.js';
 import * as skillsModule from '../skills.js';
 import { accountEnv, accountSignInCommand, type ClaudeAccount } from './claude-accounts.js';
 import { logger } from '../logger.js';
@@ -1999,6 +2001,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     if (config.previewOperations) {
       const previewServer = await createPreviewMcpServer(config.previewOperations);
       mcpServers = { ...(mcpServers ?? {}), 'grove-preview': previewServer };
+    }
+
+    // Follow-ups for later threads. Run without a prompt, like memory.
+    if (config.followUpOperations) {
+      const followUps = await toSdkMcpServer(followUpsServer(config.followUpOperations));
+      mcpServers = { ...(mcpServers ?? {}), 'grove-followups': followUps };
     }
 
     // Create input stream for multi-turn conversations

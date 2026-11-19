@@ -324,6 +324,22 @@ describe('AcpAdapter', () => {
     handle.close();
   });
 
+  it("serves Grove's follow-up tools beside memory", async () => {
+    const adapter = new AcpAdapter(def());
+    const memoryOperations = { list: () => [], read: () => null, write: () => {}, delete: () => false };
+    const followUpOperations = { add: vi.fn(), list: vi.fn(() => []), done: vi.fn() } as never;
+    const handle = await adapter.start(config({ memoryOperations, followUpOperations }));
+    await until(handle, 'system_init');
+    handle.sendMessage({ text: 'mcp' });
+    const turn = await until(handle, 'result');
+    const text = (turn.find((e) => e.type === 'assistant_text') as { text: string }).text;
+    expect(JSON.parse(text)).toEqual([
+      { type: 'http', name: 'grove-memory', auth: true },
+      { type: 'http', name: 'grove-followups', auth: true },
+    ]);
+    handle.close();
+  });
+
   describe('attached files', () => {
     const dir = path.join(os.tmpdir(), 'att');
     const pdf: MessageFile = { name: 'spec.pdf', mediaType: 'application/pdf', data: 'JVBE', path: path.join(dir, 'a.pdf'), size: 3 };

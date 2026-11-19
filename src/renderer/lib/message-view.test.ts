@@ -86,6 +86,12 @@ describe('isMessageVisible', () => {
     expect(isMessageVisible(tool({ id: '3', toolName: 'mcp__grove-memory__save_memory' }), 'summary')).toBe(false);
   });
 
+  it('in summary mode shows adding a follow-up and marking one done, but not listing them', () => {
+    expect(isMessageVisible(tool({ id: '1', toolName: 'mcp__grove-followups__followup_add' }), 'summary')).toBe(true);
+    expect(isMessageVisible(tool({ id: '2', toolName: 'mcp__grove-followups__followup_done' }), 'summary')).toBe(true);
+    expect(isMessageVisible(tool({ id: '3', toolName: 'mcp__grove-followups__followup_list' }), 'summary')).toBe(false);
+  });
+
   it("in summary mode shows another agent's MCP calls and calls Grove can't place, but not its own or to-do lists", () => {
     const acp = (id: string, toolName: string, view: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
       tool({ id, toolName, toolView: { kind: 'other', ...view }, toolCategory: 'other', ...extra } as never);

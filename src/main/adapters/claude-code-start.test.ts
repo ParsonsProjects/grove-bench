@@ -26,6 +26,8 @@ const servers = vi.hoisted(() => ({
 }));
 vi.mock('./memory-mcp-server.js', () => ({ createMemoryMcpServer: servers.createMemoryMcpServer }));
 vi.mock('./preview-mcp-server.js', () => ({ createPreviewMcpServer: servers.createPreviewMcpServer }));
+const toSdkMcpServer = vi.hoisted(() => vi.fn((server: { name: string }) => Promise.resolve({ server: server.name })));
+vi.mock('./sdk-mcp.js', () => ({ toSdkMcpServer }));
 
 import { ClaudeCodeAdapter, CONTEXT_1M_BETA, LIMIT_STOP_REASON, THINKING_LEVEL_TOKENS, setSdkForTests } from './claude-code.js';
 import { ResumeNotFoundError, type AdapterConfig, type AdapterEvent, type AgentQueryHandle, type PermissionResponse } from './types.js';
@@ -252,6 +254,12 @@ describe('ClaudeCodeAdapter.start(): what it asks the SDK for', () => {
     // Each server with its own operations.
     expect(servers.createMemoryMcpServer.mock.calls.map(([ops]) => ops)).toEqual([memoryOperations, memoryOperations]);
     expect(servers.createPreviewMcpServer.mock.calls[0][0]).toBe(previewOperations);
+  });
+
+  it("serves Grove's follow-up tools to the agent when the thread has them", async () => {
+    const followUpOperations = { add: vi.fn(), list: vi.fn(), done: vi.fn() } as unknown as NonNullable<AdapterConfig['followUpOperations']>;
+    expect((await start({ followUpOperations })).options.mcpServers).toEqual({ 'grove-followups': { server: 'grove-followups' } });
+    expect((await start({})).options.mcpServers).toBeUndefined();
   });
 
   it('holds each tool call for the thread\'s limits, for longer than Grove waits for an answer', async () => {

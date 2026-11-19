@@ -2,7 +2,7 @@ import type { ChatMessage } from '../stores/messages.svelte.js';
 import type { ActivityViewMode } from '../../shared/types.js';
 import { changesFiles, toolViewOf, type ToolView } from '../../shared/tool-view.js';
 import { taskListOf } from '../../shared/thread-items.js';
-import { GROVE_SERVER_NAMES, titledAsGroveTool } from '../../shared/grove-tools.js';
+import { GROVE_SERVER_NAMES, GROVE_TOOLS_IN_SUMMARY, titledAsGroveTool } from '../../shared/grove-tools.js';
 
 /** See ActivityViewMode in shared/types.ts for what each mode shows. */
 export type MessageViewMode = ActivityViewMode;
@@ -78,7 +78,7 @@ export function threadMessages(messages: ChatMessage[], parentToolUseId?: string
 function shownInSummary(call: Extract<ChatMessage, { kind: 'tool_call' }>): boolean {
   const view = toolViewOf(call);
   if (changesFiles(view, call.toolCategory)) return true;
-  if (view.mcp) return !GROVE_MCP_SERVERS.has(view.mcp.server);
+  if (view.mcp) return !GROVE_MCP_SERVERS.has(view.mcp.server) || GROVE_TOOLS_IN_SUMMARY.has(view.mcp.tool);
   return !!call.toolView && view.kind === 'other' && (call.toolCategory ?? 'other') === 'other'
     && !titledAsGroveTool(call.toolName) && !taskListOf(call.toolName, call.toolInput);
 }

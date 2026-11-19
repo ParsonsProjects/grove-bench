@@ -6,6 +6,7 @@ import type { AgentEvent, PermissionMode } from '../shared/types.js';
 import { CONTROL_IDS } from '../shared/types.js';
 import type { AgentAdapter } from './adapters/types.js';
 import * as memory from './memory.js';
+import * as followUps from './follow-ups.js';
 import { getCavemanPrompt } from './caveman.js';
 
 /**
@@ -123,8 +124,8 @@ export function normalizeModelId(raw: string | undefined, adapter: Pick<AgentAda
 
 /**
  * The text Grove appends to the agent's system prompt: path rules, project
- * memory, caveman mode and the user's own addition, in that order. Null when
- * there is nothing to add.
+ * memory, follow-ups, caveman mode and the user's own addition, in that
+ * order. Null when there is nothing to add.
  */
 export function appendedSystemPrompt(opts: {
   cwd: string;
@@ -142,6 +143,7 @@ export function appendedSystemPrompt(opts: {
     '- If you see an absolute path in tool output or environment info, do NOT repeat it back in your tool calls. Convert it to a relative path from the project root.',
   ].join('\n');
   const memoryPrompt = memory.getMemoryForSystemPrompt(opts.repoPath);
+  const followUpsPrompt = followUps.followUpsForSystemPrompt(opts.repoPath);
   const cavemanPrompt = getCavemanPrompt(opts.cavemanMode);
-  return [builtInPrompt, memoryPrompt, cavemanPrompt, opts.userAppend].filter(Boolean).join('\n\n') || null;
+  return [builtInPrompt, memoryPrompt, followUpsPrompt, cavemanPrompt, opts.userAppend].filter(Boolean).join('\n\n') || null;
 }
