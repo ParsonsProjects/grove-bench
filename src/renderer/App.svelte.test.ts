@@ -384,23 +384,29 @@ describe('App: a thread whose history is loading', () => {
 describe('App board (alpha)', () => {
   // The settings as they were, so these tests leave the board off after them.
   let settingsBefore: typeof settingsStore.current;
+  let draftBefore: typeof settingsStore.draft;
   beforeEach(() => {
     settingsBefore = JSON.parse(JSON.stringify(settingsStore.current)) as typeof settingsStore.current;
+    draftBefore = JSON.parse(JSON.stringify(settingsStore.draft)) as typeof settingsStore.draft;
   });
 
   afterEach(() => {
     boardStore.close();
     settingsStore.current = settingsBefore;
+    settingsStore.draft = draftBefore;
     mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settingsBefore)));
     mockGroveBench.listRepos.mockResolvedValue([]);
     mockGroveBench.listWorktrees.mockResolvedValue([]);
     getOpenTabs.mockResolvedValue([]);
   });
 
+  // The draft too: startup's settingsStore.load() saves a draft that differs
+  // from `current` first, which would put the board back off.
   function withBoard() {
     const settings = { ...JSON.parse(JSON.stringify(settingsStore.current)), boardView: true };
     mockGroveBench.getSettings.mockResolvedValue(settings);
     settingsStore.current = settings;
+    settingsStore.draft = JSON.parse(JSON.stringify(settings)) as typeof settingsStore.draft;
   }
 
   it('shows the board in the main pane, and gives way when a thread opens', async () => {
