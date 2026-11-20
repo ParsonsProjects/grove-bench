@@ -39,6 +39,7 @@ import { accountEnv, accountSignInCommand, type ClaudeAccount } from './claude-a
 import { logger } from '../logger.js';
 import { writeFileAtomic } from '../fs-utils.js';
 import { RunningCost, RunningModels, RunningTokens, type RunningModel } from './running-cost.js';
+import { ShortenedOutputs, shortenOutputHook } from './claude-shorten-output.js';
 import { runProcess, spawnProcess, type HostedOptions, type HostedProcess, type ProcessResult } from '../process-host.js';
 import { runInAgentHost, type AgentHostRunOptions } from '../process-host-run.js';
 import { windowsExeName } from '../process-memory.js';
@@ -230,6 +231,9 @@ interface MessageContext {
   /** Shown when the API refuses the sign-in. CLAUDE_AUTH_ERROR_MESSAGE when
    *  unset; an account agent names its own. */
   authErrorMessage?: string;
+  /** Command outputs the query's hook shortened for the model, whose
+   *  results show the full output (AdapterConfig.shortenOutput). */
+  shortened?: ShortenedOutputs;
 }
 
 /** Strip ANSI escape sequences from provider-authored text before it is
@@ -585,12 +589,14 @@ export function transformMessage(
               ? block.content.map((c) => ('text' in c ? c.text : '') || '').join('')
               : typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
             const imageData = Array.isArray(block.content) ? toolResultImages(block.content) : [];
+            const shortened = ctx.shortened?.takeResult(block.tool_use_id, resultContent);
             events.push({
               type: 'tool_result',
               toolUseId: block.tool_use_id,
-              content: resultContent,
+              content: shortened?.content ?? resultContent,
               isError: block.is_error,
               ...(imageData.length > 0 && { imageData }),
+              ...(shortened ? { shortened: shortened.note } : {}),
               ...subagentTag(message.parent_tool_use_id),
             });
           }
@@ -656,6 +662,7 @@ export function transformMessage(
       const turnCostUsd = runningCost !== undefined ? cost.turnCost(runningCost, message.is_error) : undefined;
       const turnTokens = runningTokens ? tokens.turnTokens(runningTokens, message.is_error) : undefined;
       const turnModels = models.turnModels(runningModels, { ...(turnTokens ?? { input: 0, output: 0 }), ...(turnCostUsd !== undefined ? { costUsd: turnCostUsd } : {}) }, message.is_error);
+      const shortenedTokens = ctx.shortened?.takeSavedTokens() ?? 0;
       events.push({
         type: 'result',
         subtype: message.subtype,
@@ -678,6 +685,7 @@ export function transformMessage(
         errors: 'errors' in message ? message.errors : undefined,
         numTurns: message.num_turns,
         contextWindow,
+        ...(shortenedTokens > 0 ? { shortenedTokens } : {}),
       });
       break;
     }
@@ -1745,6 +1753,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     structuredOutput: true,
     sandbox: true,
     accounts: true,
+    shortensOutput: true,
   };
 
   /** Skill folders: the user level is in the account's folder for an
@@ -2098,6 +2107,24 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       ...(skillOverrides ? { skillOverrides } : {}),
     };
 
+    // Grove's own hooks. PreToolUse holds a call at a reached limit;
+    // PostToolUse shortens what successful commands printed, saving the
+    // full output in the attachments folder (claude-shorten-output.ts).
+    const shortened = config.shortenOutput && config.attachmentsDir ? new ShortenedOutputs() : undefined;
+    const hooks: NonNullable<import('@anthropic-ai/claude-agent-sdk').Options['hooks']> = {
+      ...(config.beforeToolUse ? {
+        PreToolUse: [{
+          hooks: [limitHook(config.beforeToolUse)],
+          // Seconds. Longer than Grove waits for an answer to a limit
+          // (PERMISSION_TIMEOUT_MINUTES), so Grove settles it first.
+          timeout: PERMISSION_TIMEOUT_MINUTES * 60 + 60,
+        }],
+      } : {}),
+      ...(shortened && config.attachmentsDir ? {
+        PostToolUse: [{ matcher: 'Bash', hooks: [shortenOutputHook(shortened, config.attachmentsDir)] }],
+      } : {}),
+    };
+
     const q: Query = queryFn({
       prompt: readableStreamToAsyncIterable(inputStream),
       options: {
@@ -2135,16 +2162,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           ? { resumeSessionAt: config.resumeAtUuid, forkSession: true }
           : {}),
         canUseTool,
-        ...(config.beforeToolUse ? {
-          hooks: {
-            PreToolUse: [{
-              hooks: [limitHook(config.beforeToolUse)],
-              // Seconds. Longer than Grove waits for an answer to a limit
-              // (PERMISSION_TIMEOUT_MINUTES), so Grove settles it first.
-              timeout: PERMISSION_TIMEOUT_MINUTES * 60 + 60,
-            }],
-          },
-        } : {}),
+        ...(Object.keys(hooks).length > 0 ? { hooks } : {}),
         // Without a handler the SDK declines every elicitation.
         ...(config.onElicitation ? {
           onElicitation: async (request: SdkElicitationRequest, { signal }: { signal: AbortSignal }) => {
@@ -2180,6 +2198,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       tokens: new RunningTokens(config.resumeSessionId ? (config.priorTokens ?? null) : null),
       models: new RunningModels(config.resumeSessionId ? (config.priorModels ?? null) : null),
       authErrorMessage: this.authErrorMessage,
+      shortened,
     };
 
     // Create the async event generator

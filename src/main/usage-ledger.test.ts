@@ -29,6 +29,11 @@ describe('recordOf', () => {
     expect(recordOf(result({ totalCostUsd: 9, durationMs: 10 }), thread)?.usd).toBe(0);
   });
 
+  it('records the tokens Shorten command output saved, when it saved some', () => {
+    expect(recordOf(costed(0.5, { shortenedTokens: 1200 }), thread)?.shortenedTokens).toBe(1200);
+    expect(recordOf(costed(0.5), thread)).not.toHaveProperty('shortenedTokens');
+  });
+
   it('skips a result that reports nothing, and other events', () => {
     expect(recordOf(result(), thread)).toBeNull();
     expect(recordOf({ type: 'status', message: 'hi' }, thread)).toBeNull();
@@ -92,6 +97,12 @@ describe('summarize', () => {
       rec({ thread: 'gone', title: 'Undated', backfilled: true }),
     ], null, labels);
     expect(s.byThread[0]).toMatchObject({ title: 'Latest', repoPath: '/new', removed: true });
+  });
+
+  it('adds up the tokens Shorten command output saved over the range', () => {
+    const records = [rec({ at: 100, shortenedTokens: 300 }), rec({ at: 50, shortenedTokens: 1000 }), rec({ at: 200, shortenedTokens: 20 }), rec({ at: 300 })];
+    expect(summarize(records, 100, labels).shortenedTokens).toBe(320);
+    expect(summarize(records, null, labels).shortenedTokens).toBe(1320);
   });
 
   it('says when live recording began, not counting backfilled turns', () => {
@@ -213,8 +224,8 @@ describe('the ledger on disk', () => {
   it('cleans a line\'s figures, so a bad line can\'t make the totals NaN', async () => {
     const file = path.join(dir, 'usage-ledger.jsonl');
     fs.writeFileSync(file, [
-      '{"thread":"t1","tokens":{}}',
-      '{"thread":"t2","usd":"lots","ms":-5,"tokens":{"input":10,"output":null},"models":[{"model":"m","input":"x"},{"input":3}],"at":"soon"}',
+      '{"thread":"t1","tokens":{},"shortenedTokens":"many"}',
+      '{"thread":"t2","usd":"lots","ms":-5,"tokens":{"input":10,"output":null},"models":[{"model":"m","input":"x"},{"input":3}],"at":"soon","shortenedTokens":40}',
       '{"tokens":{"input":1,"output":1}}',
       '[1,2]',
       '{"backfilledAt":1}',
@@ -223,7 +234,7 @@ describe('the ledger on disk', () => {
     const { records } = await ledger.read();
     expect(records).toEqual([
       { thread: 't1', agent: '', usd: 0, tokens: { input: 0, output: 0 }, ms: 0 },
-      { thread: 't2', agent: '', usd: 0, tokens: { input: 10, output: 0 }, ms: 0, models: [{ model: 'm', input: 0, output: 0 }] },
+      { thread: 't2', agent: '', usd: 0, tokens: { input: 10, output: 0 }, ms: 0, models: [{ model: 'm', input: 0, output: 0 }], shortenedTokens: 40 },
     ]);
     expect(summarize(records, null, new Map()).total).toEqual({ usd: 0, input: 10, output: 0, ms: 0, turns: 2 });
   });

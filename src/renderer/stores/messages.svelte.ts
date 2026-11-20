@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentSystemInfo, ControlDescriptor, FileAttachment, ImageAttachment, MadeFile, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredFile, StoredImage, ThreadTurnState } from '../../shared/types.js';
+import type { AgentEvent, AgentSystemInfo, ControlDescriptor, FileAttachment, ImageAttachment, MadeFile, McpElicitationRequest, McpElicitationResponse, McpServerInfo, OutputShortened, PermissionDecision, PermissionMode, SessionControls, StoredFile, StoredImage, ThreadTurnState } from '../../shared/types.js';
 import { CONTROL_IDS, DEFAULT_DENY_MESSAGE, subagentParent } from '../../shared/types.js';
 import { attachedFilesFromSent, type SentBlock } from '../../shared/prompt-text.js';
 import { userMessageLabel } from '../lib/message-label.js';
@@ -50,6 +50,8 @@ export interface ChatToolCallMessage {
   toolView?: ToolView;
   /** Images the tool returned (a screenshot, an image file it read). */
   images?: StoredImage[];
+  /** Grove shortened the output for the agent; `result` is the full one. */
+  shortened?: OutputShortened;
   /** See ChatTextMessage.parentToolUseId. */
   parentToolUseId?: string;
 }
@@ -2187,6 +2189,7 @@ class MessageStore {
         return {
           ...m, result: event.content, isError: event.isError, pending: false, awaitingPermission: false,
           ...(event.images?.length ? { images: event.images } : {}),
+          ...(event.shortened ? { shortened: event.shortened } : {}),
         };
       }
       // Fallback: if a tool_result exists, the tool ran, so the permission

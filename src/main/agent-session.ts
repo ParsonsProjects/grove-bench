@@ -629,6 +629,7 @@ class AgentSessionManager {
       controls: session.controls,
       thinkingSummaries: currentSettings.showThinkingSummaries,
       promptSuggestions: currentSettings.promptSuggestions,
+      shortenOutput: currentSettings.shortenCommandOutput,
       // An agent that can't resume starts a new conversation each time; the
       // thread still shows the earlier turns from Grove's own event log.
       resumeSessionId: caps.resume ? session.providerSessionId : null,

@@ -22,6 +22,7 @@ function summary(extra: Partial<UsageSummary> = {}): UsageSummary {
     ],
     undated: none,
     recordingSince: new Date(2026, 10, 2).getTime(),
+    shortenedTokens: 0,
     backfilling: false,
     ...extra,
   };
@@ -117,6 +118,17 @@ describe('UsageReport', () => {
     render(UsageReport);
     await fireEvent.click(await screen.findByRole('radio', { name: 'All time' }));
     expect(await screen.findByTestId('usage-undated')).toHaveTextContent('3 older turns have no date');
+  });
+
+  it('says how many tokens Shorten command output saved, only when it saved some', async () => {
+    api().getUsageSummary.mockResolvedValue(summary({ shortenedTokens: 12_345 }));
+    render(UsageReport);
+    expect(await screen.findByTestId('usage-shortened')).toHaveTextContent('kept about 12.3k tokens of command output from the model');
+    cleanup();
+    api().getUsageSummary.mockResolvedValue(summary());
+    render(UsageReport);
+    await screen.findByTestId('usage-notes');
+    expect(screen.queryByTestId('usage-shortened')).toBeNull();
   });
 
   it('says when a range has no turns', async () => {

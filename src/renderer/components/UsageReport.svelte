@@ -217,6 +217,9 @@
       <p>
         Tokens in count what the model read, prompt cache included. Agent time adds up how long each turn took, so threads running side by side can add up to more than the clock. A turn's time goes to its thread's main model.
       </p>
+      {#if summary.shortenedTokens > 0}
+        <p data-testid="usage-shortened">Shorten command output kept about {formatTokens(summary.shortenedTokens)} tokens of command output from the model, counting 4 characters a token.</p>
+      {/if}
       {#if summary.recordingSince !== null}
         <p>Dates and models recorded since {day(summary.recordingSince)}. Older turns come from threads' history, dated by their prompt.</p>
       {/if}

@@ -6,6 +6,9 @@
  * options) has its own tests.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { HostedProcess, type ProcessCommand } from '../process-host-spawn.js';
 import { PERMISSION_TIMEOUT_MINUTES } from '../../shared/types.js';
 
@@ -272,6 +275,13 @@ describe('ClaudeCodeAdapter.start(): what it asks the SDK for', () => {
     expect(decision).toMatchObject({ hookSpecificOutput: { permissionDecision: 'deny', permissionDecisionReason: LIMIT_STOP_REASON } });
   });
 
+  it('shortens Bash output only when asked, and only with a folder for the full output', async () => {
+    expect((await start({ shortenOutput: true })).options).not.toHaveProperty('hooks');
+    expect((await start({ attachmentsDir: '/data/attachments/t1' })).options).not.toHaveProperty('hooks');
+    const { options } = await start({ shortenOutput: true, attachmentsDir: '/data/attachments/t1' });
+    expect(options.hooks).toEqual({ PostToolUse: [{ matcher: 'Bash', hooks: [expect.any(Function)] }] });
+  });
+
   it("puts an MCP server's question to the thread, passing back the content only with an accept", async () => {
     const onElicitation = vi.fn()
       .mockResolvedValueOnce({ action: 'accept', content: { name: 'x' } })
@@ -390,6 +400,36 @@ describe('ClaudeCodeAdapter.start(): the events', () => {
     // Ended, so a read that didn't stop shows the init rather than hanging.
     fake.end();
     await expect(drain(handle)).resolves.toEqual([]);
+  });
+
+  it("shows the full output of a command it shortened, with a note, and adds up the turn's savings", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-start-'));
+    try {
+      const { handle, fake, options } = await start({ shortenOutput: true, attachmentsDir: dir });
+      const [matcher] = (options.hooks as { PostToolUse: { hooks: ((input: unknown, id: string, o: { signal: AbortSignal }) => Promise<unknown>)[] }[] }).PostToolUse;
+      const stdout = `${Array.from({ length: 60 }, (_, i) => `test tests::t${i} ... ok`).join('\n')}\n\ntest result: ok. 60 passed`;
+      const hooked = await matcher.hooks[0]({
+        hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'tu1',
+        tool_input: { command: 'cargo test' }, tool_response: { stdout, stderr: '', interrupted: false },
+      }, 'tu1', { signal: new AbortController().signal }) as { hookSpecificOutput: { updatedToolOutput: { stdout: string } } };
+      const modelStdout = hooked.hookSpecificOutput.updatedToolOutput.stdout;
+      expect(modelStdout).toContain('[hidden: 60 lines about passing tests]');
+
+      fake.send({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu1', content: modelStdout }] } });
+      fake.send({ type: 'result', subtype: 'success', is_error: false, result: 'done', duration_ms: 1, num_turns: 1 });
+      fake.send({ type: 'result', subtype: 'success', is_error: false, result: 'done', duration_ms: 1, num_turns: 1 });
+      fake.end();
+      const [result, first, second] = await drain(handle);
+      const savedTokens = Math.round((stdout.length - modelStdout.length) / 4);
+      expect(result).toEqual({
+        type: 'tool_result', toolUseId: 'tu1', content: stdout, isError: undefined,
+        shortened: { families: ['test'], fullChars: stdout.length, modelChars: modelStdout.length, savedTokens, file: path.join(dir, 'command-output', 'tu1.txt') },
+      });
+      expect(first).toMatchObject({ type: 'result', shortenedTokens: savedTokens });
+      expect(second).not.toHaveProperty('shortenedTokens');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   describe('the running cost and tokens', () => {

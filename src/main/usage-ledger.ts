@@ -65,6 +65,7 @@ export function recordOf(result: AgentEvent, thread: { id: string; agent: string
     tokens,
     ms,
     ...(models?.length ? { models } : {}),
+    ...(result.shortenedTokens ? { shortenedTokens: nonNegative(result.shortenedTokens) } : {}),
   };
 }
 
@@ -92,6 +93,7 @@ export function summarize(
   /** When the name a removed thread shows was recorded (undated: -1). */
   const namedAt = new Map<string, number>();
   let recordingSince: number | null = null;
+  let shortenedTokens = 0;
 
   for (const r of records) {
     if (!r.backfilled && r.at !== undefined && (recordingSince === null || r.at < recordingSince)) recordingSince = r.at;
@@ -102,6 +104,7 @@ export function summarize(
       continue;
     }
     add(total, r);
+    shortenedTokens += nonNegative(r.shortenedTokens);
 
     const shares = modelShares(r);
     shares.forEach((share, i) => {
@@ -147,6 +150,7 @@ export function summarize(
     byThread: [...byThread.values()].sort(biggestFirst),
     undated,
     recordingSince,
+    shortenedTokens,
   };
 }
 
@@ -246,6 +250,7 @@ function cleanRecord(raw: unknown): UsageRecord | null {
     ms: nonNegative(r.ms),
     ...(models.length > 0 ? { models } : {}),
     ...(r.backfilled === true ? { backfilled: true as const } : {}),
+    ...(nonNegative(r.shortenedTokens) > 0 ? { shortenedTokens: nonNegative(r.shortenedTokens) } : {}),
   };
 }
 

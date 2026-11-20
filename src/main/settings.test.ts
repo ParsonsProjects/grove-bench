@@ -420,6 +420,12 @@ describe('validateSettings', () => {
     expect(validateSettings({ showThinkingSummaries: 'no' }).showThinkingSummaries).toBe(true);
   });
 
+  it('leaves command output as it is unless Shorten command output is turned on', () => {
+    expect(validateSettings({}).shortenCommandOutput).toBe(false);
+    expect(validateSettings({ shortenCommandOutput: true }).shortenCommandOutput).toBe(true);
+    expect(validateSettings({ shortenCommandOutput: 'yes' }).shortenCommandOutput).toBe(false);
+  });
+
   it('keeps a valid defaultActivityView', () => {
     expect(validateSettings({ defaultActivityView: 'focus' }).defaultActivityView).toBe('focus');
   });

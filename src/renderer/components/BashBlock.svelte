@@ -4,6 +4,8 @@
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import { linkifyLocalhost, hasLocalhostUrl } from '$lib/linkify.js';
   import { openLink } from '$lib/preview-links.js';
+  import { shortenedNote } from '$lib/shortened-output.js';
+  import type { OutputShortened } from '../../shared/types.js';
 
   let {
     toolInput,
@@ -11,6 +13,7 @@
     result,
     isError,
     pending,
+    shortened,
     summaryMode = false,
   }: {
     toolInput: unknown;
@@ -19,6 +22,8 @@
     result?: string;
     isError?: boolean;
     pending: boolean;
+    /** Grove shortened the output for the agent; `result` is the full one. */
+    shortened?: OutputShortened;
     summaryMode?: boolean;
   } = $props();
 
@@ -176,6 +181,10 @@
         {/if}
       {/if}
     </div>
+  {/if}
+
+  {#if shortened && result !== undefined && (!summaryMode || summaryOutputExpanded)}
+    <p class="mt-1 text-caption text-muted-foreground" data-testid="shortened-note">{shortenedNote(shortened)}</p>
   {/if}
 </div>
 

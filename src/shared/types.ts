@@ -285,6 +285,8 @@ export interface UsageRecord {
   /** Added up from a thread's history when the ledger began, so `at` is the
    *  prompt's time, not the turn's end. */
   backfilled?: true;
+  /** Tokens of command output Grove kept from the model, roughly. */
+  shortenedTokens?: number;
 }
 
 /** Cost, tokens, time and turns, added up. */
@@ -310,8 +312,26 @@ export interface UsageSummary {
   undated: UsageTotals;
   /** When live recording began (epoch ms), or null before any turn ended. */
   recordingSince: number | null;
+  /** Tokens of command output Grove kept from the model over the range,
+   *  roughly (the shortenCommandOutput setting). */
+  shortenedTokens: number;
   /** Still adding up threads' older history (first open only). */
   backfilling: boolean;
+}
+
+/** The kinds of command output Grove can shorten (main's output-filter.ts). */
+export type OutputFamily = 'test' | 'lint' | 'git' | 'install' | 'build';
+
+/** A command's output that Grove shortened before the model read it. */
+export interface OutputShortened {
+  families: OutputFamily[];
+  /** Characters of output, in full and as the model got it. */
+  fullChars: number;
+  modelChars: number;
+  /** Tokens kept from the model, roughly: characters / 4, as rtk counts. */
+  savedTokens: number;
+  /** The saved full output, which the model was told it can read. */
+  file: string;
 }
 
 /** What a denied tool call tells the agent when the user typed no reply. */
@@ -337,7 +357,9 @@ export type AgentEvent =
    *  or its edits once known (ACP agents fill a call in as it runs). Only
    *  the fields present change. */
   | { type: 'tool_update'; toolUseId: string; toolName?: string; toolInput?: unknown; toolCategory?: ToolCategory; toolView?: ToolView }
-  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean; images?: StoredImage[]; parentToolUseId?: string }
+  /** `shortened`: Grove shortened the output before the model read it
+   *  (the shortenCommandOutput setting); `content` is the full output. */
+  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean; images?: StoredImage[]; parentToolUseId?: string; shortened?: OutputShortened }
   /** Files the agent made during the turn, sent just before its result.
    *  `more`: how many others were left off the list. */
   | { type: 'files_made'; files: MadeFile[]; more?: number }
@@ -356,7 +378,9 @@ export type AgentEvent =
    *  has none. `models`: the turn's tokens and cost by model, the thread's
    *  main model first. `sessionModels`: each model's running totals, to
    *  resume from (Claude Code). */
-  | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; sessionCostUsd?: number; turnTokens?: TokenCounts; sessionTokens?: TokenCounts; models?: ModelTurnUsage[]; sessionModels?: Record<string, ModelTotals>; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number; at?: number }
+  /** `shortenedTokens`: about how many tokens of command output Grove kept
+   *  from the model this turn (OutputShortened.savedTokens, added up). */
+  | { type: 'result'; subtype: string; result?: string; structured_output?: unknown; totalCostUsd?: number; sessionCostUsd?: number; turnTokens?: TokenCounts; sessionTokens?: TokenCounts; models?: ModelTurnUsage[]; sessionModels?: Record<string, ModelTotals>; durationMs?: number; isError: boolean; errors?: string[]; numTurns?: number; contextWindow?: number; at?: number; shortenedTokens?: number }
   | { type: 'permission_request'; toolName: string; toolInput: unknown; toolUseId: string; requestId: string; decisionReason?: string; suggestions?: unknown[]; isPlanExecution?: boolean; toolCategory?: ToolCategory; toolView?: ToolView; planText?: string }
   | { type: 'thinking'; thinking: string; uuid: string; parentToolUseId?: string }
   | { type: 'partial_text'; text: string }
@@ -2133,6 +2157,11 @@ export interface GroveBenchSettings {
   showThinkingSummaries: boolean;
   /** Caveman mode — terse output to reduce token usage. Default 'off'. */
   cavemanMode: CavemanMode;
+  /** Shorten what successful commands print (tests, lint, git, installs,
+   *  builds) before the agent reads it, for agents that can (the
+   *  shortensOutput capability). Off by default: it changes what the model
+   *  sees. Applies to agents started after the change. */
+  shortenCommandOutput: boolean;
   workingDirectories: string[];
   defaultSystemPromptAppend: string;
   /** The user's own ACP agents. Read at launch, so a change applies after a restart. */

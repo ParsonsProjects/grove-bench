@@ -47,6 +47,8 @@
     backgroundModel?: string;
     /** Offers the Show thinking summaries setting. */
     thinkingSummaries: boolean;
+    /** Can shorten command output (the Shorten command output setting). */
+    shortensOutput: boolean;
     /** Other accounts with this provider can be added (Add account). */
     addsAccounts: boolean;
     /** Set for one of the user's other Claude accounts. */
@@ -91,6 +93,7 @@
           controls,
           backgroundModel: a.backgroundModel,
           thinkingSummaries: !!a.capabilities.thinkingSummaries,
+          shortensOutput: !!a.capabilities.shortensOutput,
           addsAccounts: !!a.capabilities.accounts && !a.account,
           ...(a.account ? { account: { name: a.account.name, configDir: a.account.configDir } } : {}),
         };
@@ -164,6 +167,8 @@
 
   /** Thinking summaries is one setting, offered only by some agents. */
   const summaryAgents = $derived(agentGroups.filter((a) => a.thinkingSummaries));
+  /** And so is shortening command output. */
+  const shortenAgents = $derived(agentGroups.filter((a) => a.shortensOutput));
 
   // Other Claude accounts: added from the Claude agent's group (a dialog
   // checks and registers the account straight away), removed from their own.
@@ -544,6 +549,15 @@
       </Select.Content>
     </Select.Root>
   </SettingRow>
+
+  {#if shortenAgents.length > 0}
+    <CheckboxSetting
+      setting="shorten-command-output"
+      label="Shorten command output"
+      description="Give the agent a shorter version of what successful commands print: passing tests, git's hints, install and build progress, lint problems past the first few in a file. The full output is saved, and the agent is told where, so it can read it all when it needs to. Saves tokens, but the agent sees less. Applies to agents started after the change.{shortenAgents.length < agentGroups.length ? ` Only ${shortenAgents.map((a) => a.displayName).join(' and ')} can do this.` : ''}"
+      bind:checked={settingsStore.draft.shortenCommandOutput}
+    />
+  {/if}
 
   {#if summaryAgents.length > 0}
     <CheckboxSetting

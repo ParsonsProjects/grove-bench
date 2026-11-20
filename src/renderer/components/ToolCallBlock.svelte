@@ -5,7 +5,7 @@
   import GenericToolBlock from './GenericToolBlock.svelte';
   import AgentCallBlock from './AgentCallBlock.svelte';
   import ImageAttachments from './ImageAttachments.svelte';
-  import type { StoredImage } from '../../shared/types.js';
+  import type { OutputShortened, StoredImage } from '../../shared/types.js';
   import { toolViewOf, type ToolView } from '../../shared/tool-view.js';
   import { worktreeImageType } from '../../shared/attachments.js';
 
@@ -19,6 +19,7 @@
     isError,
     pending,
     images,
+    shortened,
     summaryMode = false,
   }: {
     sessionId: string;
@@ -33,6 +34,8 @@
     pending: boolean;
     /** Images the tool returned (a screenshot, an image file it read). */
     images?: StoredImage[];
+    /** Grove shortened a command's output for the agent; `result` is the full one. */
+    shortened?: OutputShortened;
     summaryMode?: boolean;
   } = $props();
 
@@ -49,7 +52,7 @@
 </script>
 
 {#if view.kind === 'shell'}
-  <BashBlock {toolInput} command={view.command ?? ''} {result} {isError} {pending} {summaryMode} />
+  <BashBlock {toolInput} command={view.command ?? ''} {result} {isError} {pending} {shortened} {summaryMode} />
 {:else if view.kind === 'edit' && (view.edits?.length || view.write !== undefined)}
   <DiffBlock {sessionId} {view} {result} {pending} {isError} {summaryMode} />
 {:else if (view.kind === 'read' || view.kind === 'search') && (view.path || view.pattern)}

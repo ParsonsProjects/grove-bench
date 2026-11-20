@@ -44,6 +44,7 @@ src/
     freeze-log.ts      # Main-process stalls, slow window frames (100 ms+), process launches, timed work, GC pauses, agent output, process CPU
     perf-*.ts          # performance.log, step timings (new/resume/wake), health line, traces
     git-status-parser.ts
+    output-filter.ts   # Shortens what successful commands print before the model reads it (Shorten command output setting)
     preview.ts         # Preview tab: your page (WebContentsView) + the agent's (offscreen)
     preview-*.ts       # Preview URL rules, console log, in-page scripts, keys
     attachments.ts     # Attached files and images tools return, served over grove-attachment://
@@ -56,6 +57,7 @@ src/
       registry.ts      # Adapter registry
       claude-code.ts   # Claude Code adapter implementation
       claude-accounts.ts # Other Claude accounts: one adapter each, with its own CLAUDE_CONFIG_DIR
+      claude-shorten-output.ts # PostToolUse hook that gives Claude Code the shortened output, full output saved with the attachments
       acp/             # Agent Client Protocol adapter (Gemini CLI, Copilot CLI, OpenCode, custom agents)
       file-attachments.ts # How attached files reach each agent (by path; audio inline for ACP agents that take it)
       grove-tools.ts   # Grove's memory, Preview and follow-up tools, defined once

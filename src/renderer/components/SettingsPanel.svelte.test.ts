@@ -29,7 +29,7 @@ const MODE: ControlDescriptor = {
 function settings(adapterDefaults: GroveBenchSettings['adapterDefaults'] = {}): GroveBenchSettings {
   return {
     toolAllowRules: [], toolDenyRules: [], disabledSkills: [], autoSkillSuggestions: false, showConversationGoal: true, promptSuggestions: true, backgroundPromptSuggestions: false,
-    defaultModels: {}, adapterDefaults, showThinkingSummaries: true, cavemanMode: 'off', workingDirectories: [], defaultSystemPromptAppend: '', acpAgents: [], claudeAccounts: [], enabledAlphaAgents: [], defaultAgent: '',
+    defaultModels: {}, adapterDefaults, showThinkingSummaries: true, cavemanMode: 'off', shortenCommandOutput: false, workingDirectories: [], defaultSystemPromptAppend: '', acpAgents: [], claudeAccounts: [], enabledAlphaAgents: [], defaultAgent: '',
     memoryAutoSave: true, memoryCompactTimeoutSeconds: 300, backgroundModels: {},
     autoInstallDeps: false, worktreeFolder: '', previewAgentTools: true, idleSleepMinutes: 30, defaultBaseBranch: '', branchNamingRule: '', theme: 'system', alwaysOnTop: false, autoDownloadUpdates: true,
     repoColors: {}, groveCharacters: true, diffViewMode: 'unified', defaultActivityView: 'summary', spellcheck: true,
@@ -414,7 +414,7 @@ describe('SettingsPanel sections and search', () => {
 
   it('has a row for every searchable setting', async () => {
     agentsStore.list = [
-      { ...claude, capabilities: { thinkingSummaries: true, mcpConfig: true, plugins: true, accounts: true } },
+      { ...claude, capabilities: { thinkingSummaries: true, shortensOutput: true, mcpConfig: true, plugins: true, accounts: true } },
       { id: 'opencode', displayName: 'OpenCode', capabilities: {}, stage: 'alpha' },
       // A second agent offered for new threads, so there is a default to pick.
       { id: 'gemini', displayName: 'Gemini CLI', capabilities: {} },
@@ -717,6 +717,28 @@ describe('SettingsPanel thinking summaries', () => {
     expect(box).toBeChecked();
     await fireEvent.click(box);
     await waitFor(() => expect(lastSaved().showThinkingSummaries).toBe(false));
+  });
+});
+
+describe('SettingsPanel shorten command output', () => {
+  it('is offered only when an agent can shorten command output', async () => {
+    await openAgentSection();
+    await screen.findByRole('button', { name: 'Claude Agent default mode' });
+    expect(screen.queryByText('Shorten command output')).not.toBeInTheDocument();
+  });
+
+  it('is off by default, turns on from the checkbox, and names the agents that can', async () => {
+    agentsStore.list = [
+      { ...claude, capabilities: { shortensOutput: true } },
+      { id: 'gemini', displayName: 'Gemini CLI', capabilities: {} },
+    ];
+    await openAgentSection();
+
+    const box = await screen.findByRole('checkbox', { name: 'Shorten command output' });
+    expect(box).not.toBeChecked();
+    expect(box).toHaveAccessibleDescription(expect.stringContaining('Only Claude Agent can do this.'));
+    await fireEvent.click(box);
+    await waitFor(() => expect(lastSaved().shortenCommandOutput).toBe(true));
   });
 });
 

@@ -51,6 +51,7 @@
     isError={msg.isError}
     pending={msg.pending}
     images={msg.images}
+    shortened={msg.shortened}
     {summaryMode}
   />
 

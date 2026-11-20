@@ -51,6 +51,7 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'acp-agents', section: 'agents', label: 'Other agents (ACP)', keywords: 'agent client protocol gemini copilot codex custom add' },
   { id: 'alpha-agents', section: 'agents', label: 'Enable an alpha agent', keywords: 'experimental testing opencode open models deepseek openrouter' },
   { id: 'response-style', section: 'agents', label: 'Response style', keywords: 'caveman terse brief tokens' },
+  { id: 'shorten-command-output', section: 'agents', label: 'Shorten command output', keywords: 'tokens rtk filter compress test lint git install build logs' },
   { id: 'thinking-summaries', section: 'agents', label: 'Show thinking summaries', keywords: 'reasoning' },
   { id: 'preview-agent-tools', section: 'agents', label: 'Let the agent use the Preview browser', keywords: 'screenshot browser tools' },
 

@@ -54,6 +54,9 @@ export interface AgentCapabilities {
   /** The user can add other accounts with this provider, each run as its own
    *  agent (Settings > Agents, claude-accounts.ts). */
   accounts?: boolean;
+  /** Can give the model a shorter version of what a successful command
+   *  printed (AdapterConfig.shortenOutput, output-filter.ts). */
+  shortensOutput?: boolean;
 }
 
 // ─── Model Info ───
@@ -219,6 +222,11 @@ export interface AdapterConfig {
   /** Guess the user's next prompt after each turn (false: don't). Unset
    *  means false. Only adapters with the promptSuggestions capability read it. */
   promptSuggestions?: boolean;
+  /** Give the model a shorter version of what successful commands print,
+   *  keeping the full output in attachmentsDir (the shortenCommandOutput
+   *  setting). Unset means false. Only adapters with the shortensOutput
+   *  capability read it. */
+  shortenOutput?: boolean;
   /** Memory operations for this session's repo. Adapters decide how to surface
    *  these to the agent (e.g. Claude Code registers them as an SDK MCP server). */
   memoryOperations?: MemoryOperations | null;

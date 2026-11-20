@@ -39,7 +39,7 @@ When the agent uses tools (editing files, running commands, reading files), each
 
 Common tool types:
 - **Edit/Write** — File modifications shown as a diff
-- **Bash** — Terminal commands with their output
+- **Bash** — Terminal commands with their output. With **Shorten command output** on ([Settings](settings.md#grovekeepers-agents)), a line under a command's output says when the agent got a shorter version of it; the block still shows all of it
 - **Read** — Files the agent examined
 - **Grep/Glob** — File and content searches
 
