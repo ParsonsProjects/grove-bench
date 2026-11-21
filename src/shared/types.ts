@@ -1635,6 +1635,9 @@ export interface GroveBenchAPI {
   // Follow-ups (shared/follow-ups.ts)
   /** Every project's follow-ups, or null while the file can't be read. */
   listFollowUps(): Promise<FollowUp[] | null>;
+  /** Add one by hand to a project. `existing` when an open one already has
+   *  that title: it is returned and nothing is added. */
+  addFollowUp(repoPath: string, title: string, details: string): Promise<{ followUp: FollowUp; existing: boolean }>;
   setFollowUpDone(id: string, done: boolean): Promise<void>;
   followUpStarted(id: string, sessionId: string): Promise<void>;
   removeFollowUp(id: string): Promise<void>;
@@ -2208,6 +2211,10 @@ export interface GroveBenchSettings {
    *  starts up again.
    *  Each status gets its own pose as well as its colour. Default true. */
   groveCharacters: boolean;
+  /** Alpha: a List / Board switch in the sidebar. The board shows the open
+   *  threads as cards in columns by stage (Working, Needs you, Review,
+   *  Done), with optional lanes per project or group. Default false. */
+  boardView: boolean;
 
   // Editor
   /** Default diff view mode in the Changes tab. */
@@ -2731,6 +2738,8 @@ export const IPC = {
   BOOKMARK_REMOVE: 'bookmarks:remove',
   BOOKMARK_UPDATE: 'bookmarks:update',
   FOLLOW_UPS_LIST: 'followUps:list',
+  /** Renderer → main: add one by hand (an agent adds one with followup_add). */
+  FOLLOW_UP_ADD: 'followUps:add',
   /** Renderer → main: mark one done (true) or open it again (false). */
   FOLLOW_UP_SET_DONE: 'followUps:setDone',
   /** Renderer → main: a thread was started from one. */

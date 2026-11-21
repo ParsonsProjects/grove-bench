@@ -27,6 +27,7 @@
   import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
   import { Notice } from '$lib/components/ui/notice/index.js';
   import XIcon from '@lucide/svelte/icons/x';
+  import PlusIcon from '@lucide/svelte/icons/plus';
   import ListTodoIcon from '@lucide/svelte/icons/list-todo';
 
   let projects = $derived(followUpsStore.byProject(store.repos));
@@ -86,6 +87,16 @@
     }
   }
 
+  // The follow-up the drawer was opened to show (a board card's link), in view.
+  $effect(() => {
+    const id = followUpsStore.revealId;
+    // Again on each reveal, the same follow-up included.
+    void followUpsStore.revealCount;
+    if (!listEl || !id) return;
+    // Ids are short hex (main/follow-ups.ts), safe in a selector as they are.
+    listEl.querySelector<HTMLElement>(`[data-follow-up="${id}"]`)?.scrollIntoView?.({ block: 'nearest' });
+  });
+
   // Focused as it opens, so Esc and the arrow keys work on it.
   let listEl = $state<HTMLDivElement | null>(null);
   $effect(() => {
@@ -134,6 +145,13 @@
         <Button
           variant="quiet"
           size="icon-2xs"
+          onclick={() => { followUpsStore.notice = null; followUpsStore.openAdd(store.activeSession?.repoPath ?? draftStore.draft?.repoPath ?? ''); }}
+          title="New follow-up: work for a later thread"
+          aria-label="New follow-up"
+        ><PlusIcon /></Button>
+        <Button
+          variant="quiet"
+          size="icon-2xs"
           onclick={() => followUpsStore.toggleDrawer(false)}
           title="Close (Esc)"
           aria-label="Close follow-ups"
@@ -146,6 +164,7 @@
         <Notice tone={followUpsStore.notice.tone} class="mb-2 break-words">{followUpsStore.notice.text}</Notice>
       {/if}
 
+
       {#if !followUpsStore.ready && followUpsStore.loadFailed}
         <Notice tone="danger" class="break-words">
           Couldn't read your follow-ups. Another program may be holding the file.
@@ -157,7 +176,7 @@
         <p class="text-xs text-muted-foreground mt-4 text-center">Loading follow-ups…</p>
       {:else if projects.length === 0}
         <p class="text-xs text-muted-foreground mt-4 text-center">
-          No follow-ups yet. When an agent finds work that belongs in a later thread, such as a bug it noticed on the way, it adds it here for you to start when you're ready.
+          No follow-ups yet. When an agent finds work that belongs in a later thread, such as a bug it noticed on the way, it adds it here for you to start when you're ready. To add one yourself, click <span class="text-foreground">+</span> above.
         </p>
       {/if}
 
@@ -181,7 +200,12 @@
           {#each project.open as f (f.id)}
             {@const started = startedThread(f)}
             {@const long = f.details.length > 220 || f.details.split('\n').length > 4}
-            <article class="mb-2 border border-border bg-card/80 p-2" aria-label={f.title}>
+            <article
+              class="mb-2 border bg-card/80 p-2 {followUpsStore.revealId === f.id ? 'border-ring' : 'border-border'}"
+              aria-label={f.title}
+              aria-current={followUpsStore.revealId === f.id ? 'true' : undefined}
+              data-follow-up={f.id}
+            >
               <div class="text-xs font-medium text-foreground break-words">{f.title}</div>
               {@render origin(f)}
               {#if f.details}
@@ -236,7 +260,12 @@
             {#if followUpsStore.showDone.has(project.repoPath)}
               {#each project.done as f (f.id)}
                 {@const by = threadName(f.doneBySessionId)}
-                <article class="mt-1 mb-2 border border-border/60 p-2" aria-label={f.title}>
+                <article
+                  class="mt-1 mb-2 border p-2 {followUpsStore.revealId === f.id ? 'border-ring' : 'border-border/60'}"
+                  aria-label={f.title}
+                  aria-current={followUpsStore.revealId === f.id ? 'true' : undefined}
+                  data-follow-up={f.id}
+                >
                   <div class="text-xs text-muted-foreground line-through break-words">{f.title}</div>
                   <div class="mt-0.5 text-caption text-muted-foreground">
                     Done {formatAge(f.doneAt ?? 0)}

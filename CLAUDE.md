@@ -32,7 +32,7 @@ src/
     window-state.ts    # Window position/size persistence
     memory.ts          # Project memory system
     memory-autosave.ts # Auto-save memory on interval
-    follow-ups.ts      # Work agents leave for later threads (follow-ups.json), for the grove-followups tools and the Follow-ups drawer
+    follow-ups.ts      # Work agents leave for later threads (follow-ups.json), for the grove-followups tools, the Follow-ups drawer and the board's Follow-ups column
     skill-schedules.ts # Skills run in a new thread on a schedule (docs/skill-schedules-plan.md)
     skill-sharing.ts   # Skills every agent can use: .agents/skills, with links in .claude/skills for Claude Code
     settings.ts        # User settings

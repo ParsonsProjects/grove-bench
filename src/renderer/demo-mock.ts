@@ -6,7 +6,7 @@
 
 import type { ThreadItems } from '../shared/thread-items.js';
 import type { SkillSchedule, SkillScheduleInput } from '../shared/skill-schedules.js';
-import type { FollowUp } from '../shared/follow-ups.js';
+import type { FollowUp, FollowUpsChange } from '../shared/follow-ups.js';
 
 // Capture uncaught errors (a template error can kill Svelte's effect loop).
 const errs: string[] = [];
@@ -55,10 +55,21 @@ const demoFollowUps: FollowUp[] = [
     createdAt: now - 3 * 60 * min, fromSessionId: 's-oauth', fromLabel: 'claude/fix-oauth-refresh', fromBranch: 'claude/fix-oauth-refresh',
   },
   {
+    id: 'e7f310', repoPath: REPO_B, title: 'Find out why the login e2e test is flaky',
+    details: 'It fails about one run in ten on CI, always on the redirect after sign-in. Done when it passes 50 runs in a row.',
+    createdAt: now - 27 * 60 * min, fromSessionId: 's-perf', fromLabel: 'claude/perf-audit', fromBranch: 'claude/perf-audit',
+    startedSessionIds: ['s-e2e'],
+  },
+  {
     id: '51ee02', repoPath: REPO_B, title: 'Drop the unused retry helper', details: '',
     createdAt: now - 2 * 24 * 60 * min, doneAt: now - 26 * 60 * min, doneBySessionId: 's-perf', doneNote: 'Removed retryWithJitter and its test.',
   },
 ];
+
+const followUpListeners = new Set<(change: FollowUpsChange) => void>();
+function changeFollowUp(f: FollowUp): void {
+  for (const listener of followUpListeners) listener({ upserted: [structuredClone(f)], removed: [] });
+}
 
 /** Branches checked out per project: main in each project folder, the
  *  threads' branches in their copies, and a worktree made outside Grove Bench. */
@@ -126,6 +137,8 @@ const SETTINGS = {
   autoDownloadUpdates: true,
   repoColors: {},
   groveCharacters: true,
+  // On in the demo, so the board can be tried without opening Settings.
+  boardView: true,
   diffViewMode: 'unified',
   defaultActivityView: 'summary',
   spellcheck: true,
@@ -539,6 +552,33 @@ const api: Record<string, unknown> = {
   },
   listBookmarks: async () => [],
   listFollowUps: async () => structuredClone(demoFollowUps),
+  // Enough of follow-ups to try the drawer and the board's column: adding
+  // one, starting a thread from one and marking one done show at once.
+  onFollowUpsChanged: (callback: (change: FollowUpsChange) => void) => {
+    followUpListeners.add(callback);
+    return () => followUpListeners.delete(callback);
+  },
+  addFollowUp: async (repoPath: string, title: string, details: string) => {
+    const same = demoFollowUps.find((f) => f.repoPath === repoPath && f.doneAt === undefined && f.title.toLowerCase() === title.trim().toLowerCase());
+    if (same) return { followUp: structuredClone(same), existing: true };
+    const followUp: FollowUp = { id: Math.random().toString(16).slice(2, 8), repoPath, title: title.trim(), details: details.trim(), createdAt: Date.now() };
+    demoFollowUps.push(followUp);
+    changeFollowUp(followUp);
+    return { followUp: structuredClone(followUp), existing: false };
+  },
+  setFollowUpDone: async (id: string, done: boolean) => {
+    const f = demoFollowUps.find((x) => x.id === id);
+    if (!f) return;
+    if (done) f.doneAt = Date.now();
+    else delete f.doneAt;
+    changeFollowUp(f);
+  },
+  followUpStarted: async (id: string, sessionId: string) => {
+    const f = demoFollowUps.find((x) => x.id === id);
+    if (!f) return;
+    f.startedSessionIds = [...(f.startedSessionIds ?? []), sessionId];
+    changeFollowUp(f);
+  },
   getOpenTabs: async () => [],
   getCollapsedRepos: async () => ({ [REPO_A]: false, [REPO_B]: false }),
   getSessionSort: async () => ({ key: 'age', dir: 'desc' }),

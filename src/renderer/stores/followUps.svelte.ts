@@ -38,6 +38,11 @@ class FollowUpsStore {
   expanded = $state(new Set<string>());
   /** Projects whose done follow-ups are shown. */
   showDone = $state(new Set<string>());
+  /** The follow-up the drawer was opened to show (reveal): highlighted,
+   *  and scrolled to, until the drawer closes or another is shown. */
+  revealId = $state<string | null>(null);
+  /** Counts reveals, so showing the same follow-up again scrolls to it again. */
+  revealCount = $state(0);
 
   private unsubscribe: (() => void) | null = null;
   /** Changes that arrived before the list was read, applied to it once it is. */
@@ -105,12 +110,59 @@ class FollowUpsStore {
     return this.list.find((f) => f.id === id);
   }
 
+  /** The follow-up a thread was started from (Start thread notes it once
+   *  the thread starts), or undefined. One started more than once (Start
+   *  another) names each of its threads. */
+  startedFrom(sessionId: string): FollowUp | undefined {
+    return this.list.find((f) => f.startedSessionIds?.includes(sessionId));
+  }
+
+  /** Open the drawer at one follow-up: its details in full, and its
+   *  project's done ones shown when it is done, so it is on screen. */
+  reveal(id: string): void {
+    const f = this.get(id);
+    if (!f) return;
+    this.expanded = new Set([...this.expanded, id]);
+    if (f.doneAt !== undefined) this.showDone = new Set([...this.showDone, f.repoPath]);
+    this.notice = null;
+    this.revealId = id;
+    this.revealCount++;
+    this.toggleDrawer(true);
+  }
+
   setDone(id: string, done: boolean): Promise<void> {
     return window.groveBench.setFollowUpDone(id, done);
   }
 
   remove(id: string): Promise<void> {
     return window.groveBench.removeFollowUp(id);
+  }
+
+  /** Add one by hand (FollowUpForm). Resolves with what main kept: an open
+   *  one with the same title instead, when there is one (`existing`). The
+   *  list shows it at once, without waiting for main's change. */
+  async add(repoPath: string, title: string, details: string): Promise<{ followUp: FollowUp; existing: boolean }> {
+    const result = await window.groveBench.addFollowUp(repoPath, title, details);
+    if (this.ready && !result.existing) this.list = applyFollowUpsChange(this.list, { upserted: [result.followUp], removed: [] });
+    return result;
+  }
+
+  /** The New follow-up dialog is open (FollowUpDialog), for this project
+   *  (empty: the first one; the dialog can change it). */
+  addingIn = $state<{ repoPath: string } | null>(null);
+
+  openAdd(repoPath = ''): void {
+    this.addingIn = { repoPath };
+  }
+
+  closeAdd(): void {
+    this.addingIn = null;
+  }
+
+  /** How many open follow-ups a project has: main takes no more than
+   *  FOLLOW_UP_LIMITS.openPerProject. */
+  openIn(repoPath: string): number {
+    return this.list.filter((f) => f.repoPath === repoPath && f.doneAt === undefined).length;
   }
 
   /** Note the thread started from it. Only shown in the drawer, so a
@@ -127,7 +179,10 @@ class FollowUpsStore {
     const wasOpen = this.drawerOpen;
     this.drawerOpen = open ?? !this.drawerOpen;
     if (this.drawerOpen && !wasOpen) this.opening = nextOpening();
-    if (!this.drawerOpen) this.notice = null;
+    if (!this.drawerOpen) {
+      this.notice = null;
+      this.revealId = null;
+    }
   }
 }
 

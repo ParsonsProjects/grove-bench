@@ -1,7 +1,6 @@
 <script lang="ts">
   import { store } from '../stores/sessions.svelte.js';
   import { messageStore } from '../stores/messages.svelte.js';
-  import { backgroundTaskStore } from '../stores/backgroundTask.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { gitStatusStore } from '../stores/gitStatus.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
@@ -22,6 +21,9 @@
   import ListTodoIcon from '@lucide/svelte/icons/list-todo';
   import FolderIcon from '@lucide/svelte/icons/folder';
   import TerminalIcon from '@lucide/svelte/icons/terminal';
+  import ListIcon from '@lucide/svelte/icons/list';
+  import SquareKanbanIcon from '@lucide/svelte/icons/square-kanban';
+  import { boardStore } from '../stores/board.svelte.js';
   import CheckIcon from '@lucide/svelte/icons/check';
   import XIcon from '@lucide/svelte/icons/x';
   import MinusIcon from '@lucide/svelte/icons/minus';
@@ -48,7 +50,9 @@
   import { isRepoCollapsed } from '../lib/repo-collapse.js';
   import { sortSessions, defaultDirFor } from '../lib/session-sort.js';
   import { triageForSprite, triageCounts, matchesTriageFilter, TRIAGE_FILTERS, TRIAGE_FILTER_LABELS, type TriageFilter, type TriageEntry } from '../lib/session-triage.js';
-  import { sessionSubtitle, pendingPermissionTool, pendingPermissionView, lastTextSnippet, firstPromptSnippet, type SessionSubtitle } from '../lib/session-subtitle.js';
+  import type { SessionSubtitle } from '../lib/session-subtitle.js';
+  import { threadSubtitle as rowSubtitle, SUBTITLE_TONE_CLASS } from '../lib/thread-subtitle.js';
+  import { threadLabel as sessionRowLabel } from '../lib/thread-label.js';
   import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
   import { goalStore } from '../stores/goals.svelte.js';
   import { prStateFlag, isPrMerged } from '../lib/pr-state.js';
@@ -165,30 +169,6 @@
     if (shellsTooltip) lines.push(shellsTooltip);
     return lines.join('\n');
   }
-
-  /** Context line under a session row: waiting-reason > live activity >
-   *  background agents > last/first message. */
-  function rowSubtitle(session: { id: string; status: SessionStatus }): SessionSubtitle | null {
-    const msgs = messageStore.getMessages(session.id);
-    const loaded = msgs.length > 0;
-    const preview = sessionPreviewStore.get(session.id);
-    const isRunning = messageStore.getIsRunning(session.id);
-    const pendingTool = loaded ? pendingPermissionTool(msgs) : null;
-    const backgroundAgents = backgroundAgentRunning(session) ? backgroundTaskStore.runningAgents(session.id).map((t) => t.description) : [];
-    // Past messages only show when nothing live does, so skip that work while
-    // the agent runs (its reply grows with every update) or waits on you.
-    const quiet = !isRunning && !pendingTool && backgroundAgents.length === 0;
-    const lastText = quiet ? ((loaded ? lastTextSnippet(msgs) : null) ?? (preview?.lastText || null)) : null;
-    const firstPrompt = quiet && !lastText ? ((loaded ? firstPromptSnippet(msgs) : null) ?? (preview?.firstPrompt || null)) : null;
-    const pendingToolView = pendingTool ? pendingPermissionView(msgs) : undefined;
-    return sessionSubtitle({ isRunning, activity: messageStore.getActivity(session.id), pendingTool, pendingToolView, backgroundAgents, lastText, firstPrompt });
-  }
-
-  const SUBTITLE_TONE_CLASS: Record<SessionSubtitle['tone'], string> = {
-    working: 'text-status-working',
-    waiting: 'text-status-attention',
-    context: 'text-muted-foreground',
-  };
 
   function toggleRepoCollapsed(repo: string) {
     const current = isRepoCollapsed(collapsedRepos, repo);
@@ -960,26 +940,6 @@
     return s.displayName || s.branch;
   }
 
-  /** '#n ' prefix when multiple sessions in the repo share this branch, so
-   *  same-branch sessions (e.g. several agents on one worktree) stay
-   *  distinguishable. Mirrors the old tab bar's numbering. */
-  function branchIndex(s: { id: string; repoPath: string; branch: string }): string {
-    const siblings = store.sessionsForRepo(s.repoPath).filter((x) => x.branch === s.branch);
-    if (siblings.length <= 1) return '';
-    const idx = siblings.findIndex((x) => x.id === s.id);
-    return `#${idx + 1} `;
-  }
-
-  /** Visible row label: a user/auto name when set, else the branch with a '#n'
-   *  prefix when shared. A conversation in a folder without git has no branch
-   *  and is named after its first turn, so until then it's "New conversation".
-   *  Kept separate from sessionLabel so rename prefill and no-op detection use
-   *  the plain name without the index. */
-  function sessionRowLabel(s: { id: string; repoPath: string; displayName?: string | null; branch: string }): string {
-    if (s.displayName) return s.displayName;
-    return s.branch ? branchIndex(s) + s.branch : 'New thread';
-  }
-
   function startRename(sessionId: string, currentLabel: string) {
     renamingSessionId = sessionId;
     renameValue = currentLabel;
@@ -1420,7 +1380,7 @@
         onclick={openDraftRow}
         disabled={!draftStore.draft && !store.canCreate}
         class="w-full flex justify-center py-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed
-          {draftStore.visible ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50 disabled:hover:bg-transparent'}"
+          {draftStore.visible && !boardStore.open ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50 disabled:hover:bg-transparent'}"
         title={draftStore.draft ? 'New thread, not started yet' : newConversationHint}
         aria-label={draftStore.draft ? 'New thread, not started yet' : 'New thread'}
         data-rail-draft
@@ -1431,6 +1391,19 @@
           <svg class="text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
         {/if}
       </button>
+      {#if settingsStore.current.boardView}
+        <button
+          type="button"
+          onclick={() => { if (boardStore.open) boardStore.showList(); else boardStore.show(); }}
+          aria-pressed={boardStore.open}
+          class="w-full flex justify-center py-2 transition-colors {boardStore.open ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+          title={boardStore.open ? 'Back to the thread list' : 'Board: your open threads as cards by stage (alpha)'}
+          aria-label="Board"
+          data-rail-board
+        >
+          <SquareKanbanIcon class="size-3 text-muted-foreground" aria-hidden="true" />
+        </button>
+      {/if}
       <!-- Every open conversation: the triage filter isn't on the rail to explain a shorter list. -->
       {#each store.openConversations as session (session.id)}
         {@const isDestroying = destroying.has(session.id)}
@@ -1478,6 +1451,23 @@
     </button>
     <PanelToggle panel="sidebar" label="sidebar" class="-mr-1" />
   </div>
+
+  <!-- List / Board (alpha, Settings > General > Views): the board takes the
+       main pane, as a thread does. Opening a thread from the list goes back. -->
+  {#if settingsStore.current.boardView}
+    <div class="px-3 pt-2 {collapsed ? 'hidden' : 'flex'}">
+      <Segmented.Root
+        value={boardStore.open ? 'board' : 'list'}
+        onValueChange={(v) => { if (v === 'board') boardStore.show(); else if (v === 'list') boardStore.showList(); }}
+        aria-label="Show threads as"
+        class="w-full"
+        data-board-switch
+      >
+        <Segmented.Item value="list" class="flex-1 justify-center py-1"><ListIcon />List</Segmented.Item>
+        <Segmented.Item value="board" class="flex-1 justify-center py-1" title="Board: your open threads as cards by stage (alpha)"><SquareKanbanIcon />Board</Segmented.Item>
+      </Segmented.Root>
+    </div>
+  {/if}
 
   <!-- No bottom padding: a folded section's heading sits right on the footer. -->
   <div class="flex-1 overflow-auto px-3 pt-3 flex-col {collapsed ? 'hidden' : 'flex'}">
@@ -1538,7 +1528,7 @@
         <button
           type="button"
           onclick={openDraftRow}
-          class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left transition-colors {draftStore.visible ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
+          class="w-full flex flex-col pl-4 pr-2 py-1.5 text-left transition-colors {draftStore.visible && !boardStore.open ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/50'}"
           title="New thread, not started yet"
           data-draft-row
         >

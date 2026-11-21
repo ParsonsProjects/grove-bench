@@ -8,6 +8,7 @@ import { arrivalScene } from './arrivalScene.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import { groupStore } from './groups.svelte.js';
 import { todoStore } from './todo.svelte.js';
+import { boardStore } from './board.svelte.js';
 import type { ControlDescriptor } from '../../shared/types.js';
 
 const modeControl: ControlDescriptor = {
@@ -63,6 +64,19 @@ afterEach(() => {
 });
 
 describe('draftStore.open', () => {
+  it('takes the main pane from the board (alpha), and so does showing it again', async () => {
+    boardStore.show();
+    draftStore.open('/repo/one');
+    await settle();
+    expect(boardStore.open).toBe(false);
+    expect(draftStore.visible).toBe(true);
+
+    boardStore.show();
+    draftStore.show();
+    expect(boardStore.open).toBe(false);
+    expect(draftStore.visible).toBe(true);
+  });
+
   it('opens in the given project on the default agent, starting a new branch from the default branch', async () => {
     draftStore.open('/repo/two');
     await settle();

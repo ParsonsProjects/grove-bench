@@ -32,6 +32,7 @@ export interface SettingsEntry {
 export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'default-thread-view', section: 'general', label: 'Default thread view', keywords: 'summary focus detailed activity' },
   { id: 'default-diff-view', section: 'general', label: 'Default diff view', keywords: 'unified side-by-side' },
+  { id: 'board-view', section: 'general', label: 'Board', keywords: 'kanban columns stages cards lanes alpha' },
   { id: 'theme', section: 'general', label: 'Theme', keywords: 'dark light mode colour color scheme appearance' },
   { id: 'grove-characters', section: 'general', label: 'Show grove characters', keywords: 'pixel sprites status animation' },
   { id: 'project-colors', section: 'general', label: 'Project colors', keywords: 'accent colour repository' },

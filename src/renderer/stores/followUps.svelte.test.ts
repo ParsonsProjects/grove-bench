@@ -131,3 +131,87 @@ describe('followUpsStore.started', () => {
     expect(warn).toHaveBeenCalled();
   });
 });
+
+describe('followUpsStore.add', () => {
+  it('asks main to add it and shows it at once', async () => {
+    followUpsStore.ready = true;
+    followUpsStore.list = [fu('a', '/r')];
+    mockGroveBench.addFollowUp.mockResolvedValueOnce({ followUp: fu('new', '/r', { title: 'Write the docs' }), existing: false });
+    const result = await followUpsStore.add('/r', 'Write the docs', 'In docs/help.');
+    expect(mockGroveBench.addFollowUp).toHaveBeenCalledWith('/r', 'Write the docs', 'In docs/help.');
+    expect(result.existing).toBe(false);
+    expect(followUpsStore.list.map((f) => f.id)).toEqual(['a', 'new']);
+    // Main's own change for it, arriving after, changes nothing.
+    expect(followUpsStore.openIn('/r')).toBe(2);
+  });
+
+  it("adds nothing when main kept an open one with that title", async () => {
+    followUpsStore.ready = true;
+    followUpsStore.list = [fu('a', '/r')];
+    mockGroveBench.addFollowUp.mockResolvedValueOnce({ followUp: fu('a', '/r'), existing: true });
+    const result = await followUpsStore.add('/r', 'a', '');
+    expect(result.existing).toBe(true);
+    expect(followUpsStore.list).toHaveLength(1);
+  });
+});
+
+describe('followUpsStore.openIn', () => {
+  it("counts a project's open follow-ups only", () => {
+    followUpsStore.list = [fu('a', '/r'), fu('b', '/r', { doneAt: 1 }), fu('c', '/other')];
+    expect(followUpsStore.openIn('/r')).toBe(1);
+  });
+});
+
+describe('followUpsStore New follow-up dialog', () => {
+  it('opens for a project and closes', () => {
+    followUpsStore.openAdd('/r');
+    expect(followUpsStore.addingIn).toEqual({ repoPath: '/r' });
+    followUpsStore.closeAdd();
+    expect(followUpsStore.addingIn).toBeNull();
+    followUpsStore.openAdd();
+    expect(followUpsStore.addingIn).toEqual({ repoPath: '' });
+    followUpsStore.closeAdd();
+  });
+});
+
+describe('followUpsStore.startedFrom and reveal', () => {
+  it('finds the follow-up a thread was started from', () => {
+    followUpsStore.list = [fu('a', '/r'), fu('b', '/r', { startedSessionIds: ['s1', 's2'] })];
+    expect(followUpsStore.startedFrom('s2')?.id).toBe('b');
+    expect(followUpsStore.startedFrom('s3')).toBeUndefined();
+  });
+
+  it('opens the drawer at a follow-up, in full, and forgets it when the drawer closes', () => {
+    followUpsStore.list = [fu('a', '/r')];
+    followUpsStore.expanded = new Set();
+    followUpsStore.reveal('a');
+    expect(followUpsStore.drawerOpen).toBe(true);
+    expect(followUpsStore.revealId).toBe('a');
+    expect(followUpsStore.expanded.has('a')).toBe(true);
+    followUpsStore.toggleDrawer(false);
+    expect(followUpsStore.revealId).toBeNull();
+  });
+
+  it("shows its project's done ones when it is done", () => {
+    followUpsStore.list = [fu('a', '/r', { doneAt: 5 })];
+    followUpsStore.showDone = new Set();
+    followUpsStore.reveal('a');
+    expect(followUpsStore.showDone.has('/r')).toBe(true);
+    followUpsStore.toggleDrawer(false);
+  });
+
+  it('counts each reveal, the same follow-up again included', () => {
+    followUpsStore.list = [fu('a', '/r')];
+    const before = followUpsStore.revealCount;
+    followUpsStore.reveal('a');
+    followUpsStore.reveal('a');
+    expect(followUpsStore.revealCount).toBe(before + 2);
+    followUpsStore.toggleDrawer(false);
+  });
+
+  it('does nothing for one that is gone', () => {
+    followUpsStore.list = [];
+    followUpsStore.reveal('zz');
+    expect(followUpsStore.drawerOpen).toBe(false);
+  });
+});

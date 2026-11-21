@@ -98,6 +98,13 @@ describe('addFollowUp', () => {
     expect(addFollowUp({ repoPath: '/other', title: 'one more', details: '' }).existing).toBe(false);
   });
 
+  it('says what to do in words for the person, not an agent, when added by hand', () => {
+    for (let i = 0; i < FOLLOW_UP_LIMITS.openPerProject; i++) addFollowUp({ repoPath: '/repo', title: `t${i}`, details: '' });
+    expect(() => addFollowUp({ repoPath: '/repo', title: 'one more', details: '', byUser: true }))
+      .toThrow('This project already has 100 open follow-ups, the most it can have. Mark finished ones done, or delete some, first.');
+    expect(() => addFollowUp({ repoPath: '/repo', title: 'one more', details: '' })).toThrow(/Ask the user/);
+  });
+
   it("changes nothing while the file can't be read", () => {
     mockReadFileSync.mockImplementation(() => { throw Object.assign(new Error('locked'), { code: 'EBUSY' }); });
     expect(listFollowUps()).toBeNull();

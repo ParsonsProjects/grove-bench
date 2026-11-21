@@ -136,6 +136,7 @@ const api: GroveBenchAPI = {
 
   // Follow-ups
   listFollowUps: () => ipcRenderer.invoke(IPC.FOLLOW_UPS_LIST),
+  addFollowUp: (repoPath: string, title: string, details: string) => ipcRenderer.invoke(IPC.FOLLOW_UP_ADD, repoPath, title, details),
   setFollowUpDone: (id: string, done: boolean) => ipcRenderer.invoke(IPC.FOLLOW_UP_SET_DONE, id, done),
   followUpStarted: (id: string, sessionId: string) => ipcRenderer.invoke(IPC.FOLLOW_UP_STARTED, id, sessionId),
   removeFollowUp: (id: string) => ipcRenderer.invoke(IPC.FOLLOW_UP_REMOVE, id),

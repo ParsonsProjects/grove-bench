@@ -32,6 +32,20 @@ Each thread in the sidebar shows:
 
 Click a thread to switch to it. The workspace will show that thread's activity, changes, and terminal. Click the open thread again to deselect it and go back to the landing screen, or to your new thread if you have one being written.
 
+## Board (alpha)
+
+Turn on **Board (alpha)** in Settings → General (The grove) to get a **List** / **Board** switch under the search box. **Board** shows every open thread as a card in the main pane, in a column for its stage, after a column of work for later:
+
+- **Follow-ups**: open [follow-ups](follow-ups.md), work an agent or you left for a later thread. **Start thread** opens a new thread with it as the first message, **Done** marks it done, and **+** adds one. One leaves the column while a thread started from it is open, and comes back, with **Start another**, if that thread is closed before the work is done
+- **Working**: the agent is working or starting up
+- **Needs you**: a permission prompt or question is waiting, or the thread stopped with an error. These cards have an amber edge
+- **Review**: finished for now. It stays here until its pull request is merged or closed
+- **Done**: its pull request was merged or closed. Close the thread when you're done with it, and its card goes
+
+A card shows the thread's status (its grove character or dot), its name, project and branch, the same line the sidebar shows under it (what the agent is doing or last said), and its pull request with how it stands (for example **Checks failing**, **Approved** or **Merged**). A thread started from a follow-up names it along the bottom of its card (marked **done** once it is); click that line to show the follow-up in the Follow-ups list. Click the rest of the card to open its thread; the board closes. Click **List** to go back to the thread you had open before. Closed threads aren't on the board.
+
+**Lanes** splits the board into a row per **Project**, or per **Group** (with a last row for the threads and follow-ups in no group). **Filter cards** keeps the cards whose name, branch, project, line or pull request number has every word you type, and the follow-ups whose title, details or project has them. The lanes and filter go back to **None** and empty when Grove Bench restarts. With the sidebar folded to its rail, the board button under **+** opens and closes the board.
+
 ## Collapsing the sidebar
 
 Click the panel button next to the search box to fold the sidebar down to a thin rail. The rail shows one status dot (or grove character) per open thread, and you can click one to switch to it (click the open one again to deselect it) or right-click it for the context menu. Hover a dot to see its name, and its goal when goals are on. Above them, a **+** starts a new thread (once you have one, it shows as a dashed square for the draft). The rail also keeps search, bookmarks, [follow-ups](follow-ups.md), memory, skills, clean-up and settings. To add a project, open the sidebar. Projects and the filters are only in the full sidebar, so the rail always lists every open thread. Click the panel button at the top of the rail to open the sidebar again. Grove Bench remembers whether it was collapsed.

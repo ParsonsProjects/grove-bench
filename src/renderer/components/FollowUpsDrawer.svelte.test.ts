@@ -155,3 +155,35 @@ describe('FollowUpsDrawer', () => {
     expect(followUpsStore.drawerOpen).toBe(false);
   });
 });
+
+describe('FollowUpsDrawer: adding one by hand', () => {
+  afterEach(() => {
+    followUpsStore.closeAdd();
+  });
+
+  it('opens the New follow-up dialog in the project on screen', async () => {
+    store.sessions = [{ id: 's1', branch: 'feat', repoPath: '/repo-b', status: 'running' }] as any;
+    store.activeSessionId = 's1';
+    render(FollowUpsDrawer);
+    await fireEvent.click(screen.getByRole('button', { name: 'New follow-up' }));
+    expect(followUpsStore.addingIn).toEqual({ repoPath: '/repo-b' });
+  });
+
+  it('says how to add one in the empty list', () => {
+    render(FollowUpsDrawer);
+    expect(screen.getByText(/To add one yourself, click/)).toBeInTheDocument();
+  });
+});
+
+describe('FollowUpsDrawer: showing one follow-up', () => {
+  it('marks the follow-up it was opened to show, done ones included', () => {
+    followUpsStore.list = [fu({ id: 'aa0001', title: 'Open one' }), fu({ id: 'aa0002', title: 'Finished one', doneAt: Date.now() })];
+    followUpsStore.drawerOpen = false;
+    followUpsStore.reveal('aa0002');
+    render(FollowUpsDrawer);
+    const shown = screen.getByRole('article', { name: 'Finished one' });
+    expect(shown).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByRole('article', { name: 'Open one' })).not.toHaveAttribute('aria-current');
+    followUpsStore.toggleDrawer(false);
+  });
+});
