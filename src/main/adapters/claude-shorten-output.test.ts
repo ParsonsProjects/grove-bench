@@ -7,7 +7,9 @@ vi.mock('../logger.js', () => ({
   logger: { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() },
 }));
 
-import { COMMAND_OUTPUT_FOLDER, ShortenedOutputs, shortenOutputHook, shortenedFooter } from './claude-shorten-output.js';
+import { ShortenedOutputs, shortenOutputHook, shortenedFooter } from './claude-shorten-output.js';
+import { COMMAND_OUTPUT_FOLDER } from '../../shared/attachments.js';
+import { shortenCommandOutput } from '../output-filter.js';
 
 type Hook = ReturnType<typeof shortenOutputHook>;
 type HookResult = { hookSpecificOutput?: { hookEventName: string; updatedToolOutput?: Record<string, unknown> } };
@@ -66,16 +68,54 @@ describe('shortenOutputHook', () => {
     expect(shortened.takeSavedTokens()).toBe(0);
   });
 
-  it("puts stderr back after stdout when none of it was left, and is just the full output when the short one isn't in the result", async () => {
+  it('puts stderr back after stdout when none of it was left', async () => {
     const shortened = new ShortenedOutputs();
     const progress = Array.from({ length: 40 }, (_, i) => `remote: Counting objects: ${i}% (${i}/40)`).join('\n');
     const result = await run(shortenOutputHook(shortened, dir), bash('git push', { stdout: 'Everything pushed', stderr: progress }));
     const modelStdout = result.hookSpecificOutput!.updatedToolOutput!.stdout as string;
     expect(result.hookSpecificOutput!.updatedToolOutput!.stderr).toBe('');
-    expect(shortened.takeResult('toolu_01', modelStdout)!.content).toBe(`Everything pushed\n${progress}`);
+    expect(shortened.takeResult('toolu_01', `${modelStdout}\nShell cwd was reset to /w`)!.content)
+      .toBe(`Everything pushed\n${progress}\nShell cwd was reset to /w`);
+  });
 
+  it('finds the short stderr in the result when Claude Code trimmed it', async () => {
+    const shortened = new ShortenedOutputs();
+    const stderr = `   WARN  something to keep\n${Array.from({ length: 40 }, (_, i) => `remote: Counting objects: ${i}% (${i}/40)`).join('\n')}`;
+    const result = await run(shortenOutputHook(shortened, dir), bash('git push', { stdout: 'Everything pushed', stderr }));
+    const { stdout: modelStdout, stderr: modelStderr } = result.hookSpecificOutput!.updatedToolOutput! as { stdout: string; stderr: string };
+    expect(modelStderr).toBe('   WARN  something to keep');
+    const content = `${modelStdout}\n${modelStderr.trim()}\nShell cwd was reset to /w`;
+    expect(shortened.takeResult('toolu_01', content)!.content).toBe(`Everything pushed\n${stderr.trim()}\nShell cwd was reset to /w`);
+  });
+
+  it("counts nothing and shows no note when the model didn't get Grove's version (another hook's won)", async () => {
+    const shortened = new ShortenedOutputs();
     await run(shortenOutputHook(shortened, dir), bash('pytest -v', { stdout: PYTEST }));
-    expect(shortened.takeResult('toolu_01', 'something else entirely')!.content).toBe(PYTEST);
+    expect(shortened.takeResult('toolu_01', 'what another hook made of it')).toBeNull();
+    expect(shortened.takeSavedTokens()).toBe(0);
+  });
+
+  it('counts the footer against the savings, and saves nothing when that leaves too little', async () => {
+    // The rules save about 450 characters of 1,250: enough on their own,
+    // not once the footer is added.
+    const stdout = `${Array.from({ length: 12 }, (_, i) => `test tests::t${i} ... ok${' '.repeat(18)}`).join('\n')}\n${'x'.repeat(800)}`;
+    expect(shortenCommandOutput('cargo test', stdout, '')).not.toBeNull();
+    const shortened = new ShortenedOutputs();
+    expect(await run(shortenOutputHook(shortened, dir), bash('cargo test', { stdout }))).toEqual({});
+    expect(fs.existsSync(path.join(dir, COMMAND_OUTPUT_FOLDER))).toBe(false);
+  });
+
+  it('keeps the last 100 outputs waiting for their results', async () => {
+    const shortened = new ShortenedOutputs();
+    const hook = shortenOutputHook(shortened, dir);
+    const results: string[] = [];
+    for (let i = 0; i < 101; i++) {
+      const r = await run(hook, bash('pytest -v', { stdout: PYTEST }, `tu${i}`));
+      results.push(r.hookSpecificOutput!.updatedToolOutput!.stdout as string);
+    }
+    expect(shortened.takeResult('tu0', results[0])).toBeNull();
+    expect(shortened.takeResult('tu1', results[1])).not.toBeNull();
+    expect(shortened.takeResult('tu100', results[100])).not.toBeNull();
   });
 
   it.each([

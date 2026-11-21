@@ -15,22 +15,29 @@
  * thread's attachments folder, where Grove lets the agent read without
  * asking (tool-policy.ts), and the short version ends with its path. Saving
  * fails: the output is left as it was.
+ *
+ * Other PostToolUse hooks (the user's, a project's) run beside this one on
+ * the same output, and the last rewrite wins. So the Thread tab's note and
+ * the savings count only once the result is seen to have Grove's version
+ * in it: its footer, which names a file only Grove writes.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
 import type { OutputShortened } from '../../shared/types.js';
+import { COMMAND_OUTPUT_FOLDER } from '../../shared/attachments.js';
 import { estimateTokens, shortenCommandOutput } from '../output-filter.js';
 import { isRecord } from '../persisted-state.js';
 import { logger } from '../logger.js';
-
-/** The folder in a thread's attachments folder the full outputs go in. */
-export const COMMAND_OUTPUT_FOLDER = 'command-output';
 
 /** What the model was told after a shortened output. */
 export function shortenedFooter(file: string): string {
   return `[Grove Bench shortened this output. The full output is in ${file}]`;
 }
+
+/** Shortened outputs kept for results not read yet. One the CLI never
+ *  sends a result for (the turn was stopped) would otherwise stay. */
+const MAX_WAITING = 100;
 
 interface Shortened {
   stdout: string;
@@ -38,6 +45,8 @@ interface Shortened {
   /** What the model got in their place. */
   modelStdout: string;
   modelStderr: string;
+  /** The last line of modelStdout. */
+  footer: string;
   note: OutputShortened;
 }
 
@@ -48,18 +57,23 @@ export class ShortenedOutputs {
   private savedSinceResult = 0;
 
   add(toolUseId: string, shortened: Shortened): void {
+    this.byToolUse.delete(toolUseId);
     this.byToolUse.set(toolUseId, shortened);
-    this.savedSinceResult += shortened.note.savedTokens;
+    if (this.byToolUse.size > MAX_WAITING) this.byToolUse.delete(this.byToolUse.keys().next().value!);
   }
 
   /** A tool result's content with the full output back in place of what
-   *  the model got, and the note, for a result the hook shortened. Once
-   *  for each result. */
+   *  the model got, and the note, for a result the hook shortened: null
+   *  when the model didn't get Grove's version after all (another hook's
+   *  won). Once for each result; counts the savings. */
   takeResult(toolUseId: string, content: string): { content: string; note: OutputShortened } | null {
     const shortened = this.byToolUse.get(toolUseId);
     if (!shortened) return null;
     this.byToolUse.delete(toolUseId);
-    return { content: fullContent(content, shortened), note: shortened.note };
+    const full = fullContent(content, shortened);
+    if (full === null) return null;
+    this.savedSinceResult += shortened.note.savedTokens;
+    return { content: full, note: shortened.note };
   }
 
   /** The tokens saved since the last call, for the turn's result. */
@@ -75,33 +89,45 @@ function joinOutput(stdout: string, stderr: string): string {
   return [stdout.trimEnd(), stderr.trimEnd()].filter((s) => s !== '').join('\n');
 }
 
-/** The result content Claude Code made, with the full output back in it:
- *  anything it added around the output (a note that the working directory
- *  was reset) stays. When the short version can't be found in it, stdout
- *  then stderr, just the full output. */
-function fullContent(content: string, s: Shortened): string {
-  const shownOut = s.modelStdout.trimEnd();
-  const shownErr = s.modelStderr.trimEnd();
-  const i = content.indexOf(shownOut);
-  const j = shownErr ? content.indexOf(shownErr, i + shownOut.length) : -1;
-  if (i < 0 || (shownErr && j < 0)) return joinOutput(s.stdout, s.stderr);
-  // All of stderr went: it goes back after stdout, where Claude Code puts it.
-  if (!shownErr) return content.slice(0, i) + joinOutput(s.stdout, s.stderr) + content.slice(i + shownOut.length);
-  return content.slice(0, i) + s.stdout.trimEnd() + content.slice(i + shownOut.length, j)
-    + s.stderr.trimEnd() + content.slice(j + shownErr.length);
+/**
+ * The result content Claude Code made, with the full output back in place
+ * of the short one: anything it added around them (a note that the working
+ * directory was reset) stays. Null when it hasn't Grove's version in it.
+ * The short stdout ends at the footer; short stderr is looked for after it,
+ * trimmed, as Claude Code may trim it. Where that can't be found, the full
+ * stderr goes straight after stdout in its place.
+ */
+function fullContent(content: string, s: Shortened): string | null {
+  const footerAt = content.lastIndexOf(s.footer);
+  if (footerAt < 0) return null;
+  const outEnd = footerAt + s.footer.length;
+  const shownOut = s.modelStdout.trim();
+  const outAt = content.lastIndexOf(shownOut, footerAt);
+  const outStart = outAt >= 0 && outAt + shownOut.length === outEnd ? outAt : 0;
+  const before = content.slice(0, outStart);
+  let after = content.slice(outEnd);
+  const shownErr = s.modelStderr.trim();
+  const fullErr = s.stderr.trim();
+  const errAt = shownErr ? after.indexOf(shownErr) : -1;
+  if (errAt >= 0) after = after.slice(0, errAt) + fullErr + after.slice(errAt + shownErr.length);
+  else if (fullErr) after = `\n${fullErr}${shownErr ? '' : after}`;
+  return before + s.stdout.trimEnd() + after;
 }
 
-/** Save `text` as `toolUseId`'s full output. Its path, or null if it
- *  couldn't be saved. */
-async function saveFullOutput(folder: string, toolUseId: string, text: string): Promise<string | null> {
-  const file = path.join(folder, `${toolUseId.replace(/[^A-Za-z0-9_-]/g, '_') || 'output'}.txt`);
+/** The file `toolUseId`'s full output is saved as. */
+function outputFile(folder: string, toolUseId: string): string {
+  return path.join(folder, `${toolUseId.replace(/[^A-Za-z0-9_-]/g, '_') || 'output'}.txt`);
+}
+
+/** Save `text` as `file`. False if it couldn't be saved. */
+async function saveFullOutput(file: string, text: string): Promise<boolean> {
   try {
-    await fs.promises.mkdir(folder, { recursive: true });
+    await fs.promises.mkdir(path.dirname(file), { recursive: true });
     await fs.promises.writeFile(file, text, 'utf-8');
-    return file;
+    return true;
   } catch (err) {
-    logger.warn(`[shorten-output] could not save the full output of ${toolUseId}:`, err);
-    return null;
+    logger.warn(`[shorten-output] could not save the full output as ${file}:`, err);
+    return false;
   }
 }
 
@@ -122,20 +148,23 @@ export function shortenOutputHook(shortened: ShortenedOutputs, attachmentsDir: s
       || response.persistedOutputPath !== undefined || response.rawOutputPath !== undefined
       || response.structuredContent !== undefined) return {};
 
-    const short = shortenCommandOutput(command, stdout, stderr);
-    if (!short) return {};
-    const file = await saveFullOutput(folder, input.tool_use_id, joinOutput(stdout, stderr));
-    if (!file) return {};
-    const modelStdout = `${short.stdout}${short.stdout ? '\n' : ''}${shortenedFooter(file)}`;
+    // The footer counts against the savings, so it's known before the
+    // rules decide whether shortening is worth it, and before anything is
+    // saved.
+    const file = outputFile(folder, input.tool_use_id);
+    const footer = shortenedFooter(file);
+    const short = shortenCommandOutput(command, stdout, stderr, footer.length + 1);
+    if (!short || !await saveFullOutput(file, joinOutput(stdout, stderr))) return {};
+    const modelStdout = `${short.stdout}${short.stdout ? '\n' : ''}${footer}`;
     const fullChars = stdout.length + stderr.length;
     const modelChars = modelStdout.length + short.stderr.length;
-    if (modelChars >= fullChars) return {};
 
     shortened.add(input.tool_use_id, {
       stdout,
       stderr,
       modelStdout,
       modelStderr: short.stderr,
+      footer,
       note: { families: short.families, fullChars, modelChars, savedTokens: estimateTokens(fullChars - modelChars), file },
     });
     return {

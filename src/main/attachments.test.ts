@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { app, protocol, shell } from 'electron';
 import type { AgentEvent } from '../shared/types.js';
-import { attachmentImageUrl, worktreeFileUrl } from '../shared/attachments.js';
+import { attachmentImageUrl, COMMAND_OUTPUT_FOLDER, worktreeFileUrl } from '../shared/attachments.js';
 
 vi.mock('./logger.js', () => ({
   logger: { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() },
@@ -496,6 +496,21 @@ describe('pruneAttachments', () => {
 
     expect(fs.readdirSync(folder('abc123'))).toEqual([kept.stored.file]);
     expect(fs.existsSync(dropped.path)).toBe(false);
+  });
+
+  it('deletes the full outputs of shortened commands no result refers to any more', async () => {
+    const outputs = path.join(folder('abc123'), COMMAND_OUTPUT_FOLDER);
+    fs.mkdirSync(outputs, { recursive: true });
+    for (const name of ['tu1.txt', 'tu2.txt']) {
+      fs.writeFileSync(path.join(outputs, name), 'full output');
+      age(path.join(outputs, name));
+    }
+    const shortened = { families: ['test' as const], fullChars: 11, modelChars: 5, savedTokens: 1, file: path.join(outputs, 'tu1.txt') };
+    const events: AgentEvent[] = [{ type: 'tool_result', toolUseId: 'tu1', content: 'full output', shortened }];
+
+    await pruneAttachments('abc123', events);
+
+    expect(fs.readdirSync(outputs)).toEqual(['tu1.txt']);
   });
 
   it('keeps a file saved while it runs, whose message may not be in the history yet', async () => {

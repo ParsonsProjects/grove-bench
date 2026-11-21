@@ -25,7 +25,8 @@ describe('outputKinds', () => {
     ['npm run lint', ['lint']],
     ['pnpm typecheck', ['lint']],
     ['git status', ['git-status']],
-    ['git -C ../other --no-pager log -3', ['git-log', 'git-diff']],
+    ['git -C ../other --no-pager log -3', ['git-diff', 'git-log']],
+    ['git show HEAD~1', ['git-diff', 'git-log']],
     ['git diff HEAD~1', ['git-diff']],
     ['git push -u origin main', ['git-remote']],
     ['npm ci', ['install']],
@@ -34,7 +35,12 @@ describe('outputKinds', () => {
     ['npx vite build', ['build']],
     ['npm run build', ['build']],
     ['cargo build --release', ['build']],
-    ['npm install && npm test', ['install', 'test']],
+    ['npm install && npm test', ['test', 'install']],
+    ['cd app && npm test', ['test']],
+    ['rm -rf dist && npm run build', ['build']],
+    ['npm test;', ['test']],
+    ['npm run type-check', ['lint']],
+    ['npm run build:latest', ['build']],
   ])('%s', (command, kinds) => {
     expect(outputKinds(command)).toEqual(kinds);
   });
@@ -47,12 +53,38 @@ describe('outputKinds', () => {
     'npm test 2>&1 | tail -20',
     'git log | head',
     'npm test |& tee out.txt',
+    // Not tests or lint, though their names have those letters in them.
+    'npm run inspect',
+    'npm run healthcheck',
+    // A file's contents.
+    'git show HEAD:docs/upgrade.patch',
   ])('knows no rules for %s', (command) => {
     expect(outputKinds(command)).toEqual([]);
   });
 
-  it('reads || and 2>&1 as no pipe', () => {
-    expect(outputKinds('npm test 2>&1 || echo failed')).toEqual(['test']);
+  it.each([
+    'npx vitest run; echo EXIT=$?',
+    'npm test || true',
+    'npm test 2>&1 || echo failed',
+    'npm run lint\necho done',
+  ])('leaves %s alone, as it can succeed though the tests or lint failed', (command) => {
+    expect(outputKinds(command)).toEqual([]);
+  });
+
+  it.each([
+    // Output of a command it knows nothing of.
+    'npm test && echo done',
+    'npm run build && cat dist/report.txt',
+    // A diff, which must stay exact, with output other rules are for.
+    'npm install && git diff',
+    'npm test && git log -p -3',
+    'git status && git diff',
+  ])('leaves the chain %s alone', (command) => {
+    expect(outputKinds(command)).toEqual([]);
+  });
+
+  it('reads 2>&1 as no pipe', () => {
+    expect(outputKinds('npm test 2>&1')).toEqual(['test']);
   });
 });
 
@@ -78,7 +110,30 @@ describe('shortenCommandOutput', () => {
 
   it('names the kinds of output it shortened', () => {
     const stdout = `${times(30, (i) => `npm warn deprecated pkg${i}@1.0.0: no longer supported, use something else`)}\n${times(40, (i) => `test tests::t${i} ... ok`)}`;
-    expect(shortenCommandOutput('npm ci && cargo test', stdout, '')?.families).toEqual(['install', 'test']);
+    expect(shortenCommandOutput('npm ci && cargo test', stdout, '')?.families).toEqual(['test', 'install']);
+  });
+
+  it('counts what the caller will add against the savings', () => {
+    // 1,000 characters, of which the rules save 500.
+    const stdout = `${times(10, (i) => `test tests::t${i} ... ok${' '.repeat(26)}`)}\n${'x'.repeat(499)}`;
+    expect(shortenCommandOutput('cargo test', stdout, '')).not.toBeNull();
+    expect(shortenCommandOutput('cargo test', stdout, '', 200)).toBeNull();
+  });
+
+  it.each([
+    ['vitest', 'npx vitest run', ' FAIL  src/a.test.ts > adds\nAssertionError: expected 1 to be 2'],
+    ['jest', 'npx jest', 'FAIL src/a.test.ts\n  ● adds'],
+    ['pytest', 'pytest', '=================================== FAILURES ===================================\n1 failed, 64 passed in 0.10s'],
+    ['cargo', 'cargo test', 'test result: FAILED. 29 passed; 1 failed'],
+    ['go', 'go test ./...', '--- FAIL: TestThing (0.00s)'],
+  ])('leaves %s output that shows a failure alone, whatever the exit status', (_name, command, failure) => {
+    const passing = times(60, (i) => `test tests::t${i} ... ok\n✓ src/thing${i}.test.ts (3 tests) 5ms`);
+    expect(shortenCommandOutput(command, `${passing}\n${failure}`, '')).toBeNull();
+  });
+
+  it('leaves lint output with errors alone', () => {
+    const problems = times(40, (i) => `  ${i + 1}:5  error  'a${i}' is not defined  no-undef`);
+    expect(shortenCommandOutput('npm run lint', `/app/a.js\n${problems}\n\n✖ 40 problems (40 errors, 0 warnings)`, '')).toBeNull();
   });
 
   describe('tests', () => {
@@ -228,9 +283,10 @@ describe('shortenCommandOutput', () => {
       expect(shorten('git status', many)).not.toContain('(use "git');
     });
 
-    it('puts each git log header on one line, without the email', () => {
+    it('puts each git log header on one line, with the whole hash and without the email', () => {
       const commit = (i: number) => [
         `commit ${String(i).repeat(40).slice(0, 40)}${i === 0 ? ' (HEAD -> main, origin/main)' : ''}`,
+        ...(i === 1 ? ['Merge: 1a2b3c4 5d6e7f8'] : []),
         'Author: Ada Lovelace <ada@example.com>',
         `Date:   Thu Nov ${String(10 + i)} 11:23:26 2026 +0000`,
         '',
@@ -242,13 +298,66 @@ describe('shortenCommandOutput', () => {
       const stdout = times(8, commit);
       const out = shorten('git log -8', stdout);
       expect(out.split('\n').slice(0, 5)).toEqual([
-        '0000000 (HEAD -> main, origin/main) 2026-11-10 Ada Lovelace',
+        `${'0'.repeat(40)} (HEAD -> main, origin/main) 2026-11-10 Ada Lovelace`,
         '    Change number 0',
         '    ',
         '    A longer body that says why.',
         '',
       ]);
+      expect(out).toContain(`${'1'.repeat(40)} 2026-11-11 Ada Lovelace (merge of 1a2b3c4 5d6e7f8)`);
       expect(out).not.toContain('ada@example.com');
+    });
+
+    it("keeps the commit after a lock file's changes in git log -p", () => {
+      const stdout = [
+        `commit ${'a'.repeat(40)}`,
+        'Author: Ada Lovelace <ada@example.com>',
+        'Date:   Thu Nov 19 11:23:26 2026 +0000',
+        '',
+        '    Bump the dependencies',
+        '',
+        'diff --git a/package-lock.json b/package-lock.json',
+        '--- a/package-lock.json',
+        '+++ b/package-lock.json',
+        '@@ -1,1 +1,40 @@',
+        times(40, (i) => `+    "node_modules/pkg${i}": { "version": "1.1.${i}" },`),
+        '',
+        `commit ${'b'.repeat(40)}`,
+        'Author: Ada Lovelace <ada@example.com>',
+        'Date:   Wed Nov 18 11:23:26 2026 +0000',
+        '',
+        '    Fix the parser',
+        '',
+        'diff --git a/src/a.ts b/src/a.ts',
+        '@@ -1 +1 @@',
+        '-a',
+        '+b',
+      ].join('\n');
+      expect(shorten('git log -p -2', stdout).split('\n')).toEqual([
+        `${'a'.repeat(40)} 2026-11-19 Ada Lovelace`,
+        '    Bump the dependencies',
+        '',
+        'diff --git a/package-lock.json b/package-lock.json',
+        '[hidden: changes to this lock file, +40 -0 lines]',
+        '',
+        `${'b'.repeat(40)} 2026-11-18 Ada Lovelace`,
+        '    Fix the parser',
+        '',
+        'diff --git a/src/a.ts b/src/a.ts',
+        '@@ -1 +1 @@',
+        '-a',
+        '+b',
+      ]);
+    });
+
+    it('shows the changes to a lock file the command names', () => {
+      const stdout = [
+        'diff --git a/package-lock.json b/package-lock.json',
+        '@@ -1,40 +1,40 @@',
+        times(40, (i) => `-    "node_modules/pkg${i}": { "version": "1.0.${i}" },\n+    "node_modules/pkg${i}": { "version": "1.1.${i}" },`),
+      ].join('\n');
+      expect(shortenCommandOutput('git diff -- package-lock.json', stdout, '')).toBeNull();
+      expect(shorten('git diff', stdout)).toContain('[hidden: changes to this lock file, +40 -40 lines]');
     });
 
     it('hides lock file changes and index lines, keeping the rest of a diff exactly', () => {
@@ -387,6 +496,19 @@ describe('shortenCommandOutput', () => {
   it('says a line repeated many times once, with a count', () => {
     const stdout = `${times(60, () => 'npm warn config production Use `--omit=dev` instead.')}\nadded 1 package in 1s`;
     expect(shorten('npm install', stdout)).toBe('npm warn config production Use `--omit=dev` instead.\n[the line above 59 more times]\nadded 1 package in 1s');
+  });
+});
+
+describe('long runs of spaces', () => {
+  // Patterns that backtrack would take seconds here, in the main process.
+  it.each([
+    ['npm run build', `x${' '.repeat(30_000)}y kB`],
+    ['npx eslint .', `  1:1  warning  x${' '.repeat(30_000)}y z`],
+    ['git log', `Author: x${' '.repeat(30_000)}y`],
+  ])('are quick to read in %s output', (command, line) => {
+    const started = performance.now();
+    shortenCommandOutput(command, `${line}\n${'a'.repeat(2000)}`, '');
+    expect(performance.now() - started).toBeLessThan(200);
   });
 });
 

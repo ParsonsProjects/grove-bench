@@ -10,8 +10,17 @@
  * model little: passing tests, progress lines, git's hints, deprecation
  * notices, build files listed one by one. Most leave a line saying what
  * they dropped, so the model knows something was there. Output is left
- * alone unless the command is one Grove knows, has no pipe (its output is
- * already shaped), and the rules save enough to be worth it.
+ * alone unless every command in it is one Grove knows (or one that prints
+ * nothing), it has no pipe (its output is already shaped), and the rules
+ * save enough to be worth it. Rules see the whole output, as a chain's
+ * outputs can't be told apart, so a chain whose parts need different rules
+ * is shortened only when none of them is a diff, which must stay exact.
+ *
+ * "Succeeded" is the whole command's exit status, which a chain can hide:
+ * after `;` or `||` the last part decides. So output is left alone when a
+ * part with rules is followed by one of those, and when test output shows
+ * a failure or lint output shows an error anyway (a script ending in
+ * `|| true`).
  */
 
 import type { OutputFamily } from '../shared/types.js';
@@ -67,31 +76,40 @@ function programWords(segment: string): string[] {
   return words;
 }
 
-/** What a package script's name suggests it runs. */
+const TEST_SCRIPT_WORDS = new Set(['test', 'tests', 'spec', 'specs', 'e2e', 'vitest', 'jest']);
+const LINT_SCRIPT_WORDS = new Set(['lint', 'eslint', 'typecheck', 'tsc', 'check', 'types']);
+const BUILD_SCRIPT_WORDS = new Set(['build', 'compile']);
+
+/** What a package script's name suggests it runs, by its words: `test:main`
+ *  and `type-check` count, `inspect` and `healthcheck` don't. */
 function scriptKind(name: string | undefined): Kind | null {
   if (!name) return null;
-  if (/test|spec/i.test(name)) return 'test';
-  if (/lint|typecheck|type-check|tsc|check/i.test(name)) return 'lint';
-  if (/build|compile/i.test(name)) return 'build';
+  const words = name.toLowerCase().split(/[:._/-]/);
+  if (words.some((w) => TEST_SCRIPT_WORDS.has(w))) return 'test';
+  if (words.some((w) => LINT_SCRIPT_WORDS.has(w))) return 'lint';
+  if (words.some((w) => BUILD_SCRIPT_WORDS.has(w))) return 'build';
   return null;
 }
 
-/** git's subcommand, past its global options. */
-function gitSubcommand(words: string[]): string | undefined {
+/** Where git's subcommand is, past its global options: -1 for none. */
+function gitSubcommandAt(words: string[]): number {
   for (let i = 1; i < words.length; i++) {
     const w = words[i];
     if (w === '-C' || w === '-c' || w === '--git-dir' || w === '--work-tree') i++;
-    else if (!w.startsWith('-')) return w;
+    else if (!w.startsWith('-')) return i;
   }
-  return undefined;
+  return -1;
 }
 
 function gitKinds(words: string[]): Kind[] {
-  switch (gitSubcommand(words)) {
+  const at = gitSubcommandAt(words);
+  const args = at < 0 ? [] : words.slice(at + 1).filter((w) => !w.startsWith('-'));
+  switch (at < 0 ? undefined : words[at]) {
     case 'status': return ['git-status'];
     case 'diff': return ['git-diff'];
-    case 'show':
-    case 'log': return ['git-log', 'git-diff'];
+    // `git show HEAD:file` prints a file, which no rule should touch.
+    case 'show': return args.some((a) => a.includes(':')) ? [] : ['git-diff', 'git-log'];
+    case 'log': return ['git-diff', 'git-log'];
     case 'push':
     case 'pull':
     case 'fetch':
@@ -100,8 +118,7 @@ function gitKinds(words: string[]): Kind[] {
   }
 }
 
-function kindsOfSegment(segment: string): Kind[] {
-  const words = programWords(segment);
+function kindsOf(words: string[]): Kind[] {
   const [cmd, sub, third] = words;
   if (!cmd) return [];
   if (TEST_TOOLS.has(cmd)) return ['test'];
@@ -128,16 +145,48 @@ function kindsOfSegment(segment: string): Kind[] {
   return [];
 }
 
-/** The rules for a command's output: none for one Grove doesn't know, or
- *  whose output goes through a pipe (`| tail`, `| grep`), which has shaped
- *  it already. A command chained with && or ; gets every part's rules. */
+/** Programs that print nothing when they succeed, which a chain can have
+ *  without changing what the output is. */
+const QUIET = new Set(['cd', 'export', 'set', 'unset', 'mkdir', 'rm', 'cp', 'mv', 'touch', 'true']);
+
+/** Output whose lines must stay exactly as they are, but for the ones a
+ *  rule drops: a diff's blank, repeated and trailing-space lines are part
+ *  of what changed, and a CRLF file's lines end in a carriage return. */
+const EXACT_KINDS: ReadonlySet<Kind> = new Set(['git-diff', 'git-log']);
+
+/** The order rules run in. A diff's rules come before the log's, which
+ *  rewrite the commit lines the diff's rules find their way by. */
+const RULE_ORDER: readonly Kind[] = ['git-diff', 'git-log', 'git-status', 'git-remote', 'test', 'lint', 'install', 'build'];
+
+/**
+ * The rules for a command's output, in the order they run. None when:
+ * - its output goes through a pipe (`| tail`, `| grep`), which has shaped it
+ * - a part of it is a command Grove doesn't know, which prints what it likes
+ * - a part with rules is followed by `;`, `||` or a new line, so the
+ *   command can succeed though that part failed
+ * - its parts need different rules and one of them is a diff or log
+ */
 export function outputKinds(command: string): Kind[] {
   if (/(^|[^|])\|(?!\|)/.test(command)) return [];
-  const kinds = new Set<Kind>();
-  for (const segment of command.split(/&&|\|\||;|\n/)) {
-    for (const kind of kindsOfSegment(segment)) kinds.add(kind);
+  const parts = command.split(/(&&|\|\||;|\n)/);
+  const segments: Kind[][] = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    const words = programWords(parts[i]);
+    if (words.length === 0) continue;
+    const kinds = kindsOf(words);
+    if (kinds.length === 0) {
+      if (QUIET.has(words[0])) continue;
+      return [];
+    }
+    const next = parts[i + 1];
+    const more = parts.slice(i + 2).some((p, j) => j % 2 === 0 && p.trim() !== '');
+    if (next !== undefined && next !== '&&' && more) return [];
+    segments.push(kinds);
   }
-  return [...kinds];
+  const all = new Set(segments.flat());
+  const mixed = new Set(segments.map((k) => k.join())).size > 1;
+  if (mixed && [...all].some((k) => EXACT_KINDS.has(k))) return [];
+  return RULE_ORDER.filter((k) => all.has(k));
 }
 
 const FAMILY: Record<Kind, OutputFamily> = {
@@ -222,8 +271,18 @@ function dropConsoleBlocks(lines: string[]): string[] {
 
 // Type check and lint. ESLint's problems past the first few in a file;
 // svelte-check's banner.
-const ESLINT_PROBLEM = /^\s+\d+:\d+\s+(warning|error)\s+.*?(?:\s{2,}(\S+))?$/;
+const ESLINT_PROBLEM = /^\s+\d+:\d+\s+(warning|error)\s/;
 const ESLINT_KEEP = 3;
+
+/** An ESLint problem line's rule: its last column, after two spaces. Found
+ *  by searching the string, as a pattern for it backtracks on long runs of
+ *  spaces. */
+function eslintRule(line: string): string | null {
+  const text = line.trimEnd();
+  const at = text.lastIndexOf('  ');
+  const rule = at < 0 ? '' : text.slice(at + 2);
+  return rule && !/\s/.test(rule) ? rule : null;
+}
 const SVELTE_CHECK_BANNER = /^(Loading svelte-check in workspace|Getting Svelte diagnostics)|^={10,}$/;
 
 function lintRules(lines: string[]): string[] {
@@ -248,7 +307,7 @@ function lintRules(lines: string[]): string[] {
     }
     inFile++;
     if (inFile <= ESLINT_KEEP) out.push(line);
-    else rest.push(problem[2] ?? problem[1]);
+    else rest.push(eslintRule(line) ?? problem[1]);
   }
   flush();
   return out;
@@ -261,12 +320,19 @@ function gitStatusRules(lines: string[]): string[] {
   return dropLines(lines, (l) => GIT_HINT.test(l));
 }
 
-// git log and show: each commit's four header lines in one, the email and
-// time of day left off.
+// git log and show: each commit's header lines in one, the email and time
+// of day left off. The hash stays whole: a short one can be ambiguous.
 const LOG_COMMIT = /^commit ([0-9a-f]{7,64})(.*)$/;
-const LOG_AUTHOR = /^Author:\s+(.*?)(?:\s+<[^>]*>)?$/;
 const LOG_DATE = /^Date:\s+(.*)$/;
-const LOG_MERGE = /^Merge:\s/;
+const LOG_MERGE = /^Merge:\s+(.*)$/;
+
+/** The name on an Author: line, without the email. */
+function authorOf(line: string): string | null {
+  if (!line.startsWith('Author:')) return null;
+  const author = line.slice('Author:'.length).trim();
+  const email = author.lastIndexOf(' <');
+  return email >= 0 && author.endsWith('>') ? author.slice(0, email).trim() : author;
+}
 const GIT_DATE = /^\w{3} (\w{3}) (\d{1,2}) [\d:]+ (\d{4})/;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -287,20 +353,23 @@ function gitLogRules(lines: string[]): string[] {
     }
     let author = '';
     let date = '';
+    let merge = '';
     let j = i + 1;
     for (; j < lines.length; j++) {
-      const a = LOG_AUTHOR.exec(lines[j]);
+      const a = authorOf(lines[j]);
       const d = LOG_DATE.exec(lines[j]);
-      if (a) author = a[1];
+      const m = LOG_MERGE.exec(lines[j]);
+      if (a !== null) author = a;
       else if (d) date = shortDate(d[1]);
-      else if (!LOG_MERGE.test(lines[j])) break;
+      else if (m) merge = `(merge of ${m[1].trim()})`;
+      else break;
     }
     // Not git's own header (a custom format): leave it as it is.
     if (!author && !date) {
       out.push(lines[i]);
       continue;
     }
-    out.push([commit[1].slice(0, 7) + commit[2], date, author].filter(Boolean).join(' '));
+    out.push([commit[1] + commit[2], date, author, merge].filter(Boolean).join(' '));
     // The blank line before the message.
     if (lines[j] === '') j++;
     i = j - 1;
@@ -308,25 +377,35 @@ function gitLogRules(lines: string[]): string[] {
   return out;
 }
 
-// git diff: index lines, and the changes to lock files.
+// git diff: index lines, and the changes to lock files the command didn't
+// name. A file's part of a diff ends at the first line that can't be in it,
+// such as the blank line before `git log -p`'s next commit.
 const DIFF_HEADER = /^diff --git a\/.+ b\/(.+)$/;
+const DIFF_BODY = /^(?:[ +\-\\]|@@ |index |(?:new|deleted) file mode |old mode |new mode |(?:dis)?similarity index |rename (?:from|to) |copy (?:from|to) |Binary files )/;
 const DIFF_INDEX = /^index [0-9a-f]+\.\.[0-9a-f]+(?: \d+)?$/;
 const LOCKFILES = new Set([
   'package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb',
   'Cargo.lock', 'poetry.lock', 'uv.lock', 'Pipfile.lock', 'Gemfile.lock', 'composer.lock', 'go.sum',
 ]);
 
-function gitDiffRules(lines: string[]): string[] {
+const baseName = (p: string) => p.replace(/^.*[\\/]/, '');
+
+/** Whether the command names a lock file, so its changes are what it asked for. */
+function namesLockfile(command: string): boolean {
+  return command.split(/\s+/).some((w) => LOCKFILES.has(baseName(w.replace(/^['"]|['"]$/g, ''))));
+}
+
+function gitDiffRules(lines: string[], options: RuleOptions): string[] {
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (DIFF_INDEX.test(line)) continue;
     out.push(line);
     const header = DIFF_HEADER.exec(line);
-    if (!header || !LOCKFILES.has(header[1].replace(/^.*\//, ''))) continue;
+    if (!header || options.keepLockfiles || !LOCKFILES.has(baseName(header[1]))) continue;
     let added = 0;
     let removed = 0;
-    while (i + 1 < lines.length && !DIFF_HEADER.test(lines[i + 1]) && !LOG_COMMIT.test(lines[i + 1])) {
+    while (i + 1 < lines.length && DIFF_BODY.test(lines[i + 1])) {
       const next = lines[++i];
       if (next.startsWith('+') && !next.startsWith('+++')) added++;
       else if (next.startsWith('-') && !next.startsWith('---')) removed++;
@@ -383,25 +462,31 @@ function installRules(lines: string[]): string[] {
 // largest few.
 const CARGO_PROGRESS = /^\s+(?:(?:Compiling|Checking|Downloaded|Fresh|Adding|Removing) \S+ v\d|(?:Updating|Downloading) (?:crates\.io index|crates \.\.\.|`)|Locking \d+ packages?)/;
 const VITE_STEP = /^(?:transforming|rendering chunks|computing gzip size)\.\.\.$/;
-const VITE_FILE = /^\S.*?\s{2,}([\d,]+(?:\.\d+)?) kB(?:\s+│.*)?$/;
+// One word or more (a path may have single spaces), two spaces or more,
+// the size. Written so a long run of spaces can't make it backtrack.
+const VITE_FILE_PATTERN = /^\S+(?:\s\S+)*?\s{2,}([\d,]+(?:\.\d+)?) kB(?:\s+│.*)?$/;
 const VITE_KEEP = 5;
+
+function viteFile(line: string): RegExpExecArray | null {
+  return line.includes(' kB') ? VITE_FILE_PATTERN.exec(line) : null;
+}
 
 function buildRules(lines: string[]): string[] {
   let out = dropLines(lines, (l) => CARGO_PROGRESS.test(l), hidden('of cargo progress'));
   out = dropLines(out, (l) => VITE_STEP.test(l));
   const kept: string[] = [];
   for (let i = 0; i < out.length; i++) {
-    if (!VITE_FILE.test(out[i])) {
+    if (!viteFile(out[i])) {
       kept.push(out[i]);
       continue;
     }
     let end = i;
-    while (end + 1 < out.length && VITE_FILE.test(out[end + 1])) end++;
+    while (end + 1 < out.length && viteFile(out[end + 1])) end++;
     const run = out.slice(i, end + 1);
     if (run.length <= VITE_KEEP + 1) {
       kept.push(...run);
     } else {
-      const size = (l: string) => Number((VITE_FILE.exec(l)?.[1] ?? '0').replace(/,/g, ''));
+      const size = (l: string) => Number((viteFile(l)?.[1] ?? '0').replace(/,/g, ''));
       const largest = new Set([...run].sort((a, b) => size(b) - size(a)).slice(0, VITE_KEEP));
       kept.push(`[hidden: ${run.length - VITE_KEEP} smaller output files]`, ...run.filter((l) => largest.has(l)));
     }
@@ -410,7 +495,12 @@ function buildRules(lines: string[]): string[] {
   return kept;
 }
 
-const RULES: Record<Kind, (lines: string[]) => string[]> = {
+interface RuleOptions {
+  /** Show lock files' changes: the command named one. */
+  keepLockfiles: boolean;
+}
+
+const RULES: Record<Kind, (lines: string[], options: RuleOptions) => string[]> = {
   'test': testRules,
   'lint': lintRules,
   'git-status': gitStatusRules,
@@ -455,32 +545,42 @@ function tidy(lines: string[]): string {
   return out.join('\n');
 }
 
-/** Output whose lines must stay exactly as they are, but for the ones a
- *  rule drops: a diff's blank, repeated and trailing-space lines are part
- *  of what changed, and a CRLF file's lines end in a carriage return. */
-const EXACT_KINDS: ReadonlySet<Kind> = new Set(['git-diff', 'git-log']);
-
-function shortenText(text: string, kinds: Kind[]): string {
+function shortenText(text: string, kinds: Kind[], options: RuleOptions): string {
   if (text.trim() === '') return text;
   const exact = kinds.some((k) => EXACT_KINDS.has(k));
   let lines = exact ? text.replace(ANSI, '').split('\n') : cleanLines(text);
-  for (const kind of kinds) lines = RULES[kind](lines);
+  for (const kind of kinds) lines = RULES[kind](lines, options);
   return exact ? lines.join('\n') : tidy(lines);
+}
+
+/** Signs that tests failed, or lint found errors, whatever the exit status
+ *  said: vitest's and jest's FAIL and ×, pytest's FAILED and failure
+ *  sections, go's --- FAIL, cargo's FAILED result, "2 failed" counts. */
+const TEST_FAILED = /^\s*(?:FAIL|FAILED|ERROR)\b|^\s*[×✗✕]\s|^\s*--- FAIL: |^test result: FAILED|\b[1-9]\d* (?:failed|failing|errors?)\b|^=+ (?:FAILURES|ERRORS) =+$/m;
+/** ESLint's, tsc's and svelte-check's error counts and tsc's error lines. */
+const LINT_FAILED = /\b[1-9]\d* errors?\b|\berror TS\d+/;
+
+function showsFailure(text: string, kinds: Kind[]): boolean {
+  return (kinds.includes('test') && TEST_FAILED.test(text)) || (kinds.includes('lint') && LINT_FAILED.test(text));
 }
 
 /**
  * `stdout` and `stderr` shortened for the model, or null to leave them as
- * they are: a command Grove has no rules for, output too short to bother
- * with, or rules that save too little. Never longer than the original.
+ * they are: a command Grove has no rules for (see outputKinds), output too
+ * short to bother with, tests that failed or lint that found errors, or
+ * rules that save too little. `extraChars`: what the caller will add to
+ * the short version (a line saying where the full output is), counted
+ * against the savings. Never longer than the original, with those added.
  */
-export function shortenCommandOutput(command: string, stdout: string, stderr: string): ShortenedOutput | null {
+export function shortenCommandOutput(command: string, stdout: string, stderr: string, extraChars = 0): ShortenedOutput | null {
   const before = stdout.length + stderr.length;
   if (before < MIN_CHARS) return null;
   const kinds = outputKinds(command);
-  if (kinds.length === 0) return null;
-  const out = shortenText(stdout, kinds);
-  const err = shortenText(stderr, kinds);
-  const saved = before - out.length - err.length;
+  if (kinds.length === 0 || showsFailure(stdout, kinds) || showsFailure(stderr, kinds)) return null;
+  const options: RuleOptions = { keepLockfiles: namesLockfile(command) };
+  const out = shortenText(stdout, kinds, options);
+  const err = shortenText(stderr, kinds, options);
+  const saved = before - out.length - err.length - extraChars;
   if (saved < MIN_SAVED_CHARS || saved < before * MIN_SAVED_SHARE) return null;
   return { stdout: out, stderr: err, families: [...new Set(kinds.map((k) => FAMILY[k]))] };
 }

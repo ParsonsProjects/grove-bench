@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { app, protocol, shell } from 'electron';
 import type { AgentEvent, FileAttachment, ImageMediaType, ImageSource, MadeFile, StoredFile, StoredImage } from '../shared/types.js';
-import { ATTACHMENT_SCHEME, knownMediaType, worktreeImageType } from '../shared/attachments.js';
+import { ATTACHMENT_SCHEME, COMMAND_OUTPUT_FOLDER, knownMediaType, worktreeImageType } from '../shared/attachments.js';
 import type { AdapterEvent } from './adapters/types.js';
 import type { FoundFile } from './turn-files.js';
 import { safeFileName, withLockRetry } from './fs-utils.js';
@@ -543,23 +543,33 @@ function referencedNames(events: readonly AgentEvent[]): Set<string> {
   return keep;
 }
 
-/** Delete a conversation's attachments that no event refers to any more,
- *  after a rewind cut the turns that showed them. One saved (or reused)
- *  after the prune started stays: its message may not be in `events` yet,
- *  as with a send straight after a rewind. */
-export async function pruneAttachments(sessionId: string, events: readonly AgentEvent[]): Promise<void> {
-  const folder = attachmentsFolder(sessionId);
-  if (!folder) return;
-  const startedAt = Date.now() - PRUNE_CLOCK_SLACK_MS;
+/** The full outputs of shortened commands the events refer to, by name. */
+function referencedOutputs(events: readonly AgentEvent[]): Set<string> {
+  const keep = new Set<string>();
+  for (const e of events) {
+    if (e.type === 'tool_result' && e.shortened?.file) keep.add(path.basename(e.shortened.file));
+  }
+  return keep;
+}
+
+/** Delete the files in `folder` that `prunable` picks and `kept()` doesn't
+ *  name, unless saved since `startedAt`. `kept` is read after the listing,
+ *  so a message added to the events meanwhile counts. */
+async function pruneFolder(
+  sessionId: string,
+  folder: string,
+  startedAt: number,
+  prunable: (name: string) => boolean,
+  kept: () => Set<string>,
+): Promise<void> {
   let files: string[];
   try {
     files = await fs.promises.readdir(folder);
   } catch {
     return;
   }
-  // Read after the listing, so a message added to `events` meanwhile counts.
-  const keep = referencedNames(events);
-  await Promise.all(files.filter((f) => STORED_RE.test(f) && !keep.has(f)).map(async (f) => {
+  const keep = kept();
+  await Promise.all(files.filter((f) => prunable(f) && !keep.has(f)).map(async (f) => {
     const filePath = path.join(folder, f);
     try {
       if ((await fs.promises.stat(filePath)).mtimeMs >= startedAt) return;
@@ -568,4 +578,19 @@ export async function pruneAttachments(sessionId: string, events: readonly Agent
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') logger.warn(`[attachments] could not remove ${f} for ${sessionId}:`, err);
     }
   }));
+}
+
+/** Delete a conversation's attachments that no event refers to any more,
+ *  after a rewind cut the turns that showed them: stored images and files,
+ *  and the full outputs of commands Grove shortened. One saved (or reused)
+ *  after the prune started stays: its message may not be in `events` yet,
+ *  as with a send straight after a rewind. */
+export async function pruneAttachments(sessionId: string, events: readonly AgentEvent[]): Promise<void> {
+  const folder = attachmentsFolder(sessionId);
+  if (!folder) return;
+  const startedAt = Date.now() - PRUNE_CLOCK_SLACK_MS;
+  await Promise.all([
+    pruneFolder(sessionId, folder, startedAt, (f) => STORED_RE.test(f), () => referencedNames(events)),
+    pruneFolder(sessionId, path.join(folder, COMMAND_OUTPUT_FOLDER), startedAt, (f) => f.endsWith('.txt'), () => referencedOutputs(events)),
+  ]);
 }

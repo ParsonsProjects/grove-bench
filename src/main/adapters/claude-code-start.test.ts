@@ -432,6 +432,28 @@ describe('ClaudeCodeAdapter.start(): the events', () => {
     }
   });
 
+  it("shows what the model got, with no note or savings, when another hook's rewrite won", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-start-'));
+    try {
+      const { handle, fake, options } = await start({ shortenOutput: true, attachmentsDir: dir });
+      const [matcher] = (options.hooks as { PostToolUse: { hooks: ((input: unknown, id: string, o: { signal: AbortSignal }) => Promise<unknown>)[] }[] }).PostToolUse;
+      const stdout = `${Array.from({ length: 60 }, (_, i) => `test tests::t${i} ... ok`).join('\n')}\n\ntest result: ok. 60 passed`;
+      await matcher.hooks[0]({
+        hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'tu1',
+        tool_input: { command: 'cargo test' }, tool_response: { stdout, stderr: '', interrupted: false },
+      }, 'tu1', { signal: new AbortController().signal });
+
+      fake.send({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'tests passed (another hook)' }] } });
+      fake.send({ type: 'result', subtype: 'success', is_error: false, result: 'done', duration_ms: 1, num_turns: 1 });
+      fake.end();
+      const [result, turn] = await drain(handle);
+      expect(result).toEqual({ type: 'tool_result', toolUseId: 'tu1', content: 'tests passed (another hook)', isError: undefined });
+      expect(turn).not.toHaveProperty('shortenedTokens');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   describe('the running cost and tokens', () => {
     const result = {
       type: 'result', subtype: 'success', is_error: false, result: 'done', duration_ms: 1, num_turns: 1,

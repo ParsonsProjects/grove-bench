@@ -10,6 +10,10 @@ import type { MadeFileKind } from './types.js';
 
 export const ATTACHMENT_SCHEME = 'grove-attachment';
 
+/** The folder in a thread's attachments folder that the full outputs of
+ *  commands Grove shortened for the agent go in (Shorten command output). */
+export const COMMAND_OUTPUT_FOLDER = 'command-output';
+
 /** The URL a stored image loads from. */
 export function attachmentImageUrl(sessionId: string, file: string): string {
   return `${ATTACHMENT_SCHEME}://image/${encodeURIComponent(sessionId)}/${encodeURIComponent(file)}`;
