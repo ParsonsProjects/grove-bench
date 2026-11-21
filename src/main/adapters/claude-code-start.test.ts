@@ -30,6 +30,7 @@ const toSdkMcpServer = vi.hoisted(() => vi.fn((server: { name: string }) => Prom
 vi.mock('./sdk-mcp.js', () => ({ toSdkMcpServer }));
 
 import { ClaudeCodeAdapter, CONTEXT_1M_BETA, LIMIT_STOP_REASON, THINKING_LEVEL_TOKENS, setSdkForTests } from './claude-code.js';
+import { STEER_HOLD_MS } from './claude-steers.js';
 import { ResumeNotFoundError, type AdapterConfig, type AdapterEvent, type AgentQueryHandle, type PermissionResponse } from './types.js';
 import type { ClaudeAccount } from './claude-accounts.js';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
@@ -504,6 +505,55 @@ describe('ClaudeCodeAdapter.start(): the handle', () => {
     await events.next();
     handle.sendMessage({ text: 'again' });
     expect((await prompts.next()).value).toMatchObject({ session_id: 'sess-1', message: { content: 'again' } });
+  });
+
+  it('steers a message into the running turn: its uuid and priority next', async () => {
+    const { handle, prompt } = await start();
+    const prompts = prompt[Symbol.asyncIterator]();
+    handle.steer!({ text: 'use date-fns' }, 'steer-1');
+    expect((await prompts.next()).value).toEqual({
+      type: 'user', uuid: 'steer-1', priority: 'next', session_id: '', message: { role: 'user', content: 'use date-fns' }, parent_tool_use_id: null,
+    });
+  });
+
+  it('reports a steer read, and keeps one turn when Claude answers it after the result', async () => {
+    const { handle, fake } = await start();
+    fake.send(init('sess-1'));
+    handle.steer!({ text: 'use date-fns' }, 'steer-1');
+    // The turn ends with the steer unread, then Claude runs it.
+    fake.send({ type: 'result', subtype: 'success', is_error: false, total_cost_usd: 0.01 });
+    fake.send({ type: 'assistant', message: { content: [{ type: 'text', text: 'Switching.' }] }, parent_tool_use_id: null, uuid: 'a2', user_message_uuid: 'steer-1', user_message_uuids: ['steer-1'] });
+    fake.send({ type: 'result', subtype: 'success', is_error: false, total_cost_usd: 0.02 });
+    fake.end();
+
+    const events = await drain(handle);
+
+    expect(events.filter((e) => e.type === 'steer_read')).toEqual([{ type: 'steer_read', uuid: 'steer-1' }]);
+    expect(events.filter((e) => e.type === 'result')).toHaveLength(1);
+    const read = events.findIndex((e) => e.type === 'steer_read');
+    expect(events.findIndex((e) => e.type === 'assistant_text')).toBeGreaterThan(read);
+  });
+
+  it('lets a held result go, and the steer count as dropped, when nothing follows', async () => {
+    vi.useFakeTimers();
+    try {
+      const { handle, fake } = await start();
+      fake.send(init('sess-1'));
+      handle.steer!({ text: 'use date-fns' }, 'steer-1');
+      fake.send({ type: 'result', subtype: 'success', is_error: false });
+      const events: AdapterEvent[] = [];
+      const reading = (async () => { for await (const e of handle.events) events.push(e); })();
+
+      await vi.advanceTimersByTimeAsync(STEER_HOLD_MS - 1);
+      expect(events.some((e) => e.type === 'result')).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(events.filter((e) => e.type === 'steer_dropped' || e.type === 'result').map((e) => e.type)).toEqual(['steer_dropped', 'result']);
+
+      fake.end();
+      await reading;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('close ends the prompts and closes the query', async () => {

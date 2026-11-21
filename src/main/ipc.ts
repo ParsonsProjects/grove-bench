@@ -1082,6 +1082,13 @@ export function registerHandlers() {
     );
   });
 
+  // A steer: a message into the turn that is running now. The renderer
+  // queues it instead when this says it didn't go.
+  ipcMain.handle(IPC.AGENT_STEER, (_event, sessionId: unknown, content: unknown, uuid: unknown) =>
+    typeof sessionId === 'string' && typeof content === 'string' && typeof uuid === 'string'
+      ? sessionManager.steerMessage(sessionId, content, uuid)
+      : 'not-running');
+
   // The file name is checked against the stored-name pattern, so it can't
   // reach outside the conversation's attachments folder.
   ipcMain.handle(IPC.ATTACHMENT_OPEN, (_event, sessionId: unknown, file: unknown) =>

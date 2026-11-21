@@ -31,6 +31,20 @@ describe('agentsStore', () => {
     expect(agentsStore.isOffered('later', [])).toBe(true);
   });
 
+  it('declares() needs the capability said outright, and falls back to the default agent', () => {
+    agentsStore.list = [
+      { ...claude, isDefault: true, capabilities: { ...claude.capabilities, steering: true } },
+      { ...codex, isDefault: false },
+    ];
+
+    expect(agentsStore.declares('claude-code', 'steering')).toBe(true);
+    expect(agentsStore.declares(undefined, 'steering')).toBe(true);
+    expect(agentsStore.declares('codex', 'steering')).toBe(false);
+    // supports() takes a capability nobody mentions as there.
+    expect(agentsStore.supports('codex', 'steering')).toBe(true);
+    expect(agentsStore.declares('unknown', 'steering')).toBe(false);
+  });
+
   it('uses the agent marked default, else the first', async () => {
     mockGroveBench.listAdapters.mockResolvedValue([claude, codex]);
     await agentsStore.load();

@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { flushSync } from 'svelte';
 import { IDLE_TURN, mockGroveBench } from '../__mocks__/setup.js';
 
-import { messageStore, settlePrompts, type ChatUserMessage } from './messages.svelte.js';
+import { messageStore, settlePrompts, TAKE_BACK_MS, type ChatUserMessage } from './messages.svelte.js';
 import { userMessageLabel } from '../lib/message-label.js';
+import { loadQueues } from '../lib/queue-storage.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
@@ -2943,16 +2944,258 @@ describe('outgoing message queue', () => {
     expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
   });
 
-  it('editQueuedMessage moves the text back to the prompt input', () => {
+  it('editQueuedMessage opens the message in the box and keeps it in its place', () => {
     messageStore.setIsRunning(SID, true);
     messageStore.submitMessage(SID, { displayText: 'fix it', outgoing: 'fix it' });
     const [item] = messageStore.getQueue(SID);
 
     expect(messageStore.editQueuedMessage(SID, item.id)).toBe(true);
 
-    expect(messageStore.getQueue(SID)).toEqual([]);
-    expect(messageStore.promptInsertBySession[SID]?.text).toBe('fix it');
+    expect(messageStore.getQueue(SID)).toHaveLength(1);
+    expect(messageStore.getQueuedEdit(SID)).toEqual({ id: item.id, position: 1 });
+    expect(messageStore.promptInsertBySession[SID]).toMatchObject({ text: 'fix it', replace: true, replaceAttachments: true });
     expect(messageStore.editQueuedMessage(SID, 'nope')).toBe(false);
+  });
+
+  it('saving an edit replaces the message in its place and puts the draft back', () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, { displayText: 'a', outgoing: 'a' });
+    messageStore.submitMessage(SID, { displayText: 'b', outgoing: 'b' });
+    messageStore.setDraft(SID, 'half typed');
+    const [a] = messageStore.getQueue(SID);
+    messageStore.editQueuedMessage(SID, a.id);
+
+    expect(messageStore.submitMessage(SID, { displayText: 'a2', outgoing: 'a2' })).toBe('queued');
+
+    expect(messageStore.getQueue(SID).map((m) => [m.id, m.outgoing])).toEqual([[a.id, 'a2'], [expect.any(String), 'b']]);
+    expect(messageStore.getQueuedEdit(SID)).toBeNull();
+    expect(messageStore.getDraft(SID)).toBe('half typed');
+  });
+
+  it('cancelling an edit leaves the message as it was and puts the draft back', () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, { displayText: 'a', outgoing: 'a' });
+    messageStore.setDraft(SID, 'mine');
+    messageStore.editQueuedMessage(SID, messageStore.getQueue(SID)[0].id);
+    messageStore.setDraft(SID, 'a changed');
+
+    messageStore.cancelQueuedEdit(SID);
+
+    expect(messageStore.getQueue(SID).map((m) => m.outgoing)).toEqual(['a']);
+    expect(messageStore.getDraft(SID)).toBe('mine');
+  });
+
+  it('holds the message being edited, and the ones behind it, when the turn ends', () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, { displayText: 'a', outgoing: 'a' });
+    messageStore.submitMessage(SID, { displayText: 'b', outgoing: 'b' });
+    messageStore.editQueuedMessage(SID, messageStore.getQueue(SID)[0].id);
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.ingestEvent(SID, result);
+    expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+
+    messageStore.submitMessage(SID, { displayText: 'a2', outgoing: 'a2' });
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'a2', undefined, undefined);
+  });
+
+  it('Undo brings back a removed message in its place, after one already sent is gone', () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, { displayText: 'a', outgoing: 'a' });
+    messageStore.submitMessage(SID, { displayText: 'b', outgoing: 'b' });
+    messageStore.submitMessage(SID, { displayText: 'c', outgoing: 'c' });
+    messageStore.removeQueuedMessage(SID, messageStore.getQueue(SID)[1].id);
+    expect(messageStore.getQueueUndo(SID)?.label).toBe('Message removed.');
+
+    // The turn ends: a goes, so Undo mustn't bring it back.
+    messageStore.ingestEvent(SID, result);
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, { displayText: 'd', outgoing: 'd' });
+    messageStore.undoQueueChange(SID);
+
+    expect(messageStore.getQueue(SID).map((m) => m.outgoing)).toEqual(['b', 'c', 'd']);
+    expect(messageStore.getQueueUndo(SID)).toBeNull();
+  });
+
+  it('Undo is offered for five seconds', () => {
+    vi.useFakeTimers();
+    try {
+      messageStore.setIsRunning(SID, true);
+      messageStore.submitMessage(SID, { displayText: 'a', outgoing: 'a' });
+      messageStore.clearQueue(SID);
+      vi.advanceTimersByTime(4_999);
+      expect(messageStore.getQueueUndo(SID)?.label).toBe('Queue cleared.');
+      vi.advanceTimersByTime(1);
+      expect(messageStore.getQueueUndo(SID)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('mergeQueue joins messages and their attachments, and Undo splits them again', () => {
+    messageStore.setIsRunning(SID, true);
+    const img = { data: 'AAAA', mediaType: 'image/png' as const, name: 'a.png' };
+    messageStore.submitMessage(SID, { displayText: 'one', outgoing: 'one', images: [img] });
+    messageStore.submitMessage(SID, { displayText: 'two', outgoing: 'two' });
+
+    expect(messageStore.mergeQueue(SID)).toBe(true);
+    const [merged] = messageStore.getQueue(SID);
+    expect(merged).toMatchObject({ outgoing: 'one\n\ntwo', displayText: 'one\n\ntwo', images: [img] });
+
+    messageStore.undoQueueChange(SID);
+    expect(messageStore.getQueue(SID).map((m) => m.outgoing)).toEqual(['one', 'two']);
+  });
+
+  it("won't merge a queue holding a command", () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, { displayText: 'one', outgoing: 'one' });
+    messageStore.submitCommand(SID, '/compact');
+
+    expect(messageStore.queueMergeBlocker(SID)).toMatch(/Commands/);
+    expect(messageStore.mergeQueue(SID)).toBe(false);
+  });
+
+  it('moveQueuedMessage changes the order and stops at the ends', () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, { displayText: 'a', outgoing: 'a' });
+    messageStore.submitMessage(SID, { displayText: 'b', outgoing: 'b' });
+    const [a] = messageStore.getQueue(SID);
+
+    messageStore.moveQueuedMessage(SID, a.id, -1);
+    expect(messageStore.getQueue(SID).map((m) => m.outgoing)).toEqual(['a', 'b']);
+    messageStore.moveQueuedMessage(SID, a.id, 1);
+    expect(messageStore.getQueue(SID).map((m) => m.outgoing)).toEqual(['b', 'a']);
+  });
+
+  describe('steering', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it('holds a steer for the take-back window, then sends it with its uuid', async () => {
+      messageStore.setIsRunning(SID, true);
+      expect(messageStore.submitSteer(SID, { displayText: 'use date-fns', outgoing: 'use date-fns' })).toBe('steering');
+      const [steer] = messageStore.getSteers(SID);
+      expect(steer.phase).toBe('holding');
+
+      await vi.advanceTimersByTimeAsync(TAKE_BACK_MS - 1);
+      expect(mockGroveBench.steerMessage).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(mockGroveBench.steerMessage).toHaveBeenCalledWith(SID, 'use date-fns', steer.id);
+      expect(messageStore.getSteers(SID)).toEqual([{ ...steer, phase: 'sent' }]);
+      expect(messageStore.getMessages(SID)).toEqual([]);
+    });
+
+    it('Take back puts it in the box and never sends it', async () => {
+      messageStore.setIsRunning(SID, true);
+      messageStore.submitSteer(SID, { displayText: 'oops', outgoing: 'oops', typed: { text: 'oops', attachments: [] } });
+
+      expect(messageStore.takeBackSteer(SID, messageStore.getSteers(SID)[0].id)).toBe(true);
+      await vi.advanceTimersByTimeAsync(TAKE_BACK_MS);
+
+      expect(mockGroveBench.steerMessage).not.toHaveBeenCalled();
+      expect(messageStore.getSteers(SID)).toEqual([]);
+      expect(messageStore.getDraft(SID)).toBe('oops');
+    });
+
+    it('a steer the turn ended without goes next, as a queued message', async () => {
+      messageStore.setIsRunning(SID, true);
+      messageStore.submitSteer(SID, { displayText: 'late', outgoing: 'late' });
+      mockGroveBench.sendMessage.mockClear();
+
+      messageStore.ingestEvent(SID, result);
+
+      expect(messageStore.getSteers(SID)).toEqual([]);
+      expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'late', undefined, undefined);
+    });
+
+    it('queues it when main says no turn is running to take it', async () => {
+      mockGroveBench.steerMessage.mockResolvedValueOnce('not-running');
+      messageStore.setIsRunning(SID, true);
+      messageStore.submitSteer(SID, { displayText: 'x', outgoing: 'x' });
+
+      await vi.advanceTimersByTimeAsync(TAKE_BACK_MS);
+
+      expect(messageStore.getSteers(SID)).toEqual([]);
+      expect(messageStore.getQueue(SID).map((m) => m.outgoing)).toEqual(['x']);
+    });
+
+    it('shows a steer in the thread only once the agent reads it, marked as a steer', async () => {
+      messageStore.setIsRunning(SID, true);
+      messageStore.submitSteer(SID, { displayText: 'use date-fns', outgoing: 'use date-fns' });
+      await vi.advanceTimersByTimeAsync(TAKE_BACK_MS);
+      const { id } = messageStore.getSteers(SID)[0];
+
+      messageStore.ingestEvent(SID, { type: 'user_message', text: 'use date-fns', uuid: id, at: 1, steer: true });
+
+      expect(messageStore.getSteers(SID)).toEqual([]);
+      expect(messageStore.getMessages(SID)).toEqual([expect.objectContaining({ kind: 'user', text: 'use date-fns', uuid: id, steer: true })]);
+    });
+
+    it('a steer read is never stamped onto a prompt still waiting for its own uuid', () => {
+      messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first' });
+      messageStore.ingestEvent(SID, { type: 'user_message', text: 'steer', uuid: 's1', steer: true });
+
+      const users = messageStore.getMessages(SID).filter((m): m is ChatUserMessage => m.kind === 'user');
+      expect(users.map((m) => [m.text, m.uuid])).toEqual([['first', undefined], ['steer', 's1']]);
+    });
+
+    it('Stop puts unread steers on top of the paused queue, marked not read', async () => {
+      messageStore.setIsRunning(SID, true);
+      messageStore.submitMessage(SID, { displayText: 'later', outgoing: 'later' });
+      messageStore.submitSteer(SID, { displayText: 'sent one', outgoing: 'sent one' });
+      await vi.advanceTimersByTimeAsync(TAKE_BACK_MS);
+      const { id } = messageStore.getSteers(SID)[0];
+      messageStore.submitSteer(SID, { displayText: 'held one', outgoing: 'held one' });
+
+      messageStore.markSessionStopped(SID, { byUser: true });
+      messageStore.ingestEvent(SID, { type: 'steer_returned', steers: [{ uuid: id, text: 'sent one' }], stopped: true });
+
+      expect(messageStore.getSteers(SID)).toEqual([]);
+      expect(messageStore.getQueue(SID).map((m) => [m.outgoing, m.notRead ?? false])).toEqual([
+        ['sent one', true], ['held one', false], ['later', false],
+      ]);
+      expect(messageStore.isQueuePaused(SID)).toBe(true);
+    });
+
+    it('a returned steer read after all leaves the queue', () => {
+      messageStore.setIsRunning(SID, true);
+      messageStore.ingestEvent(SID, { type: 'steer_returned', steers: [{ uuid: 's9', text: 'maybe' }] });
+      expect(messageStore.getQueue(SID).map((m) => m.steerUuid)).toEqual(['s9']);
+
+      messageStore.ingestEvent(SID, { type: 'user_message', text: 'maybe', uuid: 's9', steer: true });
+
+      expect(messageStore.getQueue(SID)).toEqual([]);
+    });
+
+    it('Send now steers a queued text message while the agent works', () => {
+      messageStore.setIsRunning(SID, true);
+      messageStore.submitMessage(SID, { displayText: 'now please', outgoing: 'now please' });
+
+      expect(messageStore.steerQueued(SID, messageStore.getQueue(SID)[0].id)).toBe(true);
+
+      expect(messageStore.getQueue(SID)).toEqual([]);
+      expect(messageStore.getSteers(SID).map((s) => s.outgoing)).toEqual(['now please']);
+    });
+
+    it("won't steer a queued command or a message with images", () => {
+      messageStore.setIsRunning(SID, true);
+      messageStore.submitCommand(SID, '/compact');
+      messageStore.submitMessage(SID, { displayText: 'pic', outgoing: 'pic', images: [{ data: 'A', mediaType: 'image/png', name: 'a.png' }] });
+
+      for (const item of messageStore.getQueue(SID)) expect(messageStore.steerQueued(SID, item.id)).toBe(false);
+      expect(messageStore.getSteers(SID)).toEqual([]);
+    });
+  });
+
+  it('saves the queue for the next run, and forgets it with the thread', () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, { displayText: 'keep me', outgoing: 'keep me' });
+
+    expect(loadQueues()[SID]?.map((m) => m.outgoing)).toEqual(['keep me']);
+
+    messageStore.destroySession(SID);
+    expect(loadQueues()[SID]).toBeUndefined();
   });
 
   it('editQueuedMessage hands back the prompt as typed, with its attachments', () => {

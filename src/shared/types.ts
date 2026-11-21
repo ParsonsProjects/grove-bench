@@ -369,8 +369,13 @@ export type AgentEvent =
   | { type: 'compact_boundary'; trigger: 'manual' | 'auto'; preTokens: number; postTokens?: number }
   | { type: 'tool_progress'; toolName: string; toolUseId: string; elapsedSeconds: number }
   | { type: 'activity'; activity: 'thinking' | 'tool_starting' | 'generating' | 'idle' ; toolName?: string }
-  /** `at`: when it was sent (epoch ms). Older history has none. */
-  | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[]; files?: StoredFile[]; at?: number }
+  /** `at`: when it was sent (epoch ms). Older history has none. `steer`: sent
+   *  into a running turn and logged where the agent read it; it has no
+   *  checkpoint of its own, so there is no rewinding to it. */
+  | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[]; files?: StoredFile[]; at?: number; steer?: true }
+  /** Steers the agent never read, given back to be queued: Stop came first
+   *  (`stopped`), or the agent let them go. Live only (TRANSIENT_EVENT_TYPES). */
+  | { type: 'steer_returned'; steers: { uuid: string; text: string }[]; stopped?: true }
   /** `level: 'warning'` renders prominently (e.g. read-safe mode without a sandbox).
    *  `newConversation` marks where the agent started a new conversation: it
    *  doesn't remember the turns above, so a rewind can't fork from them. */
@@ -1577,6 +1582,11 @@ export interface GroveBenchAPI {
 
   // Agent I/O (replaces terminal I/O)
   sendMessage(sessionId: string, content: string, images?: ImageAttachment[], files?: FileAttachment[]): void;
+  /** Send a message into the turn that is running now, for the agent to
+   *  read after its current tool calls (agents with capabilities.steering).
+   *  'not-running' or 'unsupported' when it didn't go: queue it instead.
+   *  `uuid` names it in the user_message the agent's read of it brings. */
+  steerMessage(sessionId: string, content: string, uuid: string): Promise<'steered' | 'not-running' | 'unsupported'>;
   /** Open a file attached to a message (PDFs and audio in their default app),
    *  or show it in its folder for other types. False when it's gone. */
   openAttachedFile(sessionId: string, file: string): Promise<boolean>;
@@ -2224,6 +2234,10 @@ export interface GroveBenchSettings {
   defaultActivityView: ActivityViewMode;
   /** Enable spell checking in the prompt textarea. */
   spellcheck: boolean;
+  /** While Claude is working, Enter steers a message into the running turn
+   *  and Alt+Enter queues it; false (the default) the other way round.
+   *  Agents that can't steer always queue. */
+  steerOnEnter: boolean;
 
   // Notifications (OS-level; shown only while the window is unfocused)
   /** Notify when an agent finishes a turn. Default true. */
@@ -2587,6 +2601,7 @@ export const IPC = {
   APP_RESTORE_COMPLETE: 'app:restoreComplete',
   AGENT_EVENT: 'agent:event',          // agent:event:{sessionId}
   AGENT_SEND: 'agent:send',
+  AGENT_STEER: 'agent:steer',
   ATTACHMENT_OPEN: 'attachment:open',
   ATTACHMENT_READ: 'attachment:read',
   WORKTREE_FILE_OPEN: 'worktree:openFile',

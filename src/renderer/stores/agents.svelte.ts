@@ -69,6 +69,13 @@ class AgentsStore {
     return agent ? agent.capabilities[capability] !== false : true;
   }
 
+  /** Whether an agent says it has a capability. Unlike supports(), false
+   *  until the list loads and for one it doesn't know: for capabilities only
+   *  some agents have (steering), where taking it as there would be wrong. */
+  declares(id: string | null | undefined, capability: string): boolean {
+    return this.get(id ?? this.defaultId)?.capabilities[capability] === true;
+  }
+
   /** Files Grove writes into worktrees for any agent (AgentSummary.generatedFiles),
    *  or Claude Code's until the list loads. */
   generatedFiles(): ReadonlySet<string> {

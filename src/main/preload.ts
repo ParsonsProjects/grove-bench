@@ -73,6 +73,10 @@ const api: GroveBenchAPI = {
     images?: import('../shared/types.js').ImageAttachment[],
     files?: import('../shared/types.js').FileAttachment[],
   ) => ipcRenderer.send(IPC.AGENT_SEND, sessionId, content, images, files),
+  /** Send a message into the turn that is running now (Claude Code). Says
+   *  'not-running' or 'unsupported' when it didn't go, to queue it instead. */
+  steerMessage: (sessionId: string, content: string, uuid: string): Promise<'steered' | 'not-running' | 'unsupported'> =>
+    ipcRenderer.invoke(IPC.AGENT_STEER, sessionId, content, uuid),
   openAttachedFile: (sessionId: string, file: string) =>
     ipcRenderer.invoke(IPC.ATTACHMENT_OPEN, sessionId, file),
   readAttachedFile: (sessionId: string, file: string) =>

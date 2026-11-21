@@ -89,6 +89,9 @@ type RunError = {
  *  until the turn's result is in the history (see resultLogging). So the
  *  history and this agree at every point. An agent still starting up isn't,
  *  until a prompt goes to it. */
+/** A steer's uuid, as the renderer makes it (crypto.randomUUID). */
+const STEER_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function turnInFlight(session: ManagedSession): boolean {
   if (session.unsentPrompts?.size || session.resultLogging) return true;
   return !!session.turnHandle && session.turnHandle === session.queryHandle;
@@ -744,6 +747,12 @@ class AgentSessionManager {
     // Process event stream from the adapter
     try {
       for await (const adapterEvent of handle.events) {
+        // A steer the agent read or let go (claude-steers.ts): these are the
+        // session manager's own, never passed on as they are.
+        if (adapterEvent.type === 'steer_read' || adapterEvent.type === 'steer_dropped') {
+          this.settleSteer(session, adapterEvent);
+          continue;
+        }
         if (!TRANSIENT_EVENT_TYPES.has(adapterEvent.type)) {
           logger.debug(`[runQuery] session=${id} event type=${adapterEvent.type}`);
         }
@@ -939,6 +948,8 @@ class AgentSessionManager {
     // would leave the text it streamed last waiting on the timer. Those
     // return below with no status, which would send it.
     this.flushStream(session);
+    // This run's agent has gone, and with it any steer it hadn't read.
+    this.returnUnreadSteers(session, session.stoppedByUser, handle);
     // A close or delete decides itself, once the agent is dead, whether the
     // turn ended (see shutDown).
     if (session.turnHandle === handle && !session.destroying) session.turnHandle = null;
@@ -1245,6 +1256,77 @@ class AgentSessionManager {
   /** Send a prompt. True once the agent has it; false when the session is
    *  gone or never connected; 'nothing-to-send' when every attachment was
    *  left out and nothing was typed. */
+  /**
+   * Send `content` into the turn that is running now (a steer), for the agent
+   * to read once its current tool calls finish. It joins the history only
+   * when the agent reads it, as a user_message marked `steer`, so the thread
+   * shows it where the agent took it in (settleSteer). It takes no
+   * checkpoint: it is part of the turn already running. Text only.
+   *
+   * Returns why it didn't go, so the renderer can queue it instead: there
+   * is no turn running to take it, or the agent can't steer. `uuid` is the
+   * renderer's name for it, a UUID, which the user_message carries.
+   */
+  steerMessage(id: string, content: string, uuid: string): 'steered' | 'not-running' | 'unsupported' {
+    const session = this.sessions.get(id);
+    const handle = session?.queryHandle;
+    if (!session || !handle || session.destroying) return 'not-running';
+    if (!session.adapter.capabilities.steering || typeof handle.steer !== 'function') return 'unsupported';
+    // Only into a turn the agent is running. A prompt still waiting for its
+    // checkpoint hasn't reached it, and a stop is under way.
+    if (session.turnHandle !== handle || session.unsentPrompts?.size || session.interrupting) return 'not-running';
+    // The renderer names it, so it can match the read that comes back.
+    if (!content.trim() || !STEER_UUID.test(uuid) || session.pendingSteers?.has(uuid)) return 'not-running';
+    const steers = session.pendingSteers ??= new Map();
+    steers.set(uuid, { text: content, sentAt: Date.now(), handle });
+    try {
+      handle.steer({ text: content }, uuid);
+    } catch (e) {
+      steers.delete(uuid);
+      logger.warn(`[steerMessage] session=${id} steer failed:`, e);
+      return 'not-running';
+    }
+    logger.debug(`[steerMessage] session=${id} steered uuid=${uuid}`);
+    return 'steered';
+  }
+
+  /** The agent read a steer, or let it go unread. */
+  private settleSteer(session: ManagedSession, event: { type: 'steer_read' | 'steer_dropped'; uuid: string }) {
+    if (event.type === 'steer_dropped') {
+      const steer = session.pendingSteers?.get(event.uuid);
+      if (!steer) return;
+      session.pendingSteers!.delete(event.uuid);
+      (session.returnedSteers ??= new Map()).set(event.uuid, { text: steer.text, sentAt: steer.sentAt });
+      session.emit?.({ type: 'steer_returned', steers: [{ uuid: event.uuid, text: steer.text }] });
+      return;
+    }
+    // A steer given back and then read after all is still recorded: the
+    // renderer takes it off its queue when this arrives.
+    const steer = session.pendingSteers?.get(event.uuid) ?? session.returnedSteers?.get(event.uuid);
+    if (!steer) return;
+    session.pendingSteers?.delete(event.uuid);
+    session.returnedSteers?.delete(event.uuid);
+    session.emit?.({ type: 'user_message', text: steer.text, uuid: event.uuid, at: steer.sentAt, steer: true });
+  }
+
+  /** Give the steers the agent never read back to the window's queue: a
+   *  Stop came first (`stopped`), or the agent (`handle`'s run, or any)
+   *  went away. */
+  private returnUnreadSteers(session: ManagedSession, stopped: boolean, handle?: AgentQueryHandle) {
+    const pending = session.pendingSteers;
+    if (!pending?.size) return;
+    const back: { uuid: string; text: string }[] = [];
+    for (const [uuid, steer] of pending) {
+      if (handle && steer.handle !== handle) continue;
+      pending.delete(uuid);
+      (session.returnedSteers ??= new Map()).set(uuid, { text: steer.text, sentAt: steer.sentAt });
+      back.push({ uuid, text: steer.text });
+    }
+    if (back.length === 0) return;
+    logger.debug(`[steers] session=${session.id} ${back.length} unread steer(s) back to the queue${stopped ? ' (stopped)' : ''}`);
+    session.emit?.({ type: 'steer_returned', steers: back, ...(stopped ? { stopped: true as const } : {}) });
+  }
+
   async sendMessage(
     id: string,
     content: string,
@@ -1937,6 +2019,18 @@ class AgentSessionManager {
     // doesn't support in-place interrupt → fall back to the teardown+respawn
     // path, which already handles the startup race via restartRequested.
     if (!handle || typeof handle.interrupt !== 'function') {
+      this.returnUnreadSteers(session, true);
+      return this.stopQuery(id);
+    }
+
+    // An unread steer is in Claude Code's own queue, and a plain interrupt
+    // leaves queued messages to run as the next turn (the SDK's interrupt
+    // receipt lists them as still_queued). The SDK offers no way to cancel
+    // one, so Stop ends the agent process instead; the steer goes back to
+    // the paused queue in the window.
+    if (session.pendingSteers?.size) {
+      logger.debug(`[interruptQuery] session=${id} has ${session.pendingSteers.size} unread steer(s): stopping the process instead`);
+      this.returnUnreadSteers(session, true);
       return this.stopQuery(id);
     }
 

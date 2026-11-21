@@ -31,7 +31,8 @@
     images={msg.images}
     attachments={msg.attachments}
     sentAt={msg.sentAt}
-    onRewind={msg.uuid ? () => messageStore.openRewindDialog(sessionId, msg.uuid) : undefined}
+    steer={msg.steer}
+    onRewind={msg.uuid && !msg.steer ? () => messageStore.openRewindDialog(sessionId, msg.uuid) : undefined}
   />
 
 {:else if msg.kind === 'text'}

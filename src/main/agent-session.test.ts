@@ -283,7 +283,7 @@ class MockAdapter implements AgentAdapter {
     };
     this.control = control;
 
-    async function* eventGenerator(): AsyncGenerator<AgentEvent> {
+    async function* eventGenerator(): AsyncGenerator<AdapterEvent> {
       while (true) {
         if (eventQueue.length > 0) {
           yield eventQueue.shift()!;
@@ -305,6 +305,8 @@ class MockAdapter implements AgentAdapter {
     const handle: AgentQueryHandle = {
       events: eventGenerator(),
       sendMessage: vi.fn(),
+      // Taken only when capabilities.steering is set (steerMessage).
+      steer: vi.fn(),
       abort: vi.fn(() => {
         abortController.abort();
         done = true;
@@ -4000,6 +4002,92 @@ describe('AgentSessionManager.sendMessage()', () => {
 
     // The entry is cleared once settled: later sends fail fast, not hang.
     expect(await sessionManager.sendMessage('test-send-failed-setup', 'Hello again')).toBe(false);
+  });
+});
+
+describe('AgentSessionManager.steerMessage()', () => {
+  const UUID = '0b6a2f4e-1c3d-4e5f-8a9b-0c1d2e3f4a5b';
+
+  async function running(id: string) {
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    return win;
+  }
+  const steerOn = () => { (mockAdapter.capabilities as Record<string, boolean>).steering = true; };
+
+  it("says 'unsupported' for an agent that can't steer", async () => {
+    await running('test-steer-unsupported');
+    await sessionManager.sendMessage('test-steer-unsupported', 'go');
+
+    expect(sessionManager.steerMessage('test-steer-unsupported', 'also this', UUID)).toBe('unsupported');
+
+    await sessionManager.destroySession('test-steer-unsupported');
+  });
+
+  it("says 'not-running' with no turn running, or for a uuid that isn't one", async () => {
+    steerOn();
+    await running('test-steer-idle');
+
+    expect(sessionManager.steerMessage('test-steer-idle', 'also this', UUID)).toBe('not-running');
+    await sessionManager.sendMessage('test-steer-idle', 'go');
+    expect(sessionManager.steerMessage('test-steer-idle', 'also this', 'not-a-uuid')).toBe('not-running');
+    expect(mockAdapter.lastHandle!.steer).not.toHaveBeenCalled();
+
+    await sessionManager.destroySession('test-steer-idle');
+  });
+
+  it('steers into the running turn, and records it in the history only once it is read', async () => {
+    steerOn();
+    await running('test-steer-read');
+    await sessionManager.sendMessage('test-steer-read', 'go');
+
+    expect(sessionManager.steerMessage('test-steer-read', 'use date-fns', UUID)).toBe('steered');
+    expect(mockAdapter.lastHandle!.steer).toHaveBeenCalledWith({ text: 'use date-fns' }, UUID);
+    const steers = () => sessionManager.getEventHistory('test-steer-read').filter((e) => e.type === 'user_message' && e.steer);
+    expect(steers()).toEqual([]);
+
+    mockAdapter.control!.emitEvent({ type: 'steer_read', uuid: UUID });
+    await vi.waitFor(() => expect(steers()).toEqual([expect.objectContaining({ type: 'user_message', text: 'use date-fns', uuid: UUID, steer: true })]));
+    // A second steer with the same uuid would be a different message.
+    expect(sessionManager.getEventHistory('test-steer-read').some((e) => e.type === ('steer_read' as string))).toBe(false);
+
+    await sessionManager.destroySession('test-steer-read');
+  });
+
+  it('gives a dropped steer back to the window, unread', async () => {
+    steerOn();
+    const win = await running('test-steer-dropped');
+    await sessionManager.sendMessage('test-steer-dropped', 'go');
+    sessionManager.steerMessage('test-steer-dropped', 'never mind', UUID);
+
+    mockAdapter.control!.emitEvent({ type: 'steer_dropped', uuid: UUID });
+
+    await vi.waitFor(() => expect(win._send.mock.calls.map(([, e]: [string, AgentEvent]) => e)).toContainEqual(
+      { type: 'steer_returned', steers: [{ uuid: UUID, text: 'never mind' }] },
+    ));
+    await sessionManager.destroySession('test-steer-dropped');
+  });
+
+  it('Stop with an unread steer ends the agent process instead of interrupting, and gives the steer back', async () => {
+    steerOn();
+    const win = await running('test-steer-stop');
+    await sessionManager.sendMessage('test-steer-stop', 'go');
+    const handle = mockAdapter.lastHandle!;
+    sessionManager.steerMessage('test-steer-stop', 'wait', UUID);
+
+    await sessionManager.interruptQuery('test-steer-stop');
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(handle.interrupt).not.toHaveBeenCalled();
+    expect(mockAdapter.startCallCount).toBe(2);
+    expect(win._send.mock.calls.map(([, e]: [string, AgentEvent]) => e)).toContainEqual(
+      { type: 'steer_returned', steers: [{ uuid: UUID, text: 'wait' }], stopped: true },
+    );
+
+    await sessionManager.destroySession('test-steer-stop');
   });
 });
 
