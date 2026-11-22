@@ -2,7 +2,7 @@ import path from 'node:path';
 import { app, BrowserWindow, nativeTheme } from 'electron';
 import { NIGHT, PAPER } from '../shared/brand.js';
 import { z } from 'zod';
-import type { GroveBenchSettings } from '../shared/types.js';
+import { SUBMODULE_SETUPS, type GroveBenchSettings } from '../shared/types.js';
 import { effectiveCompactTimeoutSeconds } from '../shared/compact-timeout.js';
 import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-state.js';
 import { readJsonFile, writeFileAtomicSync } from './json-file.js';
@@ -37,6 +37,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 
   // Worktree
   autoInstallDeps: false,
+  submoduleSetup: 'all',
   worktreeFolder: '', // empty = the app's data folder
 
   // Preview
@@ -260,6 +261,7 @@ const settingsSchema = z.object({
   backgroundModels: z.record(z.string(), z.string()).catch(DEFAULT_SETTINGS.backgroundModels),
 
   autoInstallDeps: z.boolean().catch(DEFAULT_SETTINGS.autoInstallDeps),
+  submoduleSetup: z.enum(SUBMODULE_SETUPS).catch(DEFAULT_SETTINGS.submoduleSetup),
   worktreeFolder: z.string().trim().catch(DEFAULT_SETTINGS.worktreeFolder),
 
   previewAgentTools: z.boolean().catch(DEFAULT_SETTINGS.previewAgentTools),

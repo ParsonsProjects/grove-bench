@@ -76,6 +76,11 @@ vi.mock('./skills.js', async (importOriginal) => ({ ...(await importOriginal<typ
 vi.mock('./background-tasks.js', () => ({ agentForProject: vi.fn(), recordedAgent: vi.fn(), backgroundModelFor: vi.fn() }));
 vi.mock('./editor-launch.js', () => ({ launchEditor: vi.fn() }));
 vi.mock('./deps-install.js', () => ({ detectPackageManager: vi.fn(), installDependencies: vi.fn() }));
+// hasSubmodules reads the worktree for real; the setup itself is a stand-in.
+vi.mock('./worktree-submodules.js', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  initSubmodules: vi.fn(),
+}));
 vi.mock('./commit-message.js', () => ({ generateCommitMessage: vi.fn() }));
 vi.mock('./notifications.js', () => ({ showOsNotification: vi.fn() }));
 vi.mock('./auto-updater.js', () => ({ applyUpdateSettings: vi.fn(), checkForUpdate: vi.fn(), downloadUpdate: vi.fn(), getUpdateState: vi.fn(), restartToUpdate: vi.fn() }));
@@ -117,6 +122,7 @@ import { generateBranchName } from './branch-name.js';
 import { generateGoal } from './session-goal.js';
 import { launchEditor } from './editor-launch.js';
 import { detectPackageManager, installDependencies } from './deps-install.js';
+import { initSubmodules } from './worktree-submodules.js';
 import { logRendererError } from './crash-handling.js';
 import { applyAttentionBadge } from './attention-badge.js';
 import { recordedAgent } from './background-tasks.js';
@@ -462,6 +468,69 @@ describe('SESSION_CREATE', () => {
 
     expect(installDependencies).toHaveBeenCalledWith(withPkg, 'pnpm', setup.abort!.signal);
     expect(tabEvents(id)).toContainEqual({ type: 'error', message: 'pnpm install failed:\nERR_PNPM_FETCH_404' });
+  });
+
+  /** New worktrees made in a folder of their own, holding `files`. */
+  function worktreeWith(files: Record<string, string>): string {
+    const dir = fs.mkdtempSync(path.join(tmp, 'wt-'));
+    for (const [name, content] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), content);
+    m.worktreeManager.create.mockImplementation(async (c: { id: string; branchName: string }) => ({
+      id: c.id, path: dir, branch: c.branchName, repoPath: '/repo', createdAt: 0,
+    }));
+    return dir;
+  }
+
+  it('sets up the submodules of a project that has them, before installing its dependencies', async () => {
+    m.settings.getSettings.mockReturnValue({ autoInstallDeps: true });
+    const dir = worktreeWith({ '.gitmodules': '[submodule "lib"]\n', 'package.json': '{}' });
+    const order: string[] = [];
+    vi.mocked(initSubmodules).mockImplementation(async () => { order.push('submodules'); });
+    vi.mocked(installDependencies).mockImplementation(async () => { order.push('install'); });
+    vi.mocked(detectPackageManager).mockResolvedValue('npm');
+
+    const { id } = await create();
+    const setup = lastSetup();
+    await setup.promise;
+
+    expect(initSubmodules).toHaveBeenCalledWith(dir, 'all', setup.abort!.signal);
+    expect(order).toEqual(['submodules', 'install']);
+    expect(tabEvents(id).map((e) => (e as { message?: string }).message)).toContain('Setting up submodules…');
+  });
+
+  it('leaves submodules alone for a project without them, or when turned off', async () => {
+    worktreeWith({});
+    await create();
+    await lastSetup().promise;
+
+    m.settings.getSettings.mockReturnValue({ autoInstallDeps: false, submoduleSetup: 'off' });
+    worktreeWith({ '.gitmodules': '[submodule "lib"]\n' });
+    await create();
+    await lastSetup().promise;
+
+    expect(initSubmodules).not.toHaveBeenCalled();
+  });
+
+  it('checks out the top level only when set to', async () => {
+    m.settings.getSettings.mockReturnValue({ autoInstallDeps: false, submoduleSetup: 'top' });
+    const dir = worktreeWith({ '.gitmodules': '[submodule "lib"]\n' });
+    await create();
+    await lastSetup().promise;
+
+    expect(initSubmodules).toHaveBeenCalledWith(dir, 'top', expect.anything());
+  });
+
+  it('reports a failed submodule setup, with what to run, and still starts the agent', async () => {
+    worktreeWith({ '.gitmodules': '[submodule "lib"]\n' });
+    vi.mocked(initSubmodules).mockRejectedValueOnce(Object.assign(new Error('failed'), { stderr: "fatal: repository 'https://example.com/lib.git/' not found" }));
+
+    const { id } = await create();
+    await lastSetup().promise;
+
+    expect(tabEvents(id)).toContainEqual({
+      type: 'error',
+      message: "The project's submodules couldn't be set up, so their folders are empty in this thread:\nfatal: repository 'https://example.com/lib.git/' not found\n\nOnce that's sorted, run git submodule update --init --recursive in the Terminal tab.",
+    });
+    expect(m.sessionManager.createSession).toHaveBeenCalled();
   });
 
   it('reports a failed install and still starts the agent', async () => {

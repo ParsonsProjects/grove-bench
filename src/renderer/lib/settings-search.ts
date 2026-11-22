@@ -63,6 +63,7 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'branch-naming-rule', section: 'git', label: 'Branch naming rule', keywords: 'branch name ticket' },
   { id: 'worktree-folder', section: 'git', label: 'Worktree folder', keywords: 'dev drive location path disk' },
   { id: 'auto-install-deps', section: 'git', label: 'Auto-install dependencies', keywords: 'npm pnpm yarn bun install' },
+  { id: 'submodules', section: 'git', label: 'Submodules in new worktrees', keywords: 'submodule gitmodules recursive nested worktree empty folder' },
 
   { id: 'notify-turn-complete', section: 'notifications', label: 'Agent finishes a turn', keywords: 'done' },
   { id: 'notify-permission', section: 'notifications', label: 'Agent is waiting on a permission, question or limit', keywords: 'needs you paused' },

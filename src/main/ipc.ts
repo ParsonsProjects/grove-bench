@@ -55,6 +55,7 @@ import { perfSteps, logWindowTiming } from './perf-steps.js';
 import { recordTrace, lastTracePath } from './perf-trace.js';
 import { perfLogPath } from './perf-log.js';
 import { detectPackageManager, installDependencies, type PackageManager } from './deps-install.js';
+import { hasSubmodules, initSubmodules } from './worktree-submodules.js';
 import { applyAttentionBadge } from './attention-badge.js';
 import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
 import crypto from 'node:crypto';
@@ -502,6 +503,27 @@ export function registerHandlers() {
           logger.warn('Failed to copy untracked files:', e);
         }
         perfSteps.step(id, 'copy files');
+
+        // Submodules: git worktree add leaves them as empty folders
+        // (worktree-submodules.ts). Before the install, which may need them.
+        const submodules = settings.getSettings().submoduleSetup ?? 'all';
+        if (submodules !== 'off' && await hasSubmodules(worktree.path)) {
+          emitPrelaunch({ type: 'status', message: 'Setting up submodules…' });
+          try {
+            await initSubmodules(worktree.path, submodules, signal);
+            perfSteps.step(id, 'submodules');
+            logger.info(`Submodules set up in worktree ${worktree.id} (${submodules})`);
+          } catch (e) {
+            if (signal.aborted) throw e;
+            perfSteps.step(id, 'submodules (failed)');
+            logger.warn(`Submodule setup failed for worktree ${worktree.id}:`, e);
+            const err = e as { stderr?: string; message?: string };
+            emitPrelaunch({
+              type: 'error',
+              message: `The project's submodules couldn't be set up, so their folders are empty in this thread:\n${err.stderr || err.message || String(e)}\n\nOnce that's sorted, run git submodule update --init${submodules === 'all' ? ' --recursive' : ''} in the Terminal tab.`,
+            });
+          }
+        }
 
         // Install dependencies if enabled and the project has a package.json,
         // with the package manager the project uses

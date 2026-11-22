@@ -2104,6 +2104,10 @@ export interface ClaudeAccountSetting {
   configDir: string;
 }
 
+/** How a new worktree's submodules are checked out (settings.submoduleSetup). */
+export type SubmoduleSetup = 'all' | 'top' | 'off';
+export const SUBMODULE_SETUPS: readonly SubmoduleSetup[] = ['all', 'top', 'off'];
+
 export interface GroveBenchSettings {
   // Permission & Security
   toolAllowRules: ToolRule[];
@@ -2178,6 +2182,10 @@ export interface GroveBenchSettings {
   /** Install dependencies in new worktrees, with the package manager the
    *  project's lockfile names. Default false. */
   autoInstallDeps: boolean;
+  /** Check out a project's submodules in its new worktrees, which `git
+   *  worktree add` leaves empty (worktree-submodules.ts): every level, the
+   *  top level only, or not at all. Default 'all'. */
+  submoduleSetup: SubmoduleSetup;
   /** Folder new worktrees go in, a full path (shared/worktree-folder.ts).
    *  Empty = the app's data folder. Existing worktrees stay where they are. */
   worktreeFolder: string;
