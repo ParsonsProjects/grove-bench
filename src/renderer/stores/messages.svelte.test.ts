@@ -5,6 +5,7 @@ import { IDLE_TURN, mockGroveBench } from '../__mocks__/setup.js';
 import { messageStore, settlePrompts, TAKE_BACK_MS, type ChatUserMessage } from './messages.svelte.js';
 import { userMessageLabel } from '../lib/message-label.js';
 import { loadQueues } from '../lib/queue-storage.js';
+import { MAX_TOTAL_SIZE } from '../lib/file-attachments.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { checkpointStore } from './checkpoints.svelte.js';
 import { gitStatusStore } from './gitStatus.svelte.js';
@@ -1008,6 +1009,23 @@ describe('ingestEvent — prompt_suggestion', () => {
     messageStore.releaseLiveEvents(SID, [{ type: 'user_message', text: 'Fix it' }, result]);
 
     expect(messageStore.getPromptSuggestion(SID)).toBe('Run the tests');
+    messageStore.unsubscribe(SID);
+  });
+
+  it('keeps steers main gave back while the history page loaded', () => {
+    let live!: (event: AgentEvent) => void;
+    mockGroveBench.onAgentEvent.mockImplementationOnce(((_id: string, cb: (event: AgentEvent) => void) => {
+      live = cb;
+      return vi.fn();
+    }) as never);
+    messageStore.unsubscribe(SID);
+    messageStore.subscribe(SID);
+    messageStore.holdLiveEvents(SID);
+    live({ type: 'steer_returned', steers: [{ uuid: 's1', text: 'wait' }], stopped: true });
+
+    messageStore.releaseLiveEvents(SID, [{ type: 'user_message', text: 'Fix it' }]);
+
+    expect(messageStore.getQueue(SID).map((m) => [m.outgoing, m.notRead])).toEqual([['wait', true]]);
     messageStore.unsubscribe(SID);
   });
 });
@@ -3168,6 +3186,34 @@ describe('outgoing message queue', () => {
       expect(messageStore.getQueue(SID)).toEqual([]);
     });
 
+    it('replaying history leaves a held steer for the turn running now', () => {
+      messageStore.setIsRunning(SID, true);
+      messageStore.submitSteer(SID, { displayText: 'held', outgoing: 'held' });
+
+      messageStore.replayEvents(SID, [{ type: 'user_message', text: 'old' }, result]);
+
+      expect(messageStore.getSteers(SID).map((s) => s.phase)).toEqual(['holding']);
+      expect(messageStore.getQueue(SID)).toEqual([]);
+    });
+
+    it('a steer still on its way to main goes ahead of the queue if the turn ends meanwhile', async () => {
+      let answer!: (outcome: 'steered' | 'not-running' | 'unsupported') => void;
+      mockGroveBench.steerMessage.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+      messageStore.setIsRunning(SID, true);
+      messageStore.submitMessage(SID, { displayText: 'queued', outgoing: 'queued' });
+      messageStore.submitSteer(SID, { displayText: 'steer', outgoing: 'steer' });
+      await vi.advanceTimersByTimeAsync(TAKE_BACK_MS);
+      mockGroveBench.sendMessage.mockClear();
+
+      messageStore.ingestEvent(SID, result);
+      expect(mockGroveBench.sendMessage).not.toHaveBeenCalled();
+
+      answer('not-running');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'steer', undefined, undefined);
+      expect(messageStore.getQueue(SID).map((m) => m.outgoing)).toEqual(['queued']);
+    });
+
     it('Send now steers a queued text message while the agent works', () => {
       messageStore.setIsRunning(SID, true);
       messageStore.submitMessage(SID, { displayText: 'now please', outgoing: 'now please' });
@@ -3186,6 +3232,81 @@ describe('outgoing message queue', () => {
       for (const item of messageStore.getQueue(SID)) expect(messageStore.steerQueued(SID, item.id)).toBe(false);
       expect(messageStore.getSteers(SID)).toEqual([]);
     });
+  });
+
+  it('Undo is withdrawn once a merged message has been sent, so nothing goes twice', () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, { displayText: 'a', outgoing: 'a' });
+    messageStore.submitMessage(SID, { displayText: 'b', outgoing: 'b' });
+    messageStore.mergeQueue(SID);
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.ingestEvent(SID, result);
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'a\n\nb', undefined, undefined);
+    expect(messageStore.getQueueUndo(SID)).toBeNull();
+
+    messageStore.undoQueueChange(SID);
+    expect(messageStore.getQueue(SID)).toEqual([]);
+  });
+
+  it('removing the message being edited lets the rest of the queue go', () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, { displayText: 'a', outgoing: 'a' });
+    messageStore.submitMessage(SID, { displayText: 'b', outgoing: 'b' });
+    const [a] = messageStore.getQueue(SID);
+    messageStore.editQueuedMessage(SID, a.id);
+    messageStore.ingestEvent(SID, result); // held by the edit
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.removeQueuedMessage(SID, a.id);
+
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'b', undefined, undefined);
+  });
+
+  it('moving the edited message off the front lets the next one go', () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, { displayText: 'a', outgoing: 'a' });
+    messageStore.submitMessage(SID, { displayText: 'b', outgoing: 'b' });
+    const [a] = messageStore.getQueue(SID);
+    messageStore.editQueuedMessage(SID, a.id);
+    messageStore.ingestEvent(SID, result);
+    mockGroveBench.sendMessage.mockClear();
+
+    messageStore.moveQueuedMessage(SID, a.id, 1);
+
+    expect(mockGroveBench.sendMessage).toHaveBeenCalledWith(SID, 'b', undefined, undefined);
+  });
+
+  it('text put in the box while a queued message is edited joins the draft put aside', () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, { displayText: 'a', outgoing: 'a' });
+    messageStore.setDraft(SID, 'mine');
+    messageStore.editQueuedMessage(SID, messageStore.getQueue(SID)[0].id);
+
+    messageStore.appendToPrompt(SID, 'from the terminal');
+    expect(messageStore.getDraft(SID)).toBe('a');
+
+    messageStore.cancelQueuedEdit(SID);
+    expect(messageStore.getDraft(SID)).toBe('mine\nfrom the terminal');
+    expect(messageStore.getQueue(SID).map((m) => m.outgoing)).toEqual(['a']);
+  });
+
+  it("won't merge messages that together are over the size one message can take", () => {
+    messageStore.setIsRunning(SID, true);
+    const big = 'A'.repeat(Math.ceil((MAX_TOTAL_SIZE / 2 + 1) * 4 / 3));
+    messageStore.submitMessage(SID, { displayText: 'one', outgoing: 'one', files: [{ data: big, mediaType: 'application/pdf', name: 'a.pdf' }] });
+    messageStore.submitMessage(SID, { displayText: 'two', outgoing: 'two', files: [{ data: big, mediaType: 'application/pdf', name: 'b.pdf' }] });
+
+    expect(messageStore.queueMergeBlocker(SID)).toMatch(/the most one message can take/);
+    expect(messageStore.mergeQueue(SID)).toBe(false);
+  });
+
+  it('the rewind points leave out steers', () => {
+    messageStore.messagesBySession = { [SID]: [
+      { kind: 'user', id: '1', text: 'go', uuid: 'p1' },
+      { kind: 'user', id: '2', text: 'also', uuid: 's1', steer: true },
+    ] };
+    expect(messageStore.getRewindPoints(SID).map((p) => p.uuid)).toEqual(['p1']);
   });
 
   it('saves the queue for the next run, and forgets it with the thread', () => {

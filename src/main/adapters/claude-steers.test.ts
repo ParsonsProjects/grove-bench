@@ -43,7 +43,7 @@ describe('SteerTracker', () => {
     expect(t.holding).toBe(false);
 
     const second = msg({ type: 'result', subtype: 'success', num_turns: 2 });
-    expect(t.observe(second).pass).toEqual([second]);
+    expect(t.observe(second).pass).toEqual([expect.objectContaining({ type: 'result', subtype: 'success', num_turns: 2 })]);
   });
 
   it('lets the held result go when Claude drops the steer', () => {
@@ -57,7 +57,21 @@ describe('SteerTracker', () => {
     });
   });
 
-  it('release() lets the held result go, counts the unread steers as dropped, and still reports a late read', () => {
+  it('holdOver() lets the held result go but keeps the steer pending, so a later read is still reported', () => {
+    const t = new SteerTracker();
+    t.add('s1');
+    t.observe(result);
+
+    // Claude Code still has the steer: reporting it dropped would resend it.
+    expect(t.holdOver()).toEqual({ events: [], pass: [result] });
+    expect(t.holding).toBe(false);
+    expect(t.unread).toEqual(['s1']);
+
+    const late = assistant(['s1']);
+    expect(t.observe(late).events).toEqual([{ type: 'steer_read', uuid: 's1' }]);
+  });
+
+  it('release() at the end of the stream counts unread steers as dropped, and still reports a late read', () => {
     const t = new SteerTracker();
     t.add('s1');
     t.add('s2');
@@ -68,9 +82,27 @@ describe('SteerTracker', () => {
       pass: [result],
     });
     expect(t.holding).toBe(false);
+    expect(t.observe(assistant(['s2'])).events).toEqual([{ type: 'steer_read', uuid: 's2' }]);
+  });
 
-    const late = assistant(['s2']);
-    expect(t.observe(late).events).toEqual([{ type: 'steer_read', uuid: 's2' }]);
+  it('never holds a result that reports an error', () => {
+    const t = new SteerTracker();
+    t.add('s1');
+    const failed = msg({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['boom'] });
+
+    expect(t.observe(failed)).toEqual({ events: [], pass: [failed] });
+    expect(t.holding).toBe(false);
+  });
+
+  it("adds a dropped held result's time and turns to the result that ends the turn", () => {
+    const t = new SteerTracker();
+    t.add('s1');
+    t.observe(msg({ type: 'result', subtype: 'success', duration_ms: 4000, duration_api_ms: 3000, num_turns: 2 }));
+    t.observe(assistant(['s1']));
+
+    const [final] = t.observe(msg({ type: 'result', subtype: 'success', duration_ms: 1000, duration_api_ms: 500, num_turns: 1 })).pass;
+
+    expect(final).toMatchObject({ duration_ms: 5000, duration_api_ms: 3500, num_turns: 3 });
   });
 
   it('ignores reads of uuids it never sent (the turn\'s own prompt)', () => {

@@ -113,7 +113,8 @@ function messageEntries(msg: ChatMessage): Entry[] {
     case 'user': {
       // A message of only attachments has no text to copy.
       const entries = msg.text.trim() ? [copy('Copy message', msg.text)] : [];
-      if (msg.uuid) entries.push({ label: 'Rewind to this message', action: { kind: 'rewind', uuid: msg.uuid } });
+      // A steer has no checkpoint to rewind to.
+      if (msg.uuid && !msg.steer) entries.push({ label: 'Rewind to this message', action: { kind: 'rewind', uuid: msg.uuid } });
       return entries;
     }
     case 'text': {

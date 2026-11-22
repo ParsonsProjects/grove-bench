@@ -16,19 +16,23 @@
  *   That frame isn't in the SDK's types; T3 Code reads it the same way, so it
  *   is treated as a bonus, never relied on.
  * - Dropped: a `command_lifecycle` frame says `cancelled`, `discarded` or
- *   `refused`.
+ *   `refused`, or the stream ended (release) with it unread.
  *
  * A turn can end (its result arrives) with a steer still unread. Claude Code
  * then runs that steer as the next turn by itself. Grove keeps that as one
- * turn: the result is held, and dropped once Claude starts answering the
- * steer, whose own result then ends the turn. If Claude drops the steer, the
- * held result goes out. If nothing arrives for a while, the generator calls
- * release(): the result goes out and the steers count as dropped, and a late
- * read of one is still reported, so the renderer can take it off the queue.
+ * turn: a successful result is held, and dropped once Claude starts
+ * answering the steer, whose own result then ends the turn (carrying the
+ * dropped one's time and turn count, which aren't running totals). A result
+ * that reports an error is never held, so the error always shows. If Claude
+ * drops the steer, the held result goes out. If nothing arrives for a while,
+ * the generator calls holdOver(): the result goes out, but the steer stays
+ * pending, because Claude Code still has it and may yet run it. Reporting it
+ * dropped then would have the renderer send it a second time.
  */
 type SDKMessage = import('@anthropic-ai/claude-agent-sdk').SDKMessage;
 
-/** How long a held result waits for Claude to start an unread steer. */
+/** How long a held result waits, from when it was held, for Claude to start
+ *  an unread steer. */
 export const STEER_HOLD_MS = 15_000;
 
 export type SteerEvent = { type: 'steer_read'; uuid: string } | { type: 'steer_dropped'; uuid: string };
@@ -42,6 +46,14 @@ export interface SteerObservation {
 }
 
 const DROPPED_STATES = new Set(['cancelled', 'discarded', 'refused']);
+
+/** What a dropped held result had that the next result's own figures don't
+ *  include: they cover one result each, not the query so far. */
+interface Carried {
+  durationMs: number;
+  durationApiMs: number;
+  numTurns: number;
+}
 
 /** The uuids a frame says the turn has consumed. */
 function consumedUuids(message: SDKMessage): string[] {
@@ -59,12 +71,20 @@ function lifecycle(message: SDKMessage): { uuid: string; state: string } | null 
   return typeof uuid === 'string' && typeof state === 'string' ? { uuid, state } : null;
 }
 
+/** A result that ended its turn without an error: the only kind held. */
+function isSuccess(message: SDKMessage): boolean {
+  return message.type === 'result' && message.subtype === 'success' && !message.is_error;
+}
+
+const num = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+
 export class SteerTracker {
   /** Sent and not read yet. */
   private pending = new Set<string>();
-  /** Reported dropped after a hold ran out; a late read is still reported. */
+  /** Reported dropped when the stream ended; a late read is still reported. */
   private released = new Set<string>();
   private held: SDKMessage | null = null;
+  private carried: Carried | null = null;
 
   add(uuid: string): void {
     this.pending.add(uuid);
@@ -89,7 +109,9 @@ export class SteerTracker {
     for (const uuid of read) {
       if (this.pending.delete(uuid)) {
         events.push({ type: 'steer_read', uuid });
-        // Claude is answering the steer now: its result ends the turn.
+        // Claude is answering the steer now: its result ends the turn, and
+        // brings the held one's time with it.
+        if (this.held) this.carry(this.held);
         this.held = null;
       } else if (this.released.delete(uuid)) {
         events.push({ type: 'steer_read', uuid });
@@ -107,16 +129,24 @@ export class SteerTracker {
     // Lifecycle frames aren't for the rest of the adapter.
     if (life || (message as { type: string }).type === 'command_lifecycle') return { events, pass };
 
-    if (message.type === 'result' && this.pending.size > 0) {
+    if (message.type === 'result' && this.pending.size > 0 && isSuccess(message)) {
       this.held = message;
       return { events, pass };
     }
-    pass.push(message);
+    pass.push(this.withCarried(message));
     return { events, pass };
   }
 
-  /** The hold ran out, or the stream ended: send the held result, and count
-   *  the steers still unread as dropped. */
+  /** The hold ran out: send the held result. The steers stay pending, as
+   *  Claude Code still has them, so a later read is still reported. */
+  holdOver(): SteerObservation {
+    const pass = this.held ? [this.held] : [];
+    this.held = null;
+    return { events: [], pass };
+  }
+
+  /** The stream ended: send the held result, and count the steers still
+   *  unread as dropped (the agent that had them is gone). */
   release(): SteerObservation {
     const events: SteerEvent[] = this.unread.map((uuid) => ({ type: 'steer_dropped', uuid }));
     for (const uuid of this.pending) this.released.add(uuid);
@@ -124,5 +154,27 @@ export class SteerTracker {
     const pass = this.held ? [this.held] : [];
     this.held = null;
     return { events, pass };
+  }
+
+  private carry(result: SDKMessage): void {
+    const prev = this.carried ?? { durationMs: 0, durationApiMs: 0, numTurns: 0 };
+    this.carried = {
+      durationMs: prev.durationMs + num(Reflect.get(result, 'duration_ms')),
+      durationApiMs: prev.durationApiMs + num(Reflect.get(result, 'duration_api_ms')),
+      numTurns: prev.numTurns + num(Reflect.get(result, 'num_turns')),
+    };
+  }
+
+  /** The next result, with a dropped held result's time and turns added. */
+  private withCarried(message: SDKMessage): SDKMessage {
+    if (message.type !== 'result' || !this.carried) return message;
+    const carried = this.carried;
+    this.carried = null;
+    return {
+      ...message,
+      duration_ms: num(message.duration_ms) + carried.durationMs,
+      duration_api_ms: num(message.duration_api_ms) + carried.durationApiMs,
+      num_turns: num(message.num_turns) + carried.numTurns,
+    };
   }
 }

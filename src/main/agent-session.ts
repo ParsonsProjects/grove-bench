@@ -84,14 +84,14 @@ type RunError = {
   code?: number | string;
 };
 
+/** A steer's uuid, as the renderer makes it (crypto.randomUUID). */
+const STEER_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** Whether `session` is in a turn: from the prompt's user_message (still on
  *  its way to the agent, see unsentPrompts) or the agent starting to reply,
  *  until the turn's result is in the history (see resultLogging). So the
  *  history and this agree at every point. An agent still starting up isn't,
  *  until a prompt goes to it. */
-/** A steer's uuid, as the renderer makes it (crypto.randomUUID). */
-const STEER_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 function turnInFlight(session: ManagedSession): boolean {
   if (session.unsentPrompts?.size || session.resultLogging) return true;
   return !!session.turnHandle && session.turnHandle === session.queryHandle;
@@ -750,7 +750,9 @@ class AgentSessionManager {
         // A steer the agent read or let go (claude-steers.ts): these are the
         // session manager's own, never passed on as they are.
         if (adapterEvent.type === 'steer_read' || adapterEvent.type === 'steer_dropped') {
-          this.settleSteer(session, adapterEvent);
+          // Not from a run that was stopped or replaced: its steers went
+          // back to the window already (returnUnreadSteers).
+          if (session.queryHandle === handle) this.settleSteer(session, adapterEvent);
           continue;
         }
         if (!TRANSIENT_EVENT_TYPES.has(adapterEvent.type)) {
@@ -1253,9 +1255,6 @@ class AgentSessionManager {
     return true;
   }
 
-  /** Send a prompt. True once the agent has it; false when the session is
-   *  gone or never connected; 'nothing-to-send' when every attachment was
-   *  left out and nothing was typed. */
   /**
    * Send `content` into the turn that is running now (a steer), for the agent
    * to read once its current tool calls finish. It joins the history only
@@ -1327,6 +1326,9 @@ class AgentSessionManager {
     session.emit?.({ type: 'steer_returned', steers: back, ...(stopped ? { stopped: true as const } : {}) });
   }
 
+  /** Send a prompt. True once the agent has it; false when the session is
+   *  gone or never connected; 'nothing-to-send' when every attachment was
+   *  left out and nothing was typed. */
   async sendMessage(
     id: string,
     content: string,
@@ -2031,7 +2033,7 @@ class AgentSessionManager {
     if (session.pendingSteers?.size) {
       logger.debug(`[interruptQuery] session=${id} has ${session.pendingSteers.size} unread steer(s): stopping the process instead`);
       this.returnUnreadSteers(session, true);
-      return this.stopQuery(id);
+      return this.stopQuery(id, undefined, { killTree: true });
     }
 
     const emit = session.emit ?? this.createEmitter(session);
@@ -2093,7 +2095,7 @@ class AgentSessionManager {
    * query is closed and aborted (its event loop drops anything it still
    * sends), and also for a sleeping session, whose wake starts the new one.
    */
-  async stopQuery(id: string, beforeRestart?: () => Promise<void>): Promise<void> {
+  async stopQuery(id: string, beforeRestart?: () => Promise<void>, opts: { killTree?: boolean } = {}): Promise<void> {
     const session = this.sessions.get(id);
     // Being deleted (still listed until it's gone): shutDown() stops it.
     if (!session || session.destroying) return;
@@ -2121,10 +2123,21 @@ class AgentSessionManager {
     // Tell runQuery not to emit process_exit / SESSION_STATUS 'stopped'
     session.stoppedByUser = true;
 
+    // `killTree` (Stop with an unread steer): end the agent's process tree
+    // first. A closed query's process can run on for seconds on Windows, and
+    // this one could still read the steer, which Claude Code keeps in its
+    // own queue, beside the resumed process. Detached first, as a sleep
+    // does, so runQuery takes its exit for a retired run, not an error.
+    const stopping = session.queryHandle;
+    if (opts.killTree && stopping) {
+      session.queryHandle = null;
+      await killAgentTree(stopping, id);
+    }
+
     // Close the query *before* aborting so the SDK can
     // clean up gracefully and avoid dangling async operations that reject
     // with "Operation aborted" after the signal fires.
-    try { session.queryHandle?.close(); } catch { /* may already be closed */ }
+    try { stopping?.close(); } catch { /* may already be closed */ }
 
     // Now abort — any remaining in-flight SDK operations will be cancelled
     session.abortController.abort();

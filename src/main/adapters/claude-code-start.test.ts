@@ -534,7 +534,7 @@ describe('ClaudeCodeAdapter.start(): the handle', () => {
     expect(events.findIndex((e) => e.type === 'assistant_text')).toBeGreaterThan(read);
   });
 
-  it('lets a held result go, and the steer count as dropped, when nothing follows', async () => {
+  it('lets a held result go 15 s after it was held, however much else arrives, and keeps the steer pending', async () => {
     vi.useFakeTimers();
     try {
       const { handle, fake } = await start();
@@ -544,16 +544,35 @@ describe('ClaudeCodeAdapter.start(): the handle', () => {
       const events: AdapterEvent[] = [];
       const reading = (async () => { for await (const e of handle.events) events.push(e); })();
 
-      await vi.advanceTimersByTimeAsync(STEER_HOLD_MS - 1);
+      await vi.advanceTimersByTimeAsync(STEER_HOLD_MS / 2);
+      // A background subagent streaming doesn't put the deadline back.
+      fake.send({ type: 'stream_event', parent_tool_use_id: 'task-1', event: { type: 'message_start' } });
+      await vi.advanceTimersByTimeAsync(STEER_HOLD_MS / 2 - 1);
       expect(events.some((e) => e.type === 'result')).toBe(false);
       await vi.advanceTimersByTimeAsync(1);
-      expect(events.filter((e) => e.type === 'steer_dropped' || e.type === 'result').map((e) => e.type)).toEqual(['steer_dropped', 'result']);
+      expect(events.some((e) => e.type === 'result')).toBe(true);
+      expect(events.some((e) => e.type === 'steer_dropped')).toBe(false);
+
+      // Claude runs the steer after all: still reported as read.
+      fake.send({ type: 'assistant', message: { content: [{ type: 'text', text: 'Switching.' }] }, parent_tool_use_id: null, uuid: 'a2', user_message_uuid: 'steer-1', user_message_uuids: ['steer-1'] });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(events.filter((e) => e.type === 'steer_read')).toEqual([{ type: 'steer_read', uuid: 'steer-1' }]);
 
       fake.end();
       await reading;
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('a steer the closed input could not take throws, and holds up nothing', async () => {
+    const { handle, fake } = await start();
+    handle.closeInput!();
+    expect(() => handle.steer!({ text: 'late' }, 'steer-2')).toThrow();
+
+    fake.send({ type: 'result', subtype: 'success', is_error: false });
+    fake.end();
+    expect((await drain(handle)).map((e) => e.type)).toEqual(['result']);
   });
 
   it('close ends the prompts and closes the query', async () => {

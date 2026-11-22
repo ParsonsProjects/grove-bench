@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { forgetQueue, loadQueues, saveQueue } from './queue-storage.js';
 import type { QueuedMessage } from '../stores/messages.svelte.js';
 
@@ -24,6 +24,33 @@ describe('queue-storage', () => {
     forgetQueue('b');
 
     expect(loadQueues()).toEqual({});
+  });
+
+  it('keeps attachments once, and makes the images and files again on load', () => {
+    const typed = { text: 'look', attachments: [
+      { type: 'image' as const, name: 'a.png', dataUrl: 'data:image/png;base64,AAAA' },
+      { type: 'file' as const, name: 'b.pdf', dataUrl: 'data:application/pdf;base64,BBBB', mediaType: 'application/pdf', size: 3 },
+    ] };
+    const item: QueuedMessage = {
+      id: '1', displayText: '[a.png, b.pdf] look', outgoing: 'look', typed,
+      images: [{ data: 'AAAA', mediaType: 'image/png', name: 'a.png' }],
+      files: [{ data: 'BBBB', mediaType: 'application/pdf', name: 'b.pdf' }],
+    };
+    saveQueue('a', [item]);
+
+    expect(localStorage.getItem('grove-bench:queue:a')).not.toContain('"images"');
+    expect(loadQueues().a).toEqual([item]);
+  });
+
+  it('removes the saved copy when a save fails, so a restart brings back nothing stale', () => {
+    saveQueue('a', [item('1')]);
+    vi.mocked(localStorage.setItem).mockImplementationOnce(() => { throw new Error('QuotaExceededError'); });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    saveQueue('a', [item('2')]);
+
+    expect(loadQueues().a).toBeUndefined();
+    warn.mockRestore();
   });
 
   it('skips damaged entries, other versions and items that are not messages', () => {

@@ -4071,17 +4071,36 @@ describe('AgentSessionManager.steerMessage()', () => {
     await sessionManager.destroySession('test-steer-dropped');
   });
 
+  it('ignores a steer read reported by a run that was stopped', async () => {
+    steerOn();
+    await running('test-steer-retired');
+    await sessionManager.sendMessage('test-steer-retired', 'go');
+    sessionManager.steerMessage('test-steer-retired', 'wait', UUID);
+    const oldControl = mockAdapter.control!;
+
+    await sessionManager.interruptQuery('test-steer-retired');
+    await new Promise((r) => setTimeout(r, 100));
+    oldControl.emitEvent({ type: 'steer_read', uuid: UUID });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(sessionManager.getEventHistory('test-steer-retired').some((e) => e.type === 'user_message' && e.steer)).toBe(false);
+    await sessionManager.destroySession('test-steer-retired');
+  });
+
   it('Stop with an unread steer ends the agent process instead of interrupting, and gives the steer back', async () => {
     steerOn();
     const win = await running('test-steer-stop');
     await sessionManager.sendMessage('test-steer-stop', 'go');
     const handle = mockAdapter.lastHandle!;
+    const kill = vi.spyOn(handle, 'killProcessTree');
     sessionManager.steerMessage('test-steer-stop', 'wait', UUID);
 
     await sessionManager.interruptQuery('test-steer-stop');
     await new Promise((r) => setTimeout(r, 100));
 
     expect(handle.interrupt).not.toHaveBeenCalled();
+    // The old agent can't read the steer beside the resumed one.
+    expect(kill).toHaveBeenCalledOnce();
     expect(mockAdapter.startCallCount).toBe(2);
     expect(win._send.mock.calls.map(([, e]: [string, AgentEvent]) => e)).toContainEqual(
       { type: 'steer_returned', steers: [{ uuid: UUID, text: 'wait' }], stopped: true },

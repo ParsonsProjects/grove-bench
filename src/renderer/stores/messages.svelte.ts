@@ -13,7 +13,7 @@ import { store as sessionStore } from './sessions.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import { previewStore } from './preview.svelte.js';
 import { prerequisitesStore } from './prerequisites.svelte.js';
-import { base64Size, reattach, type AttachedFile } from '../lib/file-attachments.js';
+import { base64Size, formatFileSize, MAX_TOTAL_SIZE, reattach, type AttachedFile } from '../lib/file-attachments.js';
 import { forgetQueue, loadQueues, saveQueue } from '../lib/queue-storage.js';
 import { approvalRequest, toolCallSummary } from '../lib/tool-names.js';
 import { changesFiles, toolViewOf, type ToolView } from '../../shared/tool-view.js';
@@ -523,6 +523,8 @@ class MessageStore {
   steersBySession = $state<Record<string, SteerItem[]>>({});
   /** A holding steer's hand-over timer, by steer id. */
   private steerTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Steers handed to main and not answered yet, by session. */
+  private steersInFlight = new Map<string, number>();
 
   /** The last Remove, Clear queue or Merge, while its Undo is offered. */
   queueUndoBySession = $state<Record<string, QueueUndo>>({});
@@ -1243,6 +1245,8 @@ class MessageStore {
     const editing = this.queuedEditBySession[sessionId]?.id === id;
     this.setQueue(sessionId, queue.filter((m) => m.id !== id));
     if (editing) this.closeQueuedEdit(sessionId);
+    // It may have been holding the queue (see flushQueue).
+    this.flushQueue(sessionId);
   }
 
   /** Remove every queued message. Undo brings them back for a few seconds. */
@@ -1266,6 +1270,8 @@ class MessageStore {
       ?? { text: this.getDraft(sessionId), attachments: [...this.getAttachments(sessionId)] };
     this.queuedEditBySession = { ...this.queuedEditBySession, [sessionId]: { id, stash } };
     this.putInPrompt(sessionId, item.typed?.text ?? item.displayText, item.typed?.attachments ?? []);
+    // Moving the edit off the next message lets that one go.
+    this.flushQueue(sessionId);
     return true;
   }
 
@@ -1309,6 +1315,8 @@ class MessageStore {
     if (from < 0 || to < 0 || to >= queue.length) return;
     [queue[from], queue[to]] = [queue[to], queue[from]];
     this.setQueue(sessionId, queue);
+    // The message being edited may no longer be next (see flushQueue).
+    this.flushQueue(sessionId);
   }
 
   /** Why the queue can't be merged into one message, or null when it can. */
@@ -1316,6 +1324,10 @@ class MessageStore {
     const queue = this.getQueue(sessionId);
     if (queue.length < 2) return 'There is only one message';
     if (queue.some((m) => m.isCommand)) return "Commands can't be merged with other messages";
+    const size = queue.reduce((n, m) => n + m.outgoing.length
+      + (m.images ?? []).reduce((k, img) => k + base64Size(img.data), 0)
+      + (m.files ?? []).reduce((k, f) => k + base64Size(f.data), 0), 0);
+    if (size > MAX_TOTAL_SIZE) return `Together they are over ${formatFileSize(MAX_TOTAL_SIZE)}, the most one message can take`;
     return null;
   }
 
@@ -1342,6 +1354,7 @@ class MessageStore {
     this.offerQueueUndo(sessionId, `${queue.length} messages merged into one.`, [merged.id]);
     this.closeQueuedEdit(sessionId);
     this.setQueue(sessionId, [merged]);
+    this.flushQueue(sessionId);
     return true;
   }
 
@@ -1383,8 +1396,14 @@ class MessageStore {
     delete this.queueUndoBySession[sessionId];
   }
 
-  /** A message that has gone to the agent isn't brought back by Undo. */
+  /** A message that has gone to the agent isn't brought back by Undo. One
+   *  the change made (a merge's) carries the others with it: undoing would
+   *  send them again, so Undo is withdrawn. */
   private forgetInQueueUndo(sessionId: string, id: string) {
+    if (this.queueUndoAdded.get(sessionId)?.has(id)) {
+      this.dismissQueueUndo(sessionId);
+      return;
+    }
     const undo = this.queueUndoBySession[sessionId];
     if (!undo || !undo.queue.some((m) => m.id === id)) return;
     this.queueUndoBySession = { ...this.queueUndoBySession, [sessionId]: { ...undo, queue: undo.queue.filter((m) => m.id !== id) } };
@@ -1397,6 +1416,9 @@ class MessageStore {
     if (!undo) return;
     const added = this.queueUndoAdded.get(sessionId) ?? new Set<string>();
     this.dismissQueueUndo(sessionId);
+    // An edit of a message Undo takes out (a merge's) has nothing to save to.
+    const edit = this.queuedEditBySession[sessionId];
+    if (edit && added.has(edit.id)) this.closeQueuedEdit(sessionId);
     const back = new Set(undo.queue.map((m) => m.id));
     const since = this.getQueue(sessionId).filter((m) => !back.has(m.id) && !added.has(m.id));
     this.setQueue(sessionId, [...undo.queue, ...since]);
@@ -1406,8 +1428,6 @@ class MessageStore {
     this.flushQueue(sessionId);
   }
 
-  /** Lift a pause set by Stop/rewind or a usage limit and send the next
-   *  queued item if idle. The user's call: it goes out even while limited. */
   getSteers(sessionId: string): SteerItem[] {
     return this.steersBySession[sessionId] ?? [];
   }
@@ -1477,14 +1497,22 @@ class MessageStore {
     if (!steer) return;
     // Sent from here on: Take back can no longer work.
     this.setSteers(sessionId, this.getSteers(sessionId).map((s) => (s.id === id ? { ...s, phase: 'sent' as const } : s)));
+    // Until main answers, the queue waits (flushQueue): should the turn end
+    // meanwhile, this steer goes next, ahead of the queued messages.
+    this.steersInFlight.set(sessionId, (this.steersInFlight.get(sessionId) ?? 0) + 1);
     let outcome: 'steered' | 'not-running' | 'unsupported';
     try {
       outcome = await window.groveBench.steerMessage(sessionId, steer.outgoing, id);
     } catch (e) {
       console.warn(`[steer] couldn't steer a message into ${sessionId}, so it is queued instead:`, e);
       outcome = 'not-running';
+    } finally {
+      const left = (this.steersInFlight.get(sessionId) ?? 1) - 1;
+      if (left > 0) this.steersInFlight.set(sessionId, left);
+      else this.steersInFlight.delete(sessionId);
     }
     if (outcome !== 'steered') this.steersToQueue(sessionId, [steer], { notRead: false });
+    else this.flushQueue(sessionId);
   }
 
   /** Steers that didn't reach the agent, or that it never read, go to the
@@ -1531,6 +1559,8 @@ class MessageStore {
     this.steersToQueue(sessionId, back, { notRead: true, pause: event.stopped === true });
   }
 
+  /** Lift a pause set by Stop/rewind or a usage limit and send the next
+   *  queued item if idle. The user's call: it goes out even while limited. */
   resumeQueue(sessionId: string) {
     delete this.queuePausedBySession[sessionId];
     this.flushQueue(sessionId, { resumed: true });
@@ -1553,6 +1583,8 @@ class MessageStore {
     // Never fire from replayed history: those results are old news.
     if (this._replayBuffer !== null) return;
     if (this.getIsRunning(sessionId) || this.isQueuePaused(sessionId)) return;
+    // A steer on its way to main may come back to go first (handOverSteer).
+    if (this.steersInFlight.has(sessionId)) return;
     const queue = this.getQueue(sessionId);
     if (queue.length === 0) return;
     if (!opts?.resumed && this.isRateLimited(sessionId)) {
@@ -1845,6 +1877,17 @@ class MessageStore {
    *  draft sync then writes the same combined text back, so the two paths
    *  never double up. */
   appendToPrompt(sessionId: string, text: string, attachments?: AttachedFile[]) {
+    // The box holds a queued message being edited: this is for the draft
+    // put aside meanwhile, which comes back when the edit ends.
+    const edit = this.queuedEditBySession[sessionId];
+    if (edit) {
+      const stashed = edit.stash.text;
+      this.queuedEditBySession = { ...this.queuedEditBySession, [sessionId]: { ...edit, stash: {
+        text: stashed && text ? `${stashed}\n${text}` : stashed || text,
+        attachments: [...edit.stash.attachments, ...(attachments ?? [])],
+      } } };
+      return;
+    }
     const draft = this.getDraft(sessionId);
     // No text (a queued image-only prompt) adds no new line.
     this.setDraft(sessionId, draft && text ? `${draft}\n${text}` : draft || text);
@@ -1857,6 +1900,14 @@ class MessageStore {
    *  store too for a box that isn't showing, which reads them when it mounts.
    *  One request for both: the box only sees the latest. */
   replacePrompt(sessionId: string, text: string, attachments: AttachedFile[] = []) {
+    // As appendToPrompt: during an edit, it replaces the draft put aside.
+    const edit = this.queuedEditBySession[sessionId];
+    if (edit) {
+      this.queuedEditBySession = { ...this.queuedEditBySession, [sessionId]: { ...edit, stash: {
+        text, attachments: [...edit.stash.attachments, ...attachments],
+      } } };
+      return;
+    }
     this.setDraft(sessionId, text);
     if (attachments.length > 0) this.setAttachments(sessionId, [...this.getAttachments(sessionId), ...attachments]);
     this.requestPromptInsert(sessionId, text, { replace: true, ...(attachments.length > 0 ? { attachments } : {}) });
@@ -2809,8 +2860,9 @@ class MessageStore {
     if (this.sideEffects && this._replayBuffer === null) sessionStore.updateLastActive(sessionId);
 
     // Turn finished — the agent is free for the next queued prompt. A steer
-    // still in its hold missed the turn, so it goes next.
-    this.queueHeldSteers(sessionId);
+    // still in its hold missed the turn, so it goes next. Not for a result
+    // replayed from history: the steer belongs to the turn running now.
+    if (this._replayBuffer === null) this.queueHeldSteers(sessionId);
     this.flushQueue(sessionId);
   }
 
@@ -3161,7 +3213,8 @@ class MessageStore {
     const points: { uuid: string; text: string; index: number }[] = [];
     for (let i = 0; i < msgs.length; i++) {
       const m = msgs[i];
-      if (m.kind === 'user' && m.uuid) {
+      // A steer has no checkpoint to rewind to.
+      if (m.kind === 'user' && m.uuid && !m.steer) {
         points.push({
           uuid: m.uuid,
           text: userMessageLabel(m),
@@ -3287,7 +3340,7 @@ class MessageStore {
   }
 
   private perSessionMaps(): Map<string, unknown>[] {
-    return [this.sourceIndexBySession, this.orphanReplayEvents, this.olderLoads, this.streamBuf, this.turnsStarted, this.userStops, this.queueUndoTimers, this.queueUndoAdded];
+    return [this.sourceIndexBySession, this.orphanReplayEvents, this.olderLoads, this.streamBuf, this.turnsStarted, this.userStops, this.queueUndoTimers, this.queueUndoAdded, this.steersInFlight];
   }
 
   /** Live events that arrived while a pane was loading the history page,
@@ -3338,6 +3391,8 @@ class MessageStore {
     // never has it.
     const suggestion = page && held.findLast((e) => e.type === 'prompt_suggestion');
     if (suggestion) this.ingestEvent(sessionId, suggestion);
+    // So are steers main gave back: they are queued nowhere else.
+    if (page) for (const e of held) if (e.type === 'steer_returned') this.ingestEvent(sessionId, e);
   }
 
   /** Unsubscribe from session events */

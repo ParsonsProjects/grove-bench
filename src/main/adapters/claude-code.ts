@@ -2213,18 +2213,22 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       // A read still waiting for the next message: kept across a hold that
       // ran out, asked for afresh after each message is handled.
       let pending: Promise<IteratorResult<SDKMessage>> | null = null;
+      // When a held result goes out anyway: STEER_HOLD_MS from when it was
+      // held, however many other messages (a subagent's) arrive meanwhile.
+      let holdUntil: number | null = null;
       try {
         for (;;) {
           pending ??= messages.next();
-          // While a result is held for an unread steer, wait for the next
-          // message only so long (STEER_HOLD_MS), then let the result go.
+          if (!steers.holding) holdUntil = null;
+          else holdUntil ??= Date.now() + STEER_HOLD_MS;
           let timer: ReturnType<typeof setTimeout> | undefined;
-          const step = await (steers.holding
-            ? Promise.race([pending, new Promise<'hold-over'>((resolve) => { timer = setTimeout(() => resolve('hold-over'), STEER_HOLD_MS); })])
+          const step = await (holdUntil !== null
+            ? Promise.race([pending, new Promise<'hold-over'>((resolve) => { timer = setTimeout(() => resolve('hold-over'), Math.max(0, holdUntil! - Date.now())); })])
             : pending);
           clearTimeout(timer);
           if (step === 'hold-over') {
-            yield* handleObservation(steers.release());
+            holdUntil = null;
+            yield* handleObservation(steers.holdOver());
             continue;
           }
           pending = null;
@@ -2271,13 +2275,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       },
 
       steer(message: UserMessage, uuid: string) {
-        if (!inputController) {
-          console.warn('[ClaudeCodeAdapter] steer called but inputController is null — message dropped');
-          return;
-        }
-        steers.add(uuid);
+        // Thrown, so the session manager queues it for the next turn rather
+        // than waiting on a read that can't come.
+        if (!inputController) throw new Error("the agent's input is closed");
         // 'next': read once the tool calls in flight finish. 'now' would
-        // cancel them and report them refused (claude-steers.ts).
+        // cancel them and report them refused (claude-steers.ts). Tracked
+        // only once it is in the stream.
         inputController.enqueue({
           type: 'user',
           uuid,
@@ -2286,6 +2289,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           message: { role: 'user', content: userMessageContent(message) },
           parent_tool_use_id: null,
         } as SDKUserMessage);
+        steers.add(uuid);
       },
 
       abort() {
