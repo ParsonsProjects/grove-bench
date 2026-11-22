@@ -56,6 +56,10 @@ export interface Draft {
    *  Not made before, so a discarded draft leaves no empty group. Never set
    *  together with groupId. */
   newGroupName?: string;
+  /** Other projects the thread also works in, each through its own worktree
+   *  on the thread's branch name (docs/linked-projects-plan.md). Not for a
+   *  thread in the project folder. */
+  linkedRepos?: string[];
   /** The follow-up this draft was started from (openFollowUp): the thread
    *  is noted against it once it starts. */
   followUpId?: string;
@@ -96,6 +100,13 @@ export type DraftGroup = { groupId: string } | { newGroupName: string };
 export interface DraftModelOption {
   value: string;
   label: string;
+}
+
+/** The linked projects a draft sends: those ticked that are still git
+ *  projects other than its own, as its control shows them. A project
+ *  removed, or found not to be git, since it was ticked is left out. */
+function linkedOf(d: Draft): string[] {
+  return (d.linkedRepos ?? []).filter((r) => r !== d.repoPath && sessionStore.repos.includes(r) && !sessionStore.isFolderProject(r));
 }
 
 const newBranchStart = (branchName = ''): DraftStart => ({ kind: 'new', branchName, baseBranch: '' });
@@ -364,6 +375,8 @@ class DraftStore {
   setRepo(repo: string): void {
     if (!this.draft || repo === this.draft.repoPath) return;
     this.draft.repoPath = repo;
+    // A thread can't link its own project.
+    if (this.draft.linkedRepos?.includes(repo)) this.draft.linkedRepos = this.draft.linkedRepos.filter((r) => r !== repo);
     // Branches belong to the old project, and so does a follow-up.
     this.resetToNewBranch();
     delete this.draft.followUpId;
@@ -526,6 +539,22 @@ class DraftStore {
     }
   }
 
+  /** The projects the draft could also work in: the git projects other
+   *  than its own. */
+  get linkableRepos(): string[] {
+    const d = this.draft;
+    if (!d) return [];
+    return sessionStore.repos.filter((r) => r !== d.repoPath && !sessionStore.isFolderProject(r));
+  }
+
+  /** Link a project to the draft, or unlink it. */
+  toggleLinkedRepo(repo: string): void {
+    const d = this.draft;
+    if (!d || repo === d.repoPath) return;
+    const linked = d.linkedRepos ?? [];
+    d.linkedRepos = linked.includes(repo) ? linked.filter((r) => r !== repo) : [...linked, repo];
+  }
+
   /** The create options for the draft. Only what the user picked is sent;
    *  everything else starts on main's defaults, as before. */
   buildOpts(d: Draft, baseBranch: string): CreateSessionOpts {
@@ -536,6 +565,8 @@ class DraftStore {
       ...(d.model ? { model: d.model } : {}),
       ...(Object.keys(others).length > 0 ? { controls: others } : {}),
       ...(mode ? { permissionMode: mode as CreateSessionOpts['permissionMode'] } : {}),
+      // Main refuses links for a thread in the project folder.
+      ...(d.start.kind !== 'folder' && linkedOf(d).length > 0 ? { linkedRepos: linkedOf(d) } : {}),
     };
     switch (d.start.kind) {
       case 'folder':
@@ -678,6 +709,7 @@ class DraftStore {
       // What the renderer knows of the project; main's reply settles it.
       ...(direct && sessionStore.isFolderProject(d.repoPath) ? { noGit: true } : {}),
       ...(placeholderName ? { displayName: placeholderName } : {}),
+      ...(!direct && linkedOf(d).length > 0 ? { linkedRepos: linkedOf(d) } : {}),
     }, focus);
     if (sent) {
       // The chat shows the agent walking to its bench until the first reply.

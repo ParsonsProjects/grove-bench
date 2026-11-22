@@ -47,6 +47,21 @@ export interface WorktreeInfo {
   displayName?: string | null;
   /** Adapter id of the agent the session runs, from the manifest. */
   agentType?: string;
+  /** Other projects the thread also works in, each through its own
+   *  worktree (docs/linked-projects-plan.md). */
+  linked?: LinkedCheckout[];
+}
+
+/** Another project a thread works in besides its own: a worktree of that
+ *  project, made for the thread, on the thread's branch name. */
+export interface LinkedCheckout {
+  /** The linked project's folder. */
+  repoPath: string;
+  /** The thread's worktree of it: <worktree folder>/<project hash>/<thread id>. */
+  path: string;
+  /** The branch it was linked on. The worktree may have another checked out
+   *  since; its status reads what is checked out now. */
+  branch: string;
 }
 
 export interface WorktreeRepoConfig {
@@ -70,6 +85,10 @@ export interface CreateSessionOpts {
   continueBranch?: boolean;
   /** Run directly on the repo checkout — no worktree is created. */
   direct?: boolean;
+  /** Other projects the thread also works in, each through a worktree made
+   *  for it on the thread's branch name (docs/linked-projects-plan.md).
+   *  Needs a thread in its own worktree. */
+  linkedRepos?: string[];
   /** Which adapter to use for this session (defaults to registry default). */
   adapterType?: string;
   /** Mode to start in instead of the agent's saved default (e.g. 'plan' for
@@ -604,6 +623,10 @@ export interface GitStatusOptions {
   /** Kill each git command after this many ms, answering with `error`: for
    *  a check the user waits on (the delete and remove-project dialogs). */
   timeout?: number;
+  /** Read the thread's worktree of this linked project instead of its own.
+   *  A git operation stopped part way there isn't reported: the Changes tab
+   *  only finishes or aborts the thread's own. */
+  linkedRepo?: string;
 }
 
 /** A git operation stopped part way, waiting on the user: a merge, rebase,
@@ -650,6 +673,9 @@ export interface GitStatusResult {
 export interface FileDiffOptions {
   /** Diff against the merge-base with this branch instead of HEAD/index. */
   base?: string;
+  /** Read the thread's worktree of this linked project instead of its own
+   *  (read only: docs/linked-projects-plan.md). */
+  linkedRepo?: string;
 }
 
 /** Lines of the "new side" of a file (working tree, or the index for a staged
@@ -888,6 +914,28 @@ export interface GitSyncStatus {
   upstream: string | null;
   ahead: number;
   behind: number;
+}
+
+/** A thread's linked project as git sees it now (git:linkedStatus): for its
+ *  status bar item and the delete checks. Each null is "couldn't tell". */
+export interface LinkedProjectStatus {
+  repoPath: string;
+  /** The thread's worktree of it. */
+  path: string;
+  /** The worktree's folder is gone. */
+  missing?: boolean;
+  /** The branch checked out there now (null: none, or detached). */
+  branch: string | null;
+  /** Files changed there and not committed. */
+  uncommitted: number | null;
+  sync: GitSyncStatus | null;
+  /** The project's default branch, which `unmerged` counts against. */
+  base: string | null;
+  /** Commits on the branch that `base` doesn't have. */
+  unmerged: number | null;
+  /** The branch's pull request: only when asked for (`pr`), and null when
+   *  there is none or GitHub couldn't be asked. */
+  pr: PrInfo | null;
 }
 
 /** One commit on the session branch that isn't on the base branch. */
@@ -1540,6 +1588,14 @@ export interface GroveBenchAPI {
    *  interrupting the session's current turn. */
   stopBackgroundTask(sessionId: string, taskId: string): Promise<void>;
   destroySession(id: string, deleteBranch?: boolean): Promise<void>;
+  /** Have the thread also work in `repoPath` from now on, through a new
+   *  worktree on its branch name (docs/linked-projects-plan.md). Refused
+   *  mid-turn: its agent restarts to take the folder. `warning`: something
+   *  that didn't work but didn't stop it, such as the dependency install. */
+  linkProject(sessionId: string, repoPath: string): Promise<{ link: LinkedCheckout; warning?: string }>;
+  /** Stop the thread working in a linked project: its worktree is removed,
+   *  and its branch too when asked and the thread made it. Refused mid-turn. */
+  unlinkProject(sessionId: string, repoPath: string, deleteBranch: boolean): Promise<void>;
   renameSession(sessionId: string, displayName: string): Promise<void>;
   /** Save the thread to a file the user picks (Markdown or JSON); the path, or null if cancelled. */
   exportThread(sessionId: string): Promise<string | null>;
@@ -1784,14 +1840,14 @@ export interface GroveBenchAPI {
   // File operations (for @ file picker)
   listFiles(sessionId: string): Promise<string[]>;
   readFile(sessionId: string, filePath: string): Promise<string>;
-  openInEditor(sessionId: string, filePath: string, line?: number): Promise<void>;
+  openInEditor(sessionId: string, filePath: string, line?: number, opts?: { linkedRepo?: string }): Promise<void>;
 
   // File revert (for changes review). `renamedFrom`: a rename's old path,
   // which comes back (not a copy's: its source was never removed).
   revertFile(sessionId: string, filePath: string, staged?: boolean, renamedFrom?: string): Promise<void>;
   getFileDiff(sessionId: string, filePath: string, staged?: boolean, opts?: FileDiffOptions): Promise<FileDiffResult>;
-  getFileLines(sessionId: string, filePath: string, staged?: boolean): Promise<FileLinesResult>;
-  getImageDiffContent(sessionId: string, filePath: string): Promise<ImageDiffContent>;
+  getFileLines(sessionId: string, filePath: string, staged?: boolean, opts?: { linkedRepo?: string }): Promise<FileLinesResult>;
+  getImageDiffContent(sessionId: string, filePath: string, opts?: { linkedRepo?: string }): Promise<ImageDiffContent>;
   stageFile(sessionId: string, filePath: string): Promise<void>;
   unstageFile(sessionId: string, filePath: string): Promise<void>;
   commit(sessionId: string, message: string): Promise<void>;
@@ -1805,6 +1861,11 @@ export interface GroveBenchAPI {
   generateCommitMessage(sessionId: string, substituteAgent?: string): Promise<string>;
   push(sessionId: string): Promise<void>;
   getGitSyncStatus(sessionId: string): Promise<GitSyncStatus>;
+  /** The thread's linked projects as git sees them now, in the order they
+   *  were linked. `pr`: also look up each branch's pull request (GitHub).
+   *  `timeout`: kill each git command after this many ms (a check the user
+   *  waits on). */
+  getLinkedStatus(sessionId: string, opts?: { pr?: boolean; timeout?: number }): Promise<LinkedProjectStatus[]>;
   /** Commits on the thread's branch that `base` doesn't have. Check `error`
    *  before reading an empty list as none. `timeout`: kill each git command
    *  after this many ms. */
@@ -1893,7 +1954,9 @@ export interface GroveBenchAPI {
   pluginDisable(pluginId: string): Promise<void>;
 
   // Folder
-  openSessionFolder(sessionId: string): Promise<void>;
+  /** Open the thread's folder, or with `linkedRepo` its worktree of that
+   *  linked project. */
+  openSessionFolder(sessionId: string, linkedRepo?: string): Promise<void>;
 
   // Memory
   memoryList(repoPath: string): Promise<MemoryEntry[]>;
@@ -2617,6 +2680,8 @@ export const IPC = {
   SESSION_WAKE: 'session:wake',
   SESSION_STOP_TASK: 'session:stopTask',
   SESSION_DESTROY: 'session:destroy',
+  SESSION_LINK_PROJECT: 'session:linkProject',
+  SESSION_UNLINK_PROJECT: 'session:unlinkProject',
   SESSION_RENAME: 'session:rename',
   SESSION_EXPORT: 'session:export',
   SESSION_AUTO_NAME: 'session:autoName',
@@ -2686,6 +2751,7 @@ export const IPC = {
   GIT_OPERATION_ABORT: 'git:operation-abort',
   GIT_PUSH: 'git:push',
   GIT_SYNC_STATUS: 'git:syncStatus',
+  GIT_LINKED_STATUS: 'git:linkedStatus',
   GIT_BRANCH_COMMITS: 'git:branchCommits',
   GIT_LOG_COMMITS: 'git:logCommits',
   GIT_REBASE: 'git:rebase',

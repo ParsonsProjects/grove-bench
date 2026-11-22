@@ -2,6 +2,7 @@
  * How a conversation's agent is configured: starting mode and controls, the
  * system prompt Grove adds, model ids, and the read-safe sandbox.
  */
+import path from 'node:path';
 import type { AgentEvent, PermissionMode } from '../shared/types.js';
 import { CONTROL_IDS } from '../shared/types.js';
 import type { AgentAdapter } from './adapters/types.js';
@@ -22,13 +23,14 @@ import { getCavemanPrompt } from './caveman.js';
  * classifier is the approval layer, and any sandbox the user configured in
  * their own Claude settings still applies.
  */
-export function readSafeSandbox(worktreePath: string): Record<string, unknown> {
+export function readSafeSandbox(worktreePaths: readonly string[]): Record<string, unknown> {
   return {
     enabled: true,
     failIfUnavailable: false,
     autoAllowBashIfSandboxed: false,
     allowUnsandboxedCommands: false,
-    filesystem: { allowWrite: [worktreePath] },
+    // The thread's worktree, and its linked projects' worktrees.
+    filesystem: { allowWrite: [...worktreePaths] },
   };
 }
 
@@ -132,18 +134,71 @@ export function appendedSystemPrompt(opts: {
   repoPath: string;
   userAppend: string | null;
   cavemanMode: Parameters<typeof getCavemanPrompt>[0];
+  /** The thread's linked projects (docs/linked-projects-plan.md). */
+  linked?: readonly LinkedProjectNote[];
 }): string | null {
+  const others = (opts.linked?.length ?? 0) > 0;
   const builtInPrompt = [
     'IMPORTANT PATH RULES — you are already in your project directory. Follow these strictly:',
     // Every agent gets these, so they name no agent's tools.
-    '- Use RELATIVE paths (e.g. "src/foo.ts") for ALL file operations: reading, editing, writing and searching files. NEVER use absolute paths like "' + opts.cwd.replace(/\\/g, '/').slice(0, 30) + '...". Just use paths relative to the project root.',
+    '- Use RELATIVE paths (e.g. "src/foo.ts") for ALL file operations: reading, editing, writing and searching files. NEVER use absolute paths like "' + opts.cwd.replace(/\\/g, '/').slice(0, 30) + '...". Just use paths relative to the project root.'
+      + (others ? ' Files in the other projects listed below are the exception: use absolute paths there.' : ''),
     '- Files the user attaches to a message are the one exception: they are saved outside the project, so open them by the absolute path given.',
     '- When running shell commands, use short command names (npm, npx, node, git) not absolute paths to binaries.',
     '- Do NOT use `cd` to navigate to your current working directory before running commands — you are already there.',
-    '- If you see an absolute path in tool output or environment info, do NOT repeat it back in your tool calls. Convert it to a relative path from the project root.',
+    '- If you see an absolute path in tool output or environment info, do NOT repeat it back in your tool calls. Convert it to a relative path from the project root.'
+      + (others ? ' Paths in the other projects listed below stay absolute.' : ''),
   ].join('\n');
+  const linkedPrompt = others ? linkedProjectsPrompt(opts.linked!) : null;
   const memoryPrompt = memory.getMemoryForSystemPrompt(opts.repoPath);
   const followUpsPrompt = followUps.followUpsForSystemPrompt(opts.repoPath);
   const cavemanPrompt = getCavemanPrompt(opts.cavemanMode);
-  return [builtInPrompt, memoryPrompt, followUpsPrompt, cavemanPrompt, opts.userAppend].filter(Boolean).join('\n\n') || null;
+  return [builtInPrompt, linkedPrompt, memoryPrompt, followUpsPrompt, cavemanPrompt, opts.userAppend].filter(Boolean).join('\n\n') || null;
+}
+
+/** A linked project as the agent is told about it. */
+export interface LinkedProjectNote {
+  /** The project's name (its folder's). */
+  name: string;
+  /** The thread's worktree of it, where the agent works. */
+  path: string;
+  /** The project's own folder, which the agent must leave alone. */
+  repoPath: string;
+  /** Instruction files in the worktree the agent should read itself, as
+   *  names (AGENTS.md): those its agent doesn't load on its own. */
+  instructions: string[];
+}
+
+/**
+ * What the agent is told, ahead of its next message, when a project is
+ * linked or unlinked part way through the thread
+ * (docs/linked-projects-plan.md). The system prompt says it too from the
+ * restart on, but an ACP agent gets Grove's instructions only with a new
+ * session, and a resumed one carries its first.
+ */
+export function linkChangeNote(change: { linked: LinkedProjectNote } | { unlinked: { name: string; path: string } }): string {
+  if ('unlinked' in change) {
+    const { name, path: wt } = change.unlinked;
+    return `Note from Grove Bench: this thread no longer works in ${name}. Its worktree at ${wt} was removed, so don't read or edit files there.\n`;
+  }
+  const l = change.linked;
+  return [
+    `Note from Grove Bench: this thread now also works in ${l.name}, through a git worktree made for it at ${l.path}, on the same branch name as this project.`,
+    `Make every change to ${l.name} in that worktree, never in the project's own folder (${l.repoPath}). Use absolute paths inside it, and run git for it with \`git -C "${l.path}"\`.`,
+    ...l.instructions.map((file) => `Before working in ${l.name}, read ${path.join(l.path, file)}: it says how to work in that project.`),
+    '',
+  ].join('\n');
+}
+
+/** The part of the prompt about the thread's linked projects: where each
+ *  worktree is, that the project's own folder isn't to be edited, and which
+ *  instruction files to read there. */
+export function linkedProjectsPrompt(links: readonly LinkedProjectNote[]): string {
+  return [
+    'OTHER PROJECTS: this thread also works in these projects. Each is a git worktree made for this thread, on the same branch name as this project:',
+    ...links.map((l) => `- ${l.name}: ${l.path} (the project's own folder, ${l.repoPath}, is not yours to edit)`),
+    '- Make every change to these projects in their worktree above, never in the project\'s own folder. Use absolute paths inside the worktree.',
+    '- Run git for one of them with `git -C "<its worktree>"`, so it works on that worktree\'s branch.',
+    ...links.flatMap((l) => l.instructions.map((file) => `- Before working in ${l.name}, read ${path.join(l.path, file)}: it says how to work in that project.`)),
+  ].join('\n');
 }

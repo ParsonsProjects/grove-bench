@@ -24,6 +24,8 @@
   /** A conversation in a folder without git has no checkpoints, so only the
    *  conversation can be rewound; its files stay as they are. */
   let noGit = $derived(!!store.sessions.find((s) => s.id === sessionId)?.noGit);
+  /** Linked projects' worktrees aren't checkpointed: their files stay. */
+  let linkedNames = $derived((store.sessions.find((s) => s.id === sessionId)?.linkedRepos ?? []).map((r) => store.repoDisplayName(r)).join(', '));
   /** An agent that can't forget part of a thread starts afresh after a rewind. */
   let canForget = $derived(canRewindThread(sessionId));
   let agentName = $derived(agentsStore.get(store.sessions.find((s) => s.id === sessionId)?.agentType)?.displayName ?? 'The agent');
@@ -105,6 +107,11 @@
               Tick Thread only to keep the files as they are.
             </span>
           {/if}
+        {/if}
+        {#if linkedNames && !noGit && !conversationOnly}
+          <span class="text-muted-foreground text-xs block mt-1" data-testid="rewind-linked-stay">
+            Only this project's files go back. Changes in {linkedNames} stay as they are.
+          </span>
         {/if}
         {#if !canForget}
           <span class="text-muted-foreground text-xs block mt-1" data-testid="rewind-starts-afresh">

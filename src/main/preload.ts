@@ -26,6 +26,10 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.SESSION_WAKE, id),
   stopBackgroundTask: (sessionId: string, taskId: string) =>
     ipcRenderer.invoke(IPC.SESSION_STOP_TASK, sessionId, taskId),
+  linkProject: (sessionId: string, repoPath: string) =>
+    ipcRenderer.invoke(IPC.SESSION_LINK_PROJECT, sessionId, repoPath),
+  unlinkProject: (sessionId: string, repoPath: string, deleteBranch: boolean) =>
+    ipcRenderer.invoke(IPC.SESSION_UNLINK_PROJECT, sessionId, repoPath, deleteBranch),
   destroySession: (id: string, deleteBranch?: boolean) =>
     ipcRenderer.invoke(IPC.SESSION_DESTROY, id, deleteBranch),
   renameSession: (sessionId: string, displayName: string) =>
@@ -236,18 +240,18 @@ const api: GroveBenchAPI = {
   // File operations (for @ file picker)
   listFiles: (sessionId: string) => ipcRenderer.invoke(IPC.FILE_LIST, sessionId),
   readFile: (sessionId: string, filePath: string) => ipcRenderer.invoke(IPC.FILE_READ, sessionId, filePath),
-  openInEditor: (sessionId: string, filePath: string, line?: number) =>
-    ipcRenderer.invoke(IPC.FILE_OPEN_IN_EDITOR, sessionId, filePath, line),
+  openInEditor: (sessionId: string, filePath: string, line?: number, opts?: { linkedRepo?: string }) =>
+    ipcRenderer.invoke(IPC.FILE_OPEN_IN_EDITOR, sessionId, filePath, line, opts),
 
   // File revert & diff (for changes review)
   revertFile: (sessionId: string, filePath: string, staged?: boolean, renamedFrom?: string) =>
     ipcRenderer.invoke(IPC.FILE_REVERT, sessionId, filePath, staged, renamedFrom),
-  getFileDiff: (sessionId: string, filePath: string, staged?: boolean, opts?: { base?: string }) =>
+  getFileDiff: (sessionId: string, filePath: string, staged?: boolean, opts?: { base?: string; linkedRepo?: string }) =>
     ipcRenderer.invoke(IPC.FILE_DIFF, sessionId, filePath, staged, opts),
-  getFileLines: (sessionId: string, filePath: string, staged?: boolean) =>
-    ipcRenderer.invoke(IPC.FILE_LINES, sessionId, filePath, staged),
-  getImageDiffContent: (sessionId: string, filePath: string) =>
-    ipcRenderer.invoke(IPC.FILE_CONTENT_DATA_URL, sessionId, filePath),
+  getFileLines: (sessionId: string, filePath: string, staged?: boolean, opts?: { linkedRepo?: string }) =>
+    ipcRenderer.invoke(IPC.FILE_LINES, sessionId, filePath, staged, opts),
+  getImageDiffContent: (sessionId: string, filePath: string, opts?: { linkedRepo?: string }) =>
+    ipcRenderer.invoke(IPC.FILE_CONTENT_DATA_URL, sessionId, filePath, opts),
   stageFile: (sessionId: string, filePath: string) =>
     ipcRenderer.invoke(IPC.FILE_STAGE, sessionId, filePath),
   unstageFile: (sessionId: string, filePath: string) =>
@@ -263,6 +267,8 @@ const api: GroveBenchAPI = {
   push: (sessionId: string) => ipcRenderer.invoke(IPC.GIT_PUSH, sessionId),
   getGitSyncStatus: (sessionId: string) =>
     ipcRenderer.invoke(IPC.GIT_SYNC_STATUS, sessionId),
+  getLinkedStatus: (sessionId: string, opts?: { pr?: boolean; timeout?: number }) =>
+    ipcRenderer.invoke(IPC.GIT_LINKED_STATUS, sessionId, opts),
   getBranchCommits: (sessionId: string, base: string, opts?: { timeout?: number }) =>
     ipcRenderer.invoke(IPC.GIT_BRANCH_COMMITS, sessionId, base, opts),
 
@@ -296,7 +302,7 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.AGENT_CHECKPOINT_FILE_LINES, sessionId, uuid, scope, filePath),
 
   // Git status
-  getGitStatus: (sessionId: string, opts?: { scope?: 'working' | 'branch'; base?: string; timeout?: number }) =>
+  getGitStatus: (sessionId: string, opts?: { scope?: 'working' | 'branch'; base?: string; timeout?: number; linkedRepo?: string }) =>
     ipcRenderer.invoke(IPC.GIT_STATUS, sessionId, opts),
 
   // PR info
@@ -382,8 +388,8 @@ const api: GroveBenchAPI = {
   },
 
   // Folder
-  openSessionFolder: (sessionId: string) =>
-    ipcRenderer.invoke(IPC.OPEN_SESSION_FOLDER, sessionId),
+  openSessionFolder: (sessionId: string, linkedRepo?: string) =>
+    ipcRenderer.invoke(IPC.OPEN_SESSION_FOLDER, sessionId, linkedRepo),
   exportThread: (sessionId: string) =>
     ipcRenderer.invoke(IPC.SESSION_EXPORT, sessionId) as Promise<string | null>,
 

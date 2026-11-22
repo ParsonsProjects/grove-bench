@@ -24,6 +24,7 @@ src/
     process-host*.ts   # Utility processes git, gh and the agents' programs (claude, ACP agents) launch from, so launches can't freeze the window (3rd Vite entry)
     worktree-manager.ts
     worktree-submodules.ts # Checks out a new worktree's submodules, which git worktree add leaves empty
+    linked-projects.ts # A thread's other projects, each a worktree on its branch: the folders, protected roots and instruction files the agent gets (docs/linked-projects-plan.md)
     agent-session.ts   # Session lifecycle management
     session-*.ts       # Session types, event log + history, permission prompts, limits, skills, agent config, streamed text merged before IPC
     usage-ledger.ts    # Every turn's cost, tokens, time and models across threads (usage-ledger.jsonl), for the Usage dialog

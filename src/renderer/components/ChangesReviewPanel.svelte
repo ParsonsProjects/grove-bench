@@ -10,6 +10,7 @@
   import { backgroundAgentStore } from '../stores/background-agent.svelte.js';
   import type { GitStatusEntry, DiffScope, PrReviewEvent, PrReviewSubmitResult } from '../../shared/types.js';
   import ReviewDiffPanel from './ReviewDiffPanel.svelte';
+  import LinkedChangesPanel from './LinkedChangesPanel.svelte';
   import { lazyComponent } from '../lib/lazy-component.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -27,6 +28,18 @@
    * thread's PR on GitHub.
    */
   let { sessionId }: { sessionId: string } = $props();
+
+  // ── Which project's changes: the thread's own, or a linked project's
+  // (read only, LinkedChangesPanel; docs/linked-projects-plan.md) ──
+  /** The switch's value for the thread's own project: not a folder path,
+   *  and not empty, which the radio group reads as none picked. */
+  const OWN_PROJECT = ':own';
+  let threadEntry = $derived(sessionStore.sessions.find((s) => s.id === sessionId));
+  let linkedRepos = $derived(threadEntry?.linkedRepos ?? []);
+  let shownRepo = $state(OWN_PROJECT);
+  /** The linked project shown, or null for the thread's own. */
+  let shownLinked = $derived(shownRepo !== OWN_PROJECT && linkedRepos.includes(shownRepo) ? shownRepo : null);
+  let tabActive = $derived(sessionStore.activeSessionId === sessionId && messageStore.getActiveTab(sessionId) === 'changes');
 
   /** Rebase / squash / cherry-pick dialog (branch operations between agent branches). */
   let gitOpsOpen = $state(false);
@@ -511,6 +524,31 @@
   {/if}
 {/snippet}
 
+{#if linkedRepos.length > 0}
+  <div class="flex items-center gap-2 px-2 py-1 border-b border-border shrink-0 min-w-0 text-xs text-muted-foreground" data-testid="changes-project-switch">
+    <span class="shrink-0">Project</span>
+    <Segmented.Root
+      bind:value={() => shownLinked ?? OWN_PROJECT, (v) => (shownRepo = v as string)}
+      aria-label="Project"
+      class="min-w-0"
+    >
+      <Segmented.Item value={OWN_PROJECT} title="{threadEntry?.repoPath ?? ''}: this thread's own project" class="min-w-0">
+        <span class="truncate">{sessionStore.repoDisplayName(threadEntry?.repoPath ?? '')}</span>
+      </Segmented.Item>
+      {#each linkedRepos as repo (repo)}
+        <Segmented.Item value={repo} title="{repo}: also worked in by this thread, read only here" class="min-w-0">
+          <span class="truncate">{sessionStore.repoDisplayName(repo)}</span>
+        </Segmented.Item>
+      {/each}
+    </Segmented.Root>
+  </div>
+{/if}
+
+{#if shownLinked}
+  {#key shownLinked}
+    <LinkedChangesPanel {sessionId} repoPath={shownLinked} active={tabActive} />
+  {/key}
+{:else}
 {#if operation}
   <GitOperationNotice {sessionId} {operation} conflicts={conflictCount} />
 {/if}
@@ -519,7 +557,7 @@
   {sourceKey}
   entries={gitStatus.entries}
   {operation}
-  active={sessionStore.activeSessionId === sessionId && messageStore.getActiveTab(sessionId) === 'changes'}
+  active={tabActive}
   loading={isLoading}
   changesLabel={isBranchScope ? 'Changed on branch' : 'Changes'}
   {loadDiff}
@@ -543,3 +581,4 @@
   {headerActions}
   {dialogs}
 />
+{/if}

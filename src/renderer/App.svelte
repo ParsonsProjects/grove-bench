@@ -48,6 +48,7 @@
   import { panelStore } from './stores/panels.svelte.js';
   import { previewStore } from './stores/preview.svelte.js';
   import { backgroundAgentStore } from './stores/background-agent.svelte.js';
+  import { linkedStore } from './stores/linked.svelte.js';
   import { usageReportStore } from './stores/usageReport.svelte.js';
   import type { AppErrorReport } from '../shared/types.js';
   import { isTempBranch } from '../shared/temp-branch.js';
@@ -63,6 +64,7 @@
   // Loaded the first time it opens (Ctrl+R or the search button).
   const loadSessionFinder = lazyComponent(() => import('./components/SessionFinder.svelte'));
   const loadBackgroundAgentDialog = lazyComponent(() => import('./components/BackgroundAgentDialog.svelte'));
+  const loadLinkProjectDialog = lazyComponent(() => import('./components/LinkProjectDialog.svelte'));
   // New follow-up, from the + in the Follow-ups drawer or the board.
   const loadFollowUpDialog = lazyComponent(() => import('./components/FollowUpDialog.svelte'));
   const loadUsageDialog = lazyComponent(() => import('./components/UsageDialog.svelte'));
@@ -744,6 +746,14 @@
 {#if backgroundAgentStore.ask}
   {#await loadBackgroundAgentDialog() then BackgroundAgentDialog}
     <BackgroundAgentDialog />
+  {/await}
+{/if}
+
+<!-- Work in Another Project, from a thread row's menu or the branch popup. -->
+{#if linkedStore.linkDialogFor}
+  {@const linkFor = linkedStore.linkDialogFor}
+  {#await loadLinkProjectDialog() then LinkProjectDialog}
+    <LinkProjectDialog sessionId={linkFor} />
   {/await}
 {/if}
 

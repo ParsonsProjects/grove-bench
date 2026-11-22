@@ -8,6 +8,10 @@ In a thread that runs without git there is nothing to compare against, so the ta
 
 If git isn't installed, or is older than 2.23, a warning says so, with **Download Git** and **Re-check**: at the top of this tab, on the first screen, and when you start a thread. Without git, projects are plain folders. With an older git, threads still get their own branch, but rewinding and a few other steps fail.
 
+## Linked projects
+
+A thread that also works in other projects (**Also works in** on the draft) has a **Project** switch at the top of the tab: its own project first, then each linked one. Pick a linked project to see the changes in the thread's copy of it, with **Branch** and **Uncommitted** as below. **Branch** compares against the base of the branch's pull request, else **Default base branch** from **Settings → Git & worktrees** when it is set, else that project's default branch. It's read only: nothing can be staged, reverted or committed there, and **Review changes** and **Branch…** stay with the thread's own project. Line comments still go to the thread's agent, and say which project and copy they are about. Viewed marks and comments are kept for each project apart. The view is read when you open it, every few seconds while the agent works, after each turn and when you come back to the window.
+
 ## Branch and Uncommitted
 
 The toggle at the top of the file list picks what the tab compares:

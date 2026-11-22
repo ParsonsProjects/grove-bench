@@ -22,6 +22,7 @@
   import { messageStore } from '../stores/messages.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { prStore } from '../stores/pr.svelte.js';
+  import { linkedStore } from '../stores/linked.svelte.js';
   import { buildCreatePrPrompt } from '../lib/pr-prompt.js';
   import { resolveBaseBranch } from '../lib/base-branch.js';
   import { lazyComponent } from '../lib/lazy-component.js';
@@ -45,6 +46,7 @@
   let sessionDirect = $derived(session?.direct === true);
   let sessionRepoPath = $derived(session?.repoPath ?? '');
   let sessionStatus = $derived(session?.status);
+  let canLink = $derived(linkedStore.canLink(sessionId));
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   /** A switch moves files under any agent at work here, a background one too
    *  (the picker tells main the same, which refuses it). */
@@ -306,6 +308,18 @@
         {/if}
 
         <div class="flex items-center mt-2 pt-2 border-t border-border">
+          {#if canLink}
+            <!-- Another project to work in, through a worktree of its own
+                 (docs/linked-projects-plan.md). -->
+            <Button
+              variant="quiet"
+              size="xs"
+              onclick={() => { shipOpen = false; linkedStore.openLinkDialog(sessionId); }}
+              title="Have this thread also work in another of your projects, through a worktree on this branch name"
+            >
+              Work in another project…
+            </Button>
+          {/if}
           <Button
             variant="quiet"
             size="xs"

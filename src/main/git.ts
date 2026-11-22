@@ -857,9 +857,9 @@ export async function abortGitOperation(cwd: string, kind: GitOperation['kind'])
 }
 
 /** The branch HEAD points at, or null when detached. */
-export async function currentBranch(cwd: string): Promise<string | null> {
+export async function currentBranch(cwd: string, opts?: Pick<GitOptions, 'timeout'>): Promise<string | null> {
   try {
-    const name = (await git(['rev-parse', '--abbrev-ref', 'HEAD'], cwd)).trim();
+    const name = (await git(['rev-parse', '--abbrev-ref', 'HEAD'], cwd, opts)).trim();
     return name && name !== 'HEAD' ? name : null;
   } catch (e) {
     if (isSkipped(e)) throw e;
@@ -909,17 +909,17 @@ export function parseCheckoutBranches(raw: string, sinceMs: number): string[] {
 
 /** Local branch position vs its upstream — no network access, so `behind`
  *  reflects the last fetch. No upstream → the branch was never pushed. */
-export async function syncStatus(cwd: string): Promise<GitSyncStatus> {
+export async function syncStatus(cwd: string, opts?: Pick<GitOptions, 'timeout'>): Promise<GitSyncStatus> {
   let upstream: string | null = null;
   try {
-    upstream = (await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], cwd)).trim() || null;
+    upstream = (await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], cwd, opts)).trim() || null;
   } catch (e) {
     // Skipped isn't "no upstream": the caller keeps the last answer.
     if (isSkipped(e)) throw e;
   }
   if (!upstream) return { upstream: null, ahead: 0, behind: 0 };
   try {
-    const counts = await git(['rev-list', '--left-right', '--count', '@{u}...HEAD'], cwd);
+    const counts = await git(['rev-list', '--left-right', '--count', '@{u}...HEAD'], cwd, opts);
     const [behind, ahead] = counts.trim().split(/\s+/).map((n) => parseInt(n, 10));
     return { upstream, ahead: ahead || 0, behind: behind || 0 };
   } catch (e) {

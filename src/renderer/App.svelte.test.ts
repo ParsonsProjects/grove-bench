@@ -224,8 +224,30 @@ describe('App unread flag', () => {
     expect(store.needsAttention).toEqual({ tab: true });
   });
 
-  it('leaves a closed thread out of the taskbar badge, as the sidebar does', async () => {
-    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settingsStore.current)));
+  /** Run with the taskbar badge on or off, whatever an earlier test left
+   *  (CI shuffles them), then put the settings back. */
+  async function withBadge(on: boolean, run: () => Promise<void>) {
+    const before = JSON.parse(JSON.stringify(settingsStore.current)) as typeof settingsStore.current;
+    const draftBefore = JSON.parse(JSON.stringify(settingsStore.draft)) as typeof settingsStore.draft;
+    // The draft too: startup's load saves a draft that differs from current.
+    const settings = { ...before, notifyTaskbarBadge: on };
+    settingsStore.current = settings;
+    settingsStore.draft = JSON.parse(JSON.stringify(settings)) as typeof settingsStore.draft;
+    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settings)));
+    try {
+      await run();
+    } finally {
+      settingsStore.current = before;
+      settingsStore.draft = draftBefore;
+      mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(before)));
+      // The app's own load may still be on its way with this test's
+      // setting: this one lands after it, so the next test starts from the
+      // settings as they were.
+      await settingsStore.load();
+    }
+  }
+
+  it('leaves a closed thread out of the taskbar badge, as the sidebar does', () => withBadge(true, async () => {
     mockGroveBench.listRepos.mockResolvedValue([]);
     getOpenTabs.mockResolvedValue([]);
     render(App);
@@ -240,37 +262,20 @@ describe('App unread flag', () => {
     flushSync();
 
     expect(mockGroveBench.setAttentionBadge).toHaveBeenLastCalledWith(1, null, 1);
-  });
+  }));
 
-  it('still tells the tray how many threads need attention with the badge turned off', async () => {
-    const before = JSON.parse(JSON.stringify(settingsStore.current)) as typeof settingsStore.current;
-    const draftBefore = JSON.parse(JSON.stringify(settingsStore.draft)) as typeof settingsStore.draft;
-    // The draft too: startup's load saves a draft that differs from current.
-    const off = { ...before, notifyTaskbarBadge: false };
-    settingsStore.current = off;
-    settingsStore.draft = JSON.parse(JSON.stringify(off)) as typeof settingsStore.draft;
-    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(off)));
-    try {
-      mockGroveBench.listRepos.mockResolvedValue([]);
-      getOpenTabs.mockResolvedValue([]);
-      render(App);
-      await screen.findByText('Add a project to get started.', {}, { timeout: 5000 });
+  it('still tells the tray how many threads need attention with the badge turned off', () => withBadge(false, async () => {
+    mockGroveBench.listRepos.mockResolvedValue([]);
+    getOpenTabs.mockResolvedValue([]);
+    render(App);
+    await screen.findByText('Add a project to get started.', {}, { timeout: 5000 });
 
-      store.sessions = [{ id: 'open', branch: 'feat-a', repoPath: '/repo', status: 'running' }] as any;
-      store.needsAttention = { open: true };
-      flushSync();
+    store.sessions = [{ id: 'open', branch: 'feat-a', repoPath: '/repo', status: 'running' }] as any;
+    store.needsAttention = { open: true };
+    flushSync();
 
-      expect(mockGroveBench.setAttentionBadge).toHaveBeenLastCalledWith(0, null, 1);
-    } finally {
-      settingsStore.current = before;
-      settingsStore.draft = draftBefore;
-      mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(before)));
-      // The app's own load may still be on its way with the badge off: this
-      // one lands after it, so the next test (in a shuffled run) starts with
-      // the badge on again.
-      await settingsStore.load();
-    }
-  });
+    expect(mockGroveBench.setAttentionBadge).toHaveBeenLastCalledWith(0, null, 1);
+  }));
 
   it('does not mark it unread when it is closed mid-turn', async () => {
     await renderWithWorkingConversation();
@@ -418,6 +423,12 @@ describe('App board (alpha)', () => {
   beforeEach(() => {
     settingsBefore = JSON.parse(JSON.stringify(settingsStore.current)) as typeof settingsStore.current;
     draftBefore = JSON.parse(JSON.stringify(settingsStore.draft)) as typeof settingsStore.draft;
+    // No projects or threads unless a test adds them: in a shuffled run the
+    // test before may have left some to restore, and their cards would hide
+    // the empty board.
+    mockGroveBench.listRepos.mockResolvedValue([]);
+    mockGroveBench.listWorktrees.mockResolvedValue([]);
+    getOpenTabs.mockResolvedValue([]);
   });
 
   afterEach(() => {

@@ -16,6 +16,7 @@ import { reviewStore } from '../stores/review.svelte.js';
 import { groupStore } from '../stores/groups.svelte.js';
 import { goalStore } from '../stores/goals.svelte.js';
 import { todoStore } from '../stores/todo.svelte.js';
+import { linkedStore } from '../stores/linked.svelte.js';
 
 export function forgetConversation(id: string): void {
   store.removeSession(id);
@@ -31,4 +32,5 @@ export function forgetConversation(id: string): void {
   groupStore.remove(id); // a group it leaves empty goes too
   goalStore.forget(id);
   todoStore.forget(id);
+  linkedStore.forget(id);
 }

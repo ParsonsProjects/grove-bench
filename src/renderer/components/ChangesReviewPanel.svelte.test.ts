@@ -18,6 +18,7 @@ import { gitStatusStore } from '../stores/gitStatus.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { prStore } from '../stores/pr.svelte.js';
+import { linkedStore } from '../stores/linked.svelte.js';
 import type { GitStatusEntry } from '../../shared/types.js';
 
 // Counts syntax-highlight calls; otherwise the real module. The real
@@ -1312,5 +1313,72 @@ describe('ChangesReviewPanel: a neighbour whose diff failed to load', () => {
     await fireEvent.click(container.querySelector('[data-file-key="src/b.ts:false"]')!);
     await waitFor(() => expect(diffText(container)).toContain('bee'));
     expect(queryByText(/Couldn't load the diff/)).toBeNull();
+  });
+});
+
+describe('ChangesReviewPanel with linked projects', () => {
+  const LINKED = '/code/billing';
+  beforeEach(() => {
+    store.repos = ['/code/app', LINKED];
+    store.sessions = [{ id: SID, branch: 'fix-login', repoPath: '/code/app', status: 'running', linkedRepos: [LINKED] }];
+    gitStatusStore.statusBySession = { [SID]: { entries: [entry('src/own.ts')] } };
+  });
+  afterEach(() => {
+    store.repos = [];
+    reviewStore.clear(SID);
+  });
+
+  it("switches to a linked project's changes, read only, from its worktree", async () => {
+    mockGroveBench.getDefaultBranch.mockResolvedValue('main');
+    mockGroveBench.getGitStatus.mockImplementation(async (_id: string, opts?: { linkedRepo?: string }) => (
+      opts?.linkedRepo ? { entries: [entry('lib/pay.ts', { contentHash: 'p1' })], baseRef: 'main' } : { entries: [entry('src/own.ts')] }
+    ));
+    mockGroveBench.getFileDiff.mockResolvedValue({ kind: 'text', patch: patch('linked line') });
+    const view = render(ChangesReviewPanel, { sessionId: SID });
+
+    const switcher = await view.findByTestId('changes-project-switch');
+    await fireEvent.click(within(switcher).getByText('billing'));
+
+    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith(SID, { scope: 'branch', base: 'main', linkedRepo: LINKED }));
+    await waitFor(() => expect(view.container.querySelector('[data-file-key="lib/pay.ts:false"]')).not.toBeNull());
+    await waitFor(() => expect(diffText(view.container)).toContain('linked line'));
+    expect(mockGroveBench.getFileDiff).toHaveBeenCalledWith(SID, 'lib/pay.ts', false, { base: 'main', linkedRepo: LINKED });
+    expect(view.getByTestId('linked-changes-note')).toHaveTextContent('Read only. Commit, push and open pull requests in billing yourself, or ask the agent.');
+    // The thread's own files aren't listed, and nothing can be staged or reverted.
+    expect(view.container.querySelector('[data-file-key="src/own.ts:false"]')).toBeNull();
+    expect(view.queryByRole('button', { name: 'Stage' })).toBeNull();
+    expect(view.queryByText('Revert')).toBeNull();
+
+    // Back to the thread's own project.
+    await fireEvent.click(within(switcher).getByText('app'));
+    await waitFor(() => expect(view.container.querySelector('[data-file-key="src/own.ts:false"]')).not.toBeNull());
+  });
+
+  it("compares against the linked branch's PR base once its status is read", async () => {
+    mockGroveBench.getDefaultBranch.mockResolvedValue('main');
+    mockGroveBench.getGitStatus.mockImplementation(async (_id: string, opts?: { linkedRepo?: string; base?: string }) => (
+      opts?.linkedRepo ? { entries: [entry('lib/pay.ts')], baseRef: opts.base } : { entries: [entry('src/own.ts')] }
+    ));
+    const view = render(ChangesReviewPanel, { sessionId: SID });
+    await fireEvent.click(within(await view.findByTestId('changes-project-switch')).getByText('billing'));
+    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith(SID, { scope: 'branch', base: 'main', linkedRepo: LINKED }));
+
+    // The status, with the branch's PR into develop, arrives after the first read.
+    mockGroveBench.getLinkedStatus.mockResolvedValue([{
+      repoPath: LINKED, path: '/wt/billing', branch: 'fix-login', uncommitted: 0, sync: null, base: 'main', unmerged: 0,
+      pr: { number: 9, url: 'u', state: 'OPEN', headRefName: 'fix-login', baseRefName: 'develop' },
+    }]);
+    await linkedStore.refresh(SID);
+    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith(SID, { scope: 'branch', base: 'develop', linkedRepo: LINKED }));
+    mockGroveBench.getLinkedStatus.mockReset();
+    mockGroveBench.getLinkedStatus.mockResolvedValue([]);
+    linkedStore.forget(SID);
+  });
+
+  it("shows no switch for a thread with no linked projects", async () => {
+    store.sessions = [{ id: SID, branch: 'fix-login', repoPath: '/code/app', status: 'running' }];
+    const view = render(ChangesReviewPanel, { sessionId: SID });
+    await tick();
+    expect(view.queryByTestId('changes-project-switch')).toBeNull();
   });
 });

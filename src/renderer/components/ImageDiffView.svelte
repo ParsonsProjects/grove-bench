@@ -2,7 +2,8 @@
   import type { ImageDiffContent } from '../../shared/types.js';
   import { SectionLabel } from '$lib/components/ui/section-label/index.js';
 
-  let { sessionId, filePath }: { sessionId: string; filePath: string } = $props();
+  /** `linkedRepo`: the image is in the thread's worktree of that linked project. */
+  let { sessionId, filePath, linkedRepo }: { sessionId: string; filePath: string; linkedRepo?: string } = $props();
 
   let content = $state<ImageDiffContent | null>(null);
   let loading = $state(true);
@@ -10,11 +11,12 @@
   $effect(() => {
     const sid = sessionId;
     const fp = filePath;
+    const linked = linkedRepo;
     let stale = false;
     loading = true;
     content = null;
     window.groveBench
-      .getImageDiffContent(sid, fp)
+      .getImageDiffContent(sid, fp, linked ? { linkedRepo: linked } : undefined)
       .then(c => { if (!stale) content = c; })
       .catch(() => { if (!stale) content = { working: null, head: null }; })
       .finally(() => { if (!stale) loading = false; });

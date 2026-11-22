@@ -701,6 +701,9 @@ const api: Record<string, unknown> = {
       { number: 38, url: 'https://github.com/example/api-service/pull/38', state: 'MERGED', title: 'OAuth: add refresh token storage', reviewDecision: 'APPROVED', checks: { total: 3, passed: 3, failed: 0, pending: 0 }, failingChecks: [], headSha: 'a1b2c3d', headRefName: 'claude/fix-oauth-refresh', baseRefName: 'main' },
     ]
     : [],
+  getLinkedStatus: async () => [],
+  linkProject: async (_sessionId: string, repoPath: string) => ({ link: { repoPath, path: repoPath, branch: 'main' } }),
+  unlinkProject: async () => {},
   getGitSyncStatus: async (id: string) => ({ upstream: id === 's-readme' ? null : 'origin', ahead: id === 's-sidebar' ? 3 : id === 's-oauth' ? 1 : 0, behind: id === 's-oauth' ? 2 : 0 }),
   listCheckpoints: async () => [],
   getCheckpointDiff: async () => [

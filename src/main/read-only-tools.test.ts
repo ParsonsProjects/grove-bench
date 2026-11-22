@@ -249,3 +249,21 @@ describe('isReadOnlyToolCall with an adapter view', () => {
     expect(isReadOnlyToolCall('think', {}, CWD, { kind: 'other' })).toBe(false);
   });
 });
+
+describe("isReadOnlyToolCall in a thread's linked worktrees", () => {
+  const LINKED = path.resolve('/work/b-tree');
+
+  it('reads there as inside the worktree, and only there', () => {
+    expect(isReadOnlyToolCall('Read', { file_path: path.join(LINKED, 'src', 'a.ts') }, CWD, undefined, [LINKED])).toBe(true);
+    expect(isReadOnlyToolCall('Read', { file_path: path.join(LINKED, 'src', 'a.ts') }, CWD)).toBe(false);
+    expect(isReadOnlyToolCall('Read', { file_path: path.resolve('/work/b/src/a.ts') }, CWD, undefined, [LINKED])).toBe(false);
+    expect(isReadOnlyToolCall('read_file', {}, CWD, { kind: 'read', path: path.join(LINKED, 'a.ts') }, [LINKED])).toBe(true);
+  });
+
+  it('lets read-only commands name paths there', () => {
+    const inLinked = path.join(LINKED, 'src').replace(/\\/g, '/');
+    expect(isReadOnlyToolCall('Bash', { command: `ls ${inLinked}` }, CWD, undefined, [LINKED])).toBe(true);
+    expect(isReadOnlyToolCall('Bash', { command: `ls ${inLinked}` }, CWD)).toBe(false);
+    expect(isReadOnlyToolCall('shell', {}, CWD, { kind: 'shell', command: `git -C ${LINKED.replace(/\\/g, '/')} status` }, [LINKED])).toBe(true);
+  });
+});

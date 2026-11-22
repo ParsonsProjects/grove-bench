@@ -20,6 +20,7 @@
   import StatusBarActivity from './StatusBarActivity.svelte';
   import StatusBarCapabilities from './StatusBarCapabilities.svelte';
   import StatusBarBranch from './StatusBarBranch.svelte';
+  import StatusBarLinked from './StatusBarLinked.svelte';
   import StatusBarContext from './StatusBarContext.svelte';
 
   let { sessionId }: { sessionId: string } = $props();
@@ -95,6 +96,7 @@
   <SessionControlsPopover {sessionId} {modelOptions} />
   <StatusBarActivity {sessionId} />
   <StatusBarBranch {sessionId} />
+  <StatusBarLinked {sessionId} />
   <span class="flex-1"></span>
   <StatusBarCapabilities {sessionId} />
   <StatusBarContext {sessionId} {contextWindow} />

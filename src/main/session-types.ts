@@ -4,7 +4,7 @@
  */
 import type { BrowserWindow } from 'electron';
 import type { TurnFiles } from './turn-files.js';
-import type { AgentEvent, AgentSystemInfo, LiveBackgroundTask, McpElicitationResponse, PermissionMode, SessionStatus } from '../shared/types.js';
+import type { AgentEvent, AgentSystemInfo, LinkedCheckout, LiveBackgroundTask, McpElicitationResponse, PermissionMode, SessionStatus } from '../shared/types.js';
 import type { AgentAdapter, AgentQueryHandle, PermissionResponse, UserMessage } from './adapters/types.js';
 import type { Checkpoints } from './no-git-checkpoints.js';
 import type { SessionLimits } from './session-limits.js';
@@ -31,6 +31,9 @@ export interface ManagedSession {
   id: string;
   branch: string;
   worktreePath: string;
+  /** Other projects' worktrees the thread also works in
+   *  (docs/linked-projects-plan.md). Read at each query start. */
+  linked: LinkedCheckout[];
   repoPath: string;
   status: SessionStatus;
   agentType: string;
@@ -87,6 +90,15 @@ export interface ManagedSession {
   permissionMode: PermissionMode;
   /** Extra system prompt appended to the adapter's default prompt. */
   appendSystemPrompt: string | null;
+  /** The user's own part of it (the thread's, or the setting's), kept so
+   *  the prompt can be built again when the linked projects change. */
+  userAppendPrompt: string | null;
+  /** Said ahead of the next message, once: a project linked or unlinked
+   *  since the last one (linkChangeNote). */
+  linkNote?: string | null;
+  /** The linked projects changed while a turn ran (linked during it):
+   *  the agent restarts to take them once the turn ends. */
+  restartAfterTurn?: boolean;
   /** Fully custom system prompt — overrides the adapter's default entirely. */
   customSystemPrompt: string | null;
   /** If set, only these tools are allowed — everything else is auto-denied. */

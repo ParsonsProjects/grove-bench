@@ -57,6 +57,7 @@ export async function restoreWorktrees(): Promise<Set<string>> {
           displayName: runningSession?.displayName ?? wt.displayName ?? null,
           createdAt: wt.createdAt,
           lastActiveAt: wt.lastActiveAt,
+          ...(wt.linked?.length ? { linkedRepos: wt.linked.map((l) => l.repoPath) } : {}),
         }, false);
         restored.add(wt.id);
 
