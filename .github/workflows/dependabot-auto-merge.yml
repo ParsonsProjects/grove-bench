@@ -1,0 +1,83 @@
+name: Dependabot auto-merge
+
+# Approves a Dependabot pull request and merges it once every check on it
+# has passed, when it's a patch or minor update to test, lint and type
+# tooling, the landing page, acp-spike or the workflows' actions, with no
+# maintainer change (scripts/dependabot-auto-merge.mjs says which). The rest,
+# including every package bundled into the app, waits for a review.
+#
+# main needs an approving review, so the approval is the gate: it only comes
+# once the checks have passed, including the workflows that only run for
+# dependency changes (Package, Dependency age, npm audit).
+#
+# Needs two repository settings:
+# - Settings > General > Pull Requests: "Allow auto-merge"
+# - Settings > Actions > General > Workflow permissions: "Allow GitHub
+#   Actions to create and approve pull requests"
+#
+# A check that failed and passes on a re-run (Dependency age, once a fix is
+# 7 days old) doesn't start this again: re-run this workflow's job after it.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  auto-merge:
+    name: Approve and auto-merge
+    # Only Dependabot's own pull requests in this repository. fetch-metadata
+    # also checks that the commits are Dependabot's, and fails if not.
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.repository == 'ParsonsProjects/grove-bench'
+    runs-on: ubuntu-latest
+    # The checks it waits for take up to about 10 minutes on Windows.
+    timeout-minutes: 60
+    permissions:
+      # gh pr merge
+      contents: write
+      # gh pr review --approve
+      pull-requests: write
+      # Read the other checks' results.
+      checks: read
+    steps:
+      # No npm install in this job: it holds a write token, and a package's
+      # install script would get it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The merge commit and its first parent (the base), to see what
+          # the pull request changes.
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Read the update
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ github.token }}
+
+      - name: Decide, then wait for the checks
+        id: decide
+        env:
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+          MAINTAINER_CHANGES: ${{ steps.metadata.outputs.maintainer-changes }}
+          DEPENDENCY_NAMES: ${{ steps.metadata.outputs.dependency-names }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/dependabot-auto-merge.mjs
+
+      - name: Approve and merge
+        if: steps.decide.outputs.merge == 'true'
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr review --approve "$PR_URL" --body "A patch or minor update to tooling, the landing page, acp-spike or the actions, and every check passed (Dependabot auto-merge workflow)."
+          # Merges now if nothing else is needed, else turns on auto-merge.
+          # Only this commit: a newer push starts this workflow again.
+          gh pr merge --auto --squash --match-head-commit "$HEAD_SHA" "$PR_URL"

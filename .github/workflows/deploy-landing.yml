@@ -1,5 +1,8 @@
 name: Deploy Landing Page
 
+# Pull requests that change the page build it, without deploying, so a
+# broken build (a dependency update, say) shows before it merges.
+
 on:
   push:
     branches: [main]
@@ -14,17 +17,31 @@ on:
       - 'src/renderer/lib/context-grove.ts'
       - 'src/renderer/lib/usage-tone.ts'
       - '.github/workflows/deploy-landing.yml'
+  pull_request:
+    branches: [main]
+    # The same paths as push.
+    paths:
+      - 'landing/**'
+      - 'src/renderer/lib/agent-sprite.ts'
+      - 'src/renderer/lib/pixel-tree.ts'
+      - 'src/shared/brand.ts'
+      - 'src/renderer/lib/grove-walk.ts'
+      - 'src/renderer/lib/context-grove.ts'
+      - 'src/renderer/lib/usage-tone.ts'
+      - '.github/workflows/deploy-landing.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: pages
+  # A pull request's build mustn't cancel a deploy, or the other way round.
+  group: ${{ github.event_name == 'pull_request' && format('landing-pr-{0}', github.event.pull_request.number) || 'pages' }}
   cancel-in-progress: true
 
 jobs:
   build:
+    name: Build landing page
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,12 +65,14 @@ jobs:
           VITE_POSTHOG_API_KEY: ${{ vars.POSTHOG_API_KEY }}
 
       - name: Upload artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: landing/dist
 
   deploy:
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     # Only this job writes to Pages, with an OIDC token to prove it's this
     # workflow. The build job, which runs npm ci, can't.

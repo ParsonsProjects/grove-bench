@@ -10,11 +10,52 @@
 # released less than 7 days ago fails Dependency age until it's old enough.
 # Re-run that check once it is, or, if the fix can't wait, add the package to
 # min-release-age-exclude[] in the .npmrc next to the lockfile.
+#
+# Patch and minor pull requests for tooling, the landing page, acp-spike and
+# the actions merge themselves once every check passes (Dependabot auto-merge
+# workflow). The rest wait for a review. Majors (a new Electron, say) always
+# get a pull request each, since they need more checking.
 version: 2
 updates:
+  # The app. Test, lint and type tooling comes in its own pull request, so it
+  # can merge itself. Everything else is bundled into the app (Vite bundles
+  # nearly all of package.json) or decides what goes into the installer.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      # Keep in step with TOOLING in scripts/dependabot-auto-merge.mjs (its
+      # test checks).
+      tooling:
+        patterns:
+          - '@eslint/*'
+          - 'eslint'
+          - 'eslint-*'
+          - 'globals'
+          - 'typescript'
+          - 'typescript-eslint'
+          - '@typescript-eslint/*'
+          - 'vitest'
+          - '@vitest/*'
+          - 'jsdom'
+          - 'knip'
+          - 'svelte-check'
+          - '@testing-library/*'
+          - '@types/*'
+        update-types: [minor, patch]
+      app:
+        patterns: ['*']
+        update-types: [minor, patch]
+      app-security:
+        applies-to: security-updates
+        patterns: ['*']
+
+  # Not part of the app: one pull request per folder.
   - package-ecosystem: npm
     directories:
-      - /
       - /landing
       - /scripts/acp-spike
     schedule:
@@ -22,9 +63,8 @@ updates:
     cooldown:
       default-days: 7
     groups:
-      # One pull request per folder for minor and patch updates. Majors (a new
-      # Electron, say) get a pull request each, since they need more checking.
       minor-and-patch:
+        patterns: ['*']
         update-types: [minor, patch]
       security:
         applies-to: security-updates
