@@ -297,15 +297,15 @@ function nothingRunning(): boolean {
 
 let shutdownDone: Promise<void> | null = null;
 
+/** Why Grove Bench is quitting, for the turns it cuts off (cut-off.ts):
+ *  Windows ending the session sets it before the quit. */
+let quitReason: CutOffReason = 'quit';
+
 /**
  * Graceful shutdown: stop every agent and shell. Worktrees, branches and
  * checkpoints are left alone; conversations reopen on the next launch.
  * Runs once: quitting and "Restart to update" both wait on it.
  */
-/** Why Grove Bench is quitting, for the turns it cuts off (cut-off.ts):
- *  Windows ending the session sets it before the quit. */
-let quitReason: CutOffReason = 'quit';
-
 function shutdown(reason: CutOffReason = quitReason): Promise<void> {
   shutdownDone ??= (async () => {
     // Restart to update comes here before before-quit: no schedule may

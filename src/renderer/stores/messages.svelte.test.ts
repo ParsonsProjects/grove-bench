@@ -3937,4 +3937,22 @@ describe('turns cut off when Grove Bench stopped', () => {
     expect(messageStore.openCutOff(SID)).toBeNull();
     expect(mockGroveBench.dismissCutOff).toHaveBeenCalledWith(SID);
   });
+
+  it('a Continue held in a paused queue (restored, or after Stop) still waits on the user', () => {
+    sessionStore.sessions = [{ id: SID, branch: 'b', repoPath: '/repo', status: 'running' }] as never;
+    messageStore.replayEvents(SID, [prompt, cutOff, { type: 'process_exit' }]);
+    messageStore.queuedBySession = { [SID]: [{ id: 'c1', displayText: CONTINUE_PROMPT, outgoing: CONTINUE_PROMPT, continued: true }] };
+    messageStore.queuePausedBySession = { [SID]: true };
+    expect(messageStore.isContinuePending(SID)).toBe(false);
+
+    messageStore.queuePausedBySession = {};
+    expect(messageStore.isContinuePending(SID)).toBe(true);
+    // Its agent isn't up and isn't starting.
+    sessionStore.sessions = [{ id: SID, branch: 'b', repoPath: '/repo', status: 'stopped' }] as never;
+    expect(messageStore.isContinuePending(SID)).toBe(false);
+
+    // Dismiss drops it.
+    messageStore.dismissCutOff(SID);
+    expect(messageStore.hasQueuedContinue(SID)).toBe(false);
+  });
 });

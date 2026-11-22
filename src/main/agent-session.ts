@@ -1426,6 +1426,9 @@ class AgentSessionManager {
     // prompt reaches the agent only after the checkpoint (see turnInFlight).
     const unsent = session.unsentPrompts ??= new Set();
     unsent.add(uuid);
+    // Reached the agent: else the history gets the end of the turn it never
+    // started (finally below).
+    let delivered = false;
     try {
       session.emit?.(userEvent);
 
@@ -1491,6 +1494,7 @@ class AgentSessionManager {
         logger.debug(`[sendMessage] session=${id} sent successfully`);
         // Update last-active timestamp (fire-and-forget)
         worktreeManager.updateLastActive(id).catch(() => {});
+        delivered = true;
         return true;
       } catch (e) {
         console.error(`[sendMessage] session=${id} send FAILED:`, e);
@@ -1502,6 +1506,11 @@ class AgentSessionManager {
     } finally {
       // Gone to the agent (turnHandle has it now), or given up on.
       unsent.delete(uuid);
+      // Given up on, with nothing else under way: the history says its turn
+      // ended, as the window was told (ipc's notDelivered), so the next start
+      // doesn't take it for a turn a crash cut off (cut-off.ts). A close
+      // writes its own (shutDown).
+      if (!delivered && !session.destroying && !turnInFlight(session)) session.emit?.({ type: 'process_exit' });
     }
   }
 
@@ -2996,10 +3005,11 @@ class AgentSessionManager {
     return this.sessions.size;
   }
 
-  /** Whether the thread has its agent up (or sleeping): its history's last
-   *  turn may still be running. */
+  /** Whether the thread has its agent up (or sleeping), or is still
+   *  closing: its history's last turn may still be running, or is about to
+   *  get its end (shutDown writes it after the thread leaves `sessions`). */
   isLive(id: string): boolean {
-    return this.sessions.has(id);
+    return this.sessions.has(id) || this.closing.has(id);
   }
 
   /** Conversations still shutting down after closeSession(). */

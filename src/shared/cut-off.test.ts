@@ -24,6 +24,12 @@ describe('openCutOff', () => {
     expect(openCutOff([prompt(), cut, { type: 'result', subtype: 'success', isError: false, parentToolUseId: 't1' } as AgentEvent])).toEqual({ reason: 'update', at: 1_000 });
   });
 
+  it("isn't answered by an agent that started again and stopped, as the thread isn't either", () => {
+    const again = [prompt(), cut, exit, { type: 'mode_sync', mode: 'default', source: 'session' } as AgentEvent, exit];
+    expect(openCutOff(again)).toEqual({ reason: 'update', at: 1_000 });
+    expect(openCutOff([prompt(), cut, exit, result])).toEqual({ reason: 'update', at: 1_000 });
+  });
+
   it('an exit of its own (a thread closed, an agent that died) ends the turn: nothing cut off', () => {
     expect(openCutOff([prompt(), exit])).toBeNull();
     expect(openCutOff([prompt(), exit], true)).toBeNull();
@@ -44,7 +50,13 @@ describe('text', () => {
     expect(cutOffReasonText('quit')).toBe('Grove Bench was closed while the agent was still working.');
     expect(cutOffReasonText('windows')).toBe('Windows shut down or signed out while the agent was still working.');
     expect(cutOffReasonText('unknown')).toBe('Grove Bench stopped before the agent finished.');
-    expect(cutOffReasonText('quit', new Date(2026, 0, 1, 14, 5).getTime())).toMatch(/^Grove Bench was closed at \d{1,2}:05/);
+    const today = new Date();
+    today.setHours(14, 5, 0, 0);
+    expect(cutOffReasonText('quit', today.getTime())).toMatch(/^Grove Bench was closed at \d{1,2}:05/);
+    // Days ago: the day too.
+    expect(cutOffReasonText('quit', new Date(2026, 0, 1, 14, 5).getTime())).toMatch(/^Grove Bench was closed on .+ at \d{1,2}:05/);
+    expect(cutOffReasonText('update', undefined, true)).toBe('Grove Bench closed to install an update, while the agents were still working.');
+    expect(cutOffReasonText('unknown', undefined, true)).toBe('Grove Bench stopped before the agents finished.');
     expect(cutOffDivider('update')).toBe('Cut off when Grove Bench closed to install an update');
     expect(cutOffDivider('unknown')).toBe('Cut off when Grove Bench stopped');
   });

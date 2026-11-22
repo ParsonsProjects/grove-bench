@@ -34,7 +34,7 @@
   let why = $derived.by(() => {
     const first = threads[0]?.cutOff;
     if (!first || threads.some((t) => t.cutOff.reason !== first.reason)) return null;
-    return cutOffReasonText(first.reason, first.at);
+    return cutOffReasonText(first.reason, first.at, threads.length > 1);
   });
 </script>
 

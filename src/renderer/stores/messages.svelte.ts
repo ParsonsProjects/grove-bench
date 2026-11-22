@@ -1606,6 +1606,16 @@ class MessageStore {
     return this.getQueue(sessionId).some((m) => m.continued);
   }
 
+  /** Whether that prompt is on its way: queued, the queue not paused (a
+   *  restored queue starts paused, as one does after Stop or a rewind), and
+   *  the thread's agent up or starting. Until then the cut-off turn still
+   *  waits on the user, and its notice still offers Continue. */
+  isContinuePending(sessionId: string): boolean {
+    if (!this.hasQueuedContinue(sessionId) || this.isQueuePaused(sessionId)) return false;
+    const status = sessionStore.sessions.find((s) => s.id === sessionId)?.status;
+    return status !== undefined && status !== 'stopped';
+  }
+
   /**
    * Continue a turn Grove Bench cut off: CONTINUE_PROMPT goes first, ahead of
    * anything queued, which follows one turn at a time, as Resume would send
@@ -1622,9 +1632,10 @@ class MessageStore {
     if (this.getIsReady(sessionId)) this.flushQueue(sessionId, { resumed: true });
   }
 
-  /** Dismiss the thread's cut-off turn: it stays as it is. Main logs it, so
-   *  it stays dismissed. */
+  /** Dismiss the thread's cut-off turn: it stays as it is, and a Continue
+   *  still waiting in the queue goes. Main logs it, so it stays dismissed. */
   dismissCutOff(sessionId: string) {
+    if (this.hasQueuedContinue(sessionId)) this.setQueue(sessionId, this.getQueue(sessionId).filter((m) => !m.continued));
     this.markCutOffDismissed(sessionId);
     void window.groveBench.dismissCutOff(sessionId).catch(() => {});
   }

@@ -2904,6 +2904,25 @@ describe('AgentSessionManager turn state for a loading history', () => {
     expect(session.eventHistory.map((e) => e.type)).not.toContain('turn_cut_off');
   });
 
+  it("logs the end of a prompt that didn't reach the agent, so the next start doesn't take it for a crash", async () => {
+    const { session } = await startSession('test-turn-send-failed');
+    vi.mocked(session.queryHandle!.sendMessage).mockImplementationOnce(() => { throw new Error('pipe closed'); });
+
+    expect(await sessionManager.sendMessage('test-turn-send-failed', 'run the tests')).toBe(false);
+
+    expect(session.eventHistory.slice(-2).map((e) => e.type)).toEqual(['user_message', 'process_exit']);
+    expect(sessionManager.turnState('test-turn-send-failed').midTurn).toBe(false);
+  });
+
+  it('counts a thread still closing as live, so its unfinished turn is not taken for a crash', async () => {
+    await startSession('test-turn-closing');
+    await sessionManager.sendMessage('test-turn-closing', 'run the tests');
+    const closed = sessionManager.closeSession('test-turn-closing');
+    expect(sessionManager.isLive('test-turn-closing')).toBe(true);
+    await closed;
+    expect(sessionManager.isLive('test-turn-closing')).toBe(false);
+  });
+
   it('sends Continue marked as such, and dismisses a cut-off turn once', async () => {
     const { session } = await startSession('test-turn-continue');
     await sessionManager.sendMessage('test-turn-continue', 'run the tests');

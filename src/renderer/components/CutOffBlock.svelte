@@ -11,8 +11,9 @@
   let { sessionId, message }: { sessionId: string; message: ChatCutOffMessage } = $props();
 
   let open = $derived(messageStore.openCutOff(sessionId)?.id === message.id);
-  // Continue already in the queue, waiting for the agent to be ready.
-  let continuing = $derived(messageStore.hasQueuedContinue(sessionId));
+  // Continue on its way, waiting for the agent to be ready. One held in a
+  // paused queue isn't: Continue again sends it.
+  let continuing = $derived(messageStore.isContinuePending(sessionId));
 </script>
 
 {#if open}
