@@ -155,6 +155,18 @@ describe('CloseToTray', () => {
     expect(trays()[0].destroy).toHaveBeenCalled();
   });
 
+  it('removes the icon once the window shows again, if the setting went back to Quit while it was hidden', () => {
+    const { ctt, win, s, close } = setUp({ action: 'tray', introduced: true });
+    close();
+    s.action = 'quit';
+    ctt.apply('quit');
+    expect(trays()[0].destroy).not.toHaveBeenCalled();
+
+    win.show();
+    ctt.onShow();
+    expect(trays()[0].destroy).toHaveBeenCalled();
+  });
+
   it('minimises instead when the tray icon can\'t be made, so the window is never lost', () => {
     // At start-up, and again on closing.
     const noTray = () => { throw new Error('no tray'); };
@@ -205,13 +217,20 @@ describe('CloseToTray', () => {
       expect(close().preventDefault).toHaveBeenCalled();
     });
 
-    it('still goes to the tray if the setting fails to save', async () => {
+    it("still goes to the tray if the setting fails to save, and asks again next time, as it's still Quit", async () => {
       vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: false });
-      const { win, opts, close } = setUp({ working: 1 });
+      const { win, s, opts, close } = setUp({ working: 1 });
       vi.mocked(opts.setCloseAction).mockImplementation(() => { throw new Error('read failed'); });
       close();
       await settle();
       expect(win.hide).toHaveBeenCalled();
+      expect(s.introduced).toBe(false);
+      expect(Notification).not.toHaveBeenCalled();
+
+      win.show();
+      close();
+      expect(dialog.showMessageBox).toHaveBeenCalledTimes(2);
+      await settle();
     });
 
     it('shows one dialog when close is pressed again while it is open', async () => {

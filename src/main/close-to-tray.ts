@@ -133,6 +133,13 @@ export class CloseToTray {
     else void this.offer();
   }
 
+  /** The window was shown, however (the tray, a notification, a second
+   *  launch): the setting may have gone back to Quit while it was hidden, and
+   *  the icon goes now. */
+  onShow(): void {
+    if (this.opts) this.apply(this.opts.closeAction());
+  }
+
   /** Show the window, from the tray or its notice. */
   open(): void {
     const win = this.opts?.getWindow();
@@ -147,7 +154,9 @@ export class CloseToTray {
     app.quit();
   }
 
-  private hide(): void {
+  /** Hide the window in the tray; `notice`: say where it went, the first
+   *  time it goes there. */
+  private hide(notice = true): void {
     const opts = this.opts;
     const win = opts?.getWindow();
     if (!opts || !win || win.isDestroyed()) return;
@@ -159,7 +168,7 @@ export class CloseToTray {
       return;
     }
     win.hide();
-    if (!opts.introduced()) {
+    if (notice && !opts.introduced()) {
       opts.setIntroduced();
       this.showNotice(opts.working());
     }
@@ -183,14 +192,16 @@ export class CloseToTray {
         noLink: true,
       });
       if (response === 0) {
-        opts.setIntroduced();
         try {
           opts.setCloseAction('tray');
+          // Only once it's saved: otherwise the setting is still Quit, and
+          // the next close with threads working should ask again.
+          opts.setIntroduced();
         } catch (e) {
-          // The window still goes to the tray this time.
           logger.warn('Failed to save the close-to-tray setting:', e);
         }
-        this.hide();
+        // To the tray this time either way, with no notice: they just chose it.
+        this.hide(false);
       } else if (response === 1) {
         opts.setIntroduced();
         this.quit();

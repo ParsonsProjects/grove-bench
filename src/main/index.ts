@@ -150,6 +150,7 @@ function createWindow() {
   // Close to tray (close-to-tray.ts): hides the window instead of closing
   // it when the setting says so, or first offers that.
   mainWindow.on('close', (event) => closeToTray.onClose(event));
+  mainWindow.on('show', () => closeToTray.onShow());
   // Windows is logging off or shutting down: it closes for real.
   mainWindow.on('session-end', () => closeToTray.markQuitting());
 

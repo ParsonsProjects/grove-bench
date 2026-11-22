@@ -2480,12 +2480,14 @@ export function registerHandlers() {
 
   // ─── Taskbar attention badge ───
 
-  ipcMain.on(IPC.WIN_SET_ATTENTION_BADGE, (event, count: unknown, dataUrl: unknown) => {
+  ipcMain.on(IPC.WIN_SET_ATTENTION_BADGE, (event, count: unknown, dataUrl: unknown, attention: unknown) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) return;
-    const n = typeof count === 'number' && Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+    const whole = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0);
+    const n = whole(count);
     applyAttentionBadge(win, n, typeof dataUrl === 'string' ? dataUrl : null);
-    closeToTray.noteAttention(n);
+    // The tray's menu counts them even with the badge turned off.
+    closeToTray.noteAttention(attention === undefined ? n : whole(attention));
   });
 
   // ─── Spell check ───

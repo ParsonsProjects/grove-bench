@@ -1971,8 +1971,9 @@ export interface GroveBenchAPI {
   // Taskbar attention badge
   /** Overlay `count` on the taskbar icon (Windows overlay icon, macOS dock
    *  badge, Linux badge count). `dataUrl` is a renderer-drawn PNG used for the
-   *  Windows overlay; 0 clears the badge. */
-  setAttentionBadge(count: number, dataUrl: string | null): void;
+   *  Windows overlay; 0 clears the badge. `attention`: how many threads need
+   *  the user, whether the badge shows or not, for the tray's menu. */
+  setAttentionBadge(count: number, dataUrl: string | null, attention?: number): void;
 
   // OS notifications
   notify(req: OsNotificationRequest): void;

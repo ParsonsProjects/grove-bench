@@ -571,8 +571,8 @@ const api: GroveBenchAPI = {
   showPerformanceFile: (which: 'log' | 'trace') => ipcRenderer.invoke(IPC.PERF_SHOW_FILE, which),
 
   // Taskbar attention badge
-  setAttentionBadge: (count: number, dataUrl: string | null) =>
-    ipcRenderer.send(IPC.WIN_SET_ATTENTION_BADGE, count, dataUrl),
+  setAttentionBadge: (count: number, dataUrl: string | null, attention?: number) =>
+    ipcRenderer.send(IPC.WIN_SET_ATTENTION_BADGE, count, dataUrl, attention),
 
   // Window controls
   winMinimize: () => ipcRenderer.send(IPC.WIN_MINIMIZE),
