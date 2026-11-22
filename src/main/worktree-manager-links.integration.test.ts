@@ -54,7 +54,10 @@ async function linkedThread(manager: WorktreeManager, branch = 'feat', link: { u
 }
 
 beforeEach(() => {
-  tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gb-links-')));
+  // .native: on Windows it also expands short names (RUNNER~1) that the JS
+  // realpathSync keeps. git prints worktree paths in long form, and list()
+  // and the orphan sweeps match the manifest's paths against them.
+  tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'gb-links-')));
   const userData = path.join(tmp, 'userData');
   root = path.join(userData, 'worktrees');
   vi.mocked(app.getPath).mockImplementation((name: string) => (name === 'userData' ? userData : path.join(tmp, name)));
