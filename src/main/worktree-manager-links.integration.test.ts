@@ -19,7 +19,7 @@ vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { WorktreeManager } from './worktree-manager.js';
+import { ThreadBranchMovedError, TRASH_RETENTION_MS, WorktreeManager } from './worktree-manager.js';
 
 // Real git is slow to start on Windows.
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
@@ -268,5 +268,62 @@ describe('the sweep with linked projects', () => {
     await manager.sweepStaleWorktrees();
     expect(fs.existsSync(linked.path)).toBe(true);
     expect(readManifest()[ID].linked).toHaveLength(1);
+  });
+});
+
+describe('linked projects: what the review found', () => {
+  it("renames the linked branch when the linked worktree's folder is gone", async () => {
+    const manager = new WorktreeManager();
+    const { linked } = await linkedThread(manager, 'grove/a1b2c3d4');
+    fs.rmSync(linked.path, { recursive: true, force: true });
+
+    await manager.renameBranch(ID, 'fix-login');
+
+    expect(git(repoB, 'branch', '--list', 'fix-login')).toContain('fix-login');
+    expect(manager.getWorktree(ID)?.linked?.[0].branch).toBe('fix-login');
+  });
+
+  it("refuses to link on a branch name the thread no longer has, and links after a rename on the new one", async () => {
+    const manager = new WorktreeManager();
+    await manager.create({ repoPath: repoA, branchName: 'grove/a1b2c3d4', id: ID });
+    await manager.renameBranch(ID, 'fix-login');
+
+    await expect(manager.createLink(ID, { repoPath: repoB, branchName: 'grove/a1b2c3d4' })).rejects.toBeInstanceOf(ThreadBranchMovedError);
+    expect(worktreesOf(repoB)).not.toContain(ID);
+    const linked = await manager.createLink(ID, { repoPath: repoB, branchName: 'fix-login' });
+    expect(git(linked.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('fix-login');
+  });
+
+  it('leaves a linked worktree alone while the drive its folder is on is away, in the sweep and on unlink', async () => {
+    const manager = new WorktreeManager();
+    await linkedThread(manager);
+    // As if it were in Settings > Git's folder on a drive not connected now.
+    const away = path.join(tmp, 'away-drive', hash(repoB), ID);
+    const manifest = readManifest();
+    (manifest[ID].linked as Array<{ path: string }>)[0].path = away;
+    fs.writeFileSync(path.join(root, 'manifest.json'), JSON.stringify(manifest));
+    const fresh = new WorktreeManager();
+
+    expect(await fresh.cleanupOrphanLinks()).toBe(0);
+    expect(readManifest()[ID].linked).toEqual([expect.objectContaining({ path: away })]);
+    await fresh.getWorktreeOrManifest(ID);
+    await expect(fresh.unlinkProject(ID, repoB, false)).rejects.toThrow("which isn't there. Connect its drive and try again.");
+    expect(readManifest()[ID].linked).toHaveLength(1);
+  });
+
+  it("purges the trash of a folder only a linked worktree is in", async () => {
+    const manager = new WorktreeManager();
+    await linkedThread(manager);
+    // The link's worktree is in another folder (a setting since changed).
+    const elsewhere = path.join(tmp, 'elsewhere');
+    const manifest = readManifest();
+    (manifest[ID].linked as Array<{ path: string }>)[0].path = path.join(elsewhere, hash(repoB), ID);
+    fs.writeFileSync(path.join(root, 'manifest.json'), JSON.stringify(manifest));
+    const old = Date.now() - TRASH_RETENTION_MS - 1000;
+    const trashed = path.join(elsewhere, '.trash', `${old}-${hash(repoB)}-${ID}`);
+    fs.mkdirSync(trashed, { recursive: true });
+
+    expect(await new WorktreeManager().purgeTrash()).toBe(1);
+    expect(fs.existsSync(trashed)).toBe(false);
   });
 });

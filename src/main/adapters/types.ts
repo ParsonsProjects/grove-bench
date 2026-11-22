@@ -214,6 +214,10 @@ export interface AdapterConfig {
    *  additionalDirectories): edits and reads there count as the thread's own
    *  for the modes Grove applies. */
   linkedWorktrees?: string[] | null;
+  /** What to call folders in additionalDirectories when telling the user
+   *  about them, by path: a linked project's name for its worktree (whose
+   *  own folder is named after the thread). Others go by their folder's name. */
+  folderNames?: Record<string, string> | null;
   /** Folders the agent must not edit, as absolute paths: each linked
    *  project's own folder, whose worktree (in additionalDirectories) it edits
    *  instead. */

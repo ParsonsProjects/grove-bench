@@ -183,6 +183,10 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
  *  holds up the window, as for Claude Code. The command is found as a shell
  *  would, npm's .cmd shims included. Shared by conversations, generateText
  *  and the sign-in check so a start-up fix lands in all of them. */
+/** The folders each thread (by its cwd) was last warned its agent can't be
+ *  given (warnUnusedRoots), so a restart or wake doesn't say it again. */
+const unusedRootsWarned = new Map<string, string>();
+
 function spawnAgent(def: AcpAgentDefinition, cwd: string, extraEnv?: Record<string, string> | null): HostedProcess {
   const savedKey = def.apiKey ? getApiKey(def.id) : null;
   const env = {
@@ -874,11 +878,15 @@ class AcpQuery {
   }
 
   /** Says so when there are folders outside cwd that the agent can't be
-   *  given, because it didn't advertise them. */
+   *  given, because it didn't advertise them: once for the thread (its
+   *  cwd) and these folders, not again on each restart or wake. */
   private warnUnusedRoots(): void {
     const dirs = this.config.additionalDirectories ?? [];
     if (dirs.length === 0 || this.init?.agentCapabilities?.sessionCapabilities?.additionalDirectories) return;
-    const names = dirs.map((d) => path.basename(d) || d).join(', ');
+    const key = [...dirs].sort().join('\n');
+    if (unusedRootsWarned.get(this.config.cwd) === key) return;
+    unusedRootsWarned.set(this.config.cwd, key);
+    const names = dirs.map((d) => this.config.folderNames?.[d] ?? (path.basename(d) || d)).join(', ');
     this.emit({
       type: 'status',
       level: 'warning',

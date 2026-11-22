@@ -1274,6 +1274,69 @@ describe('AgentSessionManager linking a project part way through', () => {
   });
 });
 
+describe('AgentSessionManager linked projects: what the review found', () => {
+  async function started(id: string) {
+    await sessionManager.createSession({ id, branch: 'feat', cwd: '/wt/a1', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'mock-session-id', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    return sessionManager.getSession(id)!;
+  }
+
+  it('lets a turn that started during the link run to its end, then restarts with the new folder', async () => {
+    await started('test-link-mid-turn');
+    await sessionManager.sendMessage('test-link-mid-turn', 'Fix the PR checks');
+    expect(sessionManager.isMidTurn('test-link-mid-turn')).toBe(true);
+    const starts = mockAdapter.startCallCount;
+
+    await sessionManager.setLinked('test-link-mid-turn', [{ repoPath: '/code/b', path: '/wt/b1', branch: 'feat' }], 'Note: b is linked.\n');
+    await new Promise((r) => setTimeout(r, 30));
+    expect(mockAdapter.startCallCount).toBe(starts);
+
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(starts + 1));
+    expect(mockAdapter.lastConfig!.additionalDirectories).toEqual([path.resolve('/wt/b1')]);
+
+    await sessionManager.destroySession('test-link-mid-turn');
+  });
+
+  it('unlinks with the agent stopped, its process tree first, then starts it again without the folder', async () => {
+    const session = await started('test-unlink-stopped');
+    session.linked = [{ repoPath: '/code/b', path: '/wt/b1', branch: 'feat' }];
+    const handle = session.queryHandle!;
+    const kill = vi.spyOn(handle, 'killProcessTree');
+    const starts = mockAdapter.startCallCount;
+    let killedBeforeRemove = false;
+
+    await sessionManager.unlinkStopped('test-unlink-stopped', async () => {
+      killedBeforeRemove = kill.mock.calls.length > 0;
+      return { linked: [], note: 'Note: b is gone.\n' };
+    });
+
+    expect(killedBeforeRemove).toBe(true);
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(starts + 1));
+    expect(mockAdapter.lastConfig!.additionalDirectories ?? []).toEqual([]);
+    expect(session.linkNote).toBe('Note: b is gone.\n');
+
+    await sessionManager.destroySession('test-unlink-stopped');
+  });
+
+  it("keeps the links and starts the agent again when the worktree can't be removed", async () => {
+    const session = await started('test-unlink-fails');
+    const linked = [{ repoPath: '/code/b', path: '/wt/b1', branch: 'feat' }];
+    session.linked = linked;
+    const starts = mockAdapter.startCallCount;
+
+    await expect(sessionManager.unlinkStopped('test-unlink-fails', async () => { throw new Error('still in use'); })).rejects.toThrow('still in use');
+
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(starts + 1));
+    expect(session.linked).toBe(linked);
+    expect(session.linkNote ?? null).toBeNull();
+
+    await sessionManager.destroySession('test-unlink-fails');
+  });
+});
+
 describe('AgentSessionManager prompt suggestions', () => {
   // As the settings mock at the top of this file returns them.
   const baseSettings = () => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], workingDirectories: [], cavemanMode: 'off' });
@@ -5589,6 +5652,34 @@ describe('AgentSessionManager.switchAgent', () => {
     extraAdapters.other = other;
     return other;
   }
+
+  it("builds the linked projects' prompt again for the new agent, which may not load their CLAUDE.md itself", async () => {
+    const other = otherAgent();
+    Object.defineProperty(other, 'capabilities', { value: { ...other.capabilities, additionalDirectoryInstructions: false } });
+    Object.defineProperty(mockAdapter, 'capabilities', { value: { ...mockAdapter.capabilities, additionalDirectoryInstructions: true }, configurable: true });
+    const fsMod = await import('node:fs');
+    // linked-projects.ts reads the default export's.
+    const exists = vi.mocked(fsMod.default.existsSync).mockImplementation((p) => String(p).endsWith('CLAUDE.md'));
+    try {
+      await sessionManager.createSession({
+        id: 'sw-linked', branch: 'main', cwd: '/wt/sw-linked', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+        linked: [{ repoPath: '/code/b', path: '/wt/b1', branch: 'main' }],
+      });
+      await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+      const session = sessionManager.getSession('sw-linked')!;
+      // Claude-like: loads B's CLAUDE.md itself, so isn't told to read it.
+      expect(session.appendSystemPrompt).not.toContain('CLAUDE.md');
+
+      await sessionManager.switchAgent('sw-linked', 'other', { transcript: false });
+      await vi.waitFor(() => expect(other.control).not.toBeNull());
+
+      expect(session.appendSystemPrompt).toContain(`read ${path.join('/wt/b1', 'CLAUDE.md')}`);
+      await sessionManager.destroySession('sw-linked');
+    } finally {
+      exists.mockImplementation(() => false);
+      Object.defineProperty(mockAdapter, 'capabilities', { value: { ...mockAdapter.capabilities, additionalDirectoryInstructions: undefined }, configurable: true });
+    }
+  });
 
   it('hands the conversation to the new agent, which gets a short transcript with the next message only', async () => {
     const { worktreeManager } = await import('./worktree-manager.js');

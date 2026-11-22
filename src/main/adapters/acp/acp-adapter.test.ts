@@ -846,4 +846,14 @@ describe('AcpAdapter folders outside the project', () => {
     expect(warnings).toEqual(["Fake Agent didn't say it can use folders outside the project, so it may not be able to edit linked-b."]);
     expect((await rootsSeen('default', {})).warnings).toEqual([]);
   });
+
+  it("names a linked worktree by its project, and says it once, not on each restart", async () => {
+    const wt = path.join(os.tmpdir(), 'wt', 'a3f9c2e1', 's-thread');
+    const overrides = { additionalDirectories: [wt], folderNames: { [wt]: 'billing' } };
+    expect((await rootsSeen('default', overrides)).warnings).toEqual(["Fake Agent didn't say it can use folders outside the project, so it may not be able to edit billing."]);
+    expect((await rootsSeen('default', overrides)).warnings).toEqual([]);
+    // Another folder since: said again.
+    const more = { additionalDirectories: [wt, path.join(os.tmpdir(), 'shared')], folderNames: { [wt]: 'billing' } };
+    expect((await rootsSeen('default', more)).warnings).toEqual(["Fake Agent didn't say it can use folders outside the project, so it may not be able to edit billing, shared."]);
+  });
 });

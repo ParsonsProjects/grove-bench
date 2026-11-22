@@ -96,6 +96,9 @@ export interface ManagedSession {
   /** Said ahead of the next message, once: a project linked or unlinked
    *  since the last one (linkChangeNote). */
   linkNote?: string | null;
+  /** The linked projects changed while a turn ran (linked during it):
+   *  the agent restarts to take them once the turn ends. */
+  restartAfterTurn?: boolean;
   /** Fully custom system prompt — overrides the adapter's default entirely. */
   customSystemPrompt: string | null;
   /** If set, only these tools are allowed — everything else is auto-denied. */

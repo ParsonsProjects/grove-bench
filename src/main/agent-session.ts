@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { AgentSystemInfo, SessionInfo, SessionStatus, AgentEvent, ThreadUsage, UsageSummary, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls, ThreadTurnState, EventHistoryPage, LinkedCheckout } from '../shared/types.js';
@@ -612,6 +613,7 @@ class AgentSessionManager {
       cwd: session.worktreePath,
       additionalDirectories: folders.additionalDirectories,
       linkedWorktrees: session.linked.map((l) => l.path),
+      folderNames: Object.fromEntries(session.linked.map((l) => [path.resolve(l.path), path.basename(l.repoPath)])),
       // B's CLAUDE.md, as a linked project's instructions.
       additionalDirectoryInstructions: session.linked.length > 0,
       protectedEditRoots: folders.protectedEditRoots,
@@ -1096,6 +1098,7 @@ class AgentSessionManager {
       logged();
     }
     this.runHeldMcpReconnects(session);
+    this.runHeldRestart(session);
   }
 
   /** The context meter's size comes with each reply, so a turn that compacted
@@ -2107,37 +2110,92 @@ class AgentSessionManager {
   }
 
   /**
+   * The thread's linked projects changed part way through
+   * (docs/linked-projects-plan.md): the prompt is built again with them, the
+   * agent is told ahead of its next message (`note`), and a running agent
+   * is restarted on the same conversation, as no agent takes new folders
+   * mid-session (runQuery reads the folders at each start). One asleep, or
+   * not running, gets them when it next starts. The caller refuses a link
+   * mid-turn, but its setup takes a while: a turn that started meanwhile
+   * (a PR fix, a goal carrying on) runs to its end first.
+   */
+  async setLinked(id: string, linked: LinkedCheckout[], note: string): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session || session.destroying) return;
+    this.applyLinks(session, linked, note);
+    if (session.status === 'stopped' || session.status === 'error') return;
+    if (this.isMidTurn(id)) {
+      session.restartAfterTurn = true;
+      return;
+    }
+    await this.stopQuery(id);
+  }
+
+  /**
+   * Unlink a project from a running thread: the agent is stopped first,
+   * its process tree with it, so nothing it started (a dev server, a
+   * watcher) still has files open in the worktree, and Windows is given a
+   * moment to let them go. Then `remove` takes the worktree away and says
+   * what is left, and the agent starts again on the same conversation. A
+   * `remove` that throws leaves the links as they were: the agent starts
+   * again all the same, and the error is passed on. The caller refuses
+   * this mid-turn.
+   */
+  async unlinkStopped(id: string, remove: () => Promise<{ linked: LinkedCheckout[]; note: string }>): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session || session.destroying || session.status === 'stopped' || session.status === 'error') {
+      const { linked, note } = await remove();
+      if (session && !session.destroying) this.applyLinks(session, linked, note);
+      return;
+    }
+    let failure: unknown = null;
+    await this.stopQuery(id, async () => {
+      await new Promise((r) => setTimeout(r, this.handleReleaseMs));
+      try {
+        const { linked, note } = await remove();
+        this.applyLinks(session, linked, note);
+      } catch (e) {
+        failure = e;
+      }
+    }, { killTree: true });
+    if (failure) throw failure instanceof Error ? failure : new Error(String(failure));
+  }
+
+  /** Take the thread's linked projects as they are now: the prompt is built
+   *  again and `note` waits for the next message. */
+  private applyLinks(session: ManagedSession, linked: LinkedCheckout[], note: string): void {
+    session.linked = linked;
+    this.rebuildAppendPrompt(session);
+    session.linkNote = `${session.linkNote ?? ''}${note}`;
+  }
+
+  /** Grove's part of the system prompt, built again from what it is made of
+   *  now: the thread's linked projects (as its agent is told about them),
+   *  memory, follow-ups, caveman mode and the user's own addition. */
+  private rebuildAppendPrompt(session: ManagedSession): void {
+    session.appendSystemPrompt = appendedSystemPrompt({
+      cwd: session.worktreePath,
+      repoPath: session.repoPath,
+      userAppend: session.userAppendPrompt,
+      cavemanMode: settings.getSettings().cavemanMode,
+      linked: linkedProjectNotes(session.linked, session.adapter.capabilities.additionalDirectoryInstructions === true),
+    });
+  }
+
+  /** A restart that waited for the turn to end (restartAfterTurn). */
+  private runHeldRestart(session: ManagedSession): void {
+    if (!session.restartAfterTurn || this.isMidTurn(session.id) || session.destroying) return;
+    session.restartAfterTurn = false;
+    void this.stopQuery(session.id);
+  }
+
+  /**
    * Stop the current query but keep the session alive so the user can send
    * follow-up messages without losing state or remounting the UI: a new
    * query starts at once. `beforeRestart` runs in between, once the old
    * query is closed and aborted (its event loop drops anything it still
    * sends), and also for a sleeping session, whose wake starts the new one.
    */
-  /**
-   * The thread's linked projects changed part way through
-   * (docs/linked-projects-plan.md): the prompt is built again with them, the
-   * agent is told ahead of its next message (`note`), and a running agent
-   * is restarted on the same conversation, as no agent takes new folders
-   * mid-session (runQuery reads the folders at each start). One asleep, or
-   * not running, gets them when it next starts. The caller refuses this
-   * mid-turn: the restart would end the turn.
-   */
-  async setLinked(id: string, linked: LinkedCheckout[], note: string): Promise<void> {
-    const session = this.sessions.get(id);
-    if (!session || session.destroying) return;
-    session.linked = linked;
-    session.appendSystemPrompt = appendedSystemPrompt({
-      cwd: session.worktreePath,
-      repoPath: session.repoPath,
-      userAppend: session.userAppendPrompt,
-      cavemanMode: settings.getSettings().cavemanMode,
-      linked: linkedProjectNotes(linked, session.adapter.capabilities.additionalDirectoryInstructions === true),
-    });
-    session.linkNote = `${session.linkNote ?? ''}${note}`;
-    if (session.status === 'stopped' || session.status === 'error') return;
-    await this.stopQuery(id);
-  }
-
   async stopQuery(id: string, beforeRestart?: () => Promise<void>, opts: { killTree?: boolean } = {}): Promise<void> {
     const session = this.sessions.get(id);
     // Being deleted (still listed until it's gone): shutDown() stops it.
@@ -2650,6 +2708,8 @@ class AgentSessionManager {
       session.adapter = adapter;
       session.agentType = adapter.id;
       session.model = model;
+      // The linked projects are told about by what the new agent loads itself.
+      this.rebuildAppendPrompt(session);
       // A guess the old agent is still writing isn't wanted, and its
       // failures say nothing about the new one.
       this.promptSuggestions.forget(id);

@@ -12,7 +12,7 @@ import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPro
 import { decideAutoName } from './session-auto-name.js';
 import { cleanUserGoal, generateGoal, goalInputFromEvents, type GoalInput } from './session-goal.js';
 import { launchEditor } from './editor-launch.js';
-import { worktreeManager } from './worktree-manager.js';
+import { ThreadBranchMovedError, worktreeManager } from './worktree-manager.js';
 import { apiKeyState, checkCorePrerequisites, checkGh } from './prerequisites.js';
 import { canStoreApiKey, clearApiKey, parseApiKey, saveApiKey } from './credentials.js';
 import { adapterRegistry, registerClaudeAccount } from './adapters/index.js';
@@ -856,9 +856,22 @@ export function registerHandlers() {
       throw new Error(`This thread already works in ${path.basename(repoPath as string)}.`);
     }
     // The same checks as when a thread starts with it, on its branch now.
-    const [plan] = await planLinks(worktree.repoPath, [repoPath], worktree.branch);
+    // Renamed meanwhile (the name after the first reply): checked again on
+    // the new name, once.
+    let branch = worktree.branch;
+    let plan: Awaited<ReturnType<typeof planLinks>>[number] | undefined;
+    let link: LinkedCheckout | undefined;
+    for (let attempt = 0; !link; attempt++) {
+      [plan] = await planLinks(worktree.repoPath, [repoPath], branch);
+      if (!plan) throw new Error("A thread can't link its own project.");
+      try {
+        link = await worktreeManager.createLink(id, { repoPath: plan.repoPath, branchName: branch, baseBranch: plan.baseBranch, useExisting: plan.useExisting });
+      } catch (e) {
+        if (!(e instanceof ThreadBranchMovedError) || attempt > 0) throw e;
+        branch = e.branch;
+      }
+    }
     if (!plan) throw new Error("A thread can't link its own project.");
-    const link = await worktreeManager.createLink(id, { repoPath: plan.repoPath, branchName: worktree.branch, baseBranch: plan.baseBranch, useExisting: plan.useExisting });
     const project = path.basename(plan.repoPath);
     let warning = (await linkSubmodules(link.path, project, new AbortController().signal)) ?? undefined;
     try {
@@ -893,10 +906,15 @@ export function registerHandlers() {
   ipcMain.handle(IPC.SESSION_UNLINK_PROJECT, async (_event, sessionId: unknown, repoPath: unknown, deleteBranch: unknown) => {
     await linkableThread(sessionId, repoPath, 'Unlink');
     const id = sessionId as string;
-    const unlinked = await worktreeManager.unlinkProject(id, repoPath as string, deleteBranch === true);
-    const links = worktreeManager.getWorktree(id)?.linked ?? [];
-    await sessionManager.setLinked(id, links, linkChangeNote({ unlinked: { name: path.basename(unlinked.repoPath), path: unlinked.path } }));
-    logger.info(`Unlinked ${unlinked.repoPath} from thread ${id}`);
+    // With the agent stopped, so nothing it runs holds files there.
+    await sessionManager.unlinkStopped(id, async () => {
+      const unlinked = await worktreeManager.unlinkProject(id, repoPath as string, deleteBranch === true);
+      logger.info(`Unlinked ${unlinked.repoPath} from thread ${id}`);
+      return {
+        linked: worktreeManager.getWorktree(id)?.linked ?? [],
+        note: linkChangeNote({ unlinked: { name: path.basename(unlinked.repoPath), path: unlinked.path } }),
+      };
+    });
   });
 
   ipcMain.handle(IPC.SESSION_DESTROY, async (_event, id: string, deleteBranch: boolean = false) => {
@@ -1908,23 +1926,26 @@ export function registerHandlers() {
 
   // Polled to keep what's shown current: background work (background-work.ts).
   // Answered, not thrown: each thing that can't be read is null.
-  ipcMain.handle(IPC.GIT_LINKED_STATUS, (_event, sessionId: string, opts?: { pr?: unknown }) => inBackground(async (): Promise<LinkedProjectStatus[]> => {
+  ipcMain.handle(IPC.GIT_LINKED_STATUS, (_event, sessionId: string, opts?: { pr?: unknown; timeout?: unknown }) => inBackground(async (): Promise<LinkedProjectStatus[]> => {
     const links = worktreeManager.getWorktree(sessionId)?.linked ?? [];
     if (links.length === 0) return [];
     const withPr = opts?.pr === true;
+    // A check the user waits on (the delete dialogs) kills git after this.
+    const timeout = requestedTimeout(opts?.timeout);
+    const timed = timeout ? { timeout } : undefined;
     const selfLogin = withPr ? await ghLogin().catch(() => null) : null;
     return Promise.all(links.map(async (link): Promise<LinkedProjectStatus> => {
       const empty = { repoPath: link.repoPath, path: link.path, branch: null, uncommitted: null, sync: null, base: null, unmerged: null, pr: null };
       if (!(await pathExists(link.path))) return { ...empty, missing: true };
       const [branch, porcelain, sync, base] = await Promise.all([
-        currentBranch(link.path).catch(() => null),
+        currentBranch(link.path, timed).catch(() => null),
         // As the Changes tab reads it: every untracked file, and no lock
         // taken that would get in the agent's way.
-        statusGit(link.path).catch(() => null),
-        syncStatus(link.path).catch(() => null),
+        statusGit(link.path, timeout).catch(() => null),
+        syncStatus(link.path, timed).catch(() => null),
         getDefaultBranch(link.repoPath).catch(() => null),
       ]);
-      const unmerged = base ? await branchCommits(link.path, base).then((c) => c.length, () => null) : null;
+      const unmerged = base ? await branchCommits(link.path, base, timed).then((c) => c.length, () => null) : null;
       let pr: PrInfo | null = null;
       if (withPr && branch && branch !== base) {
         const prs = await prsForBranches(link.repoPath, [branch], selfLogin).catch(() => []);

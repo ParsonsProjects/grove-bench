@@ -22,7 +22,7 @@ const m = vi.hoisted(() => {
       'listMcpServers', 'getMcpContextCost', 'reconnectMcpServer', 'setMcpServerEnabled', 'authenticateMcpServer', 'reconnectDownMcpServers',
       'getSessionAdapter', 'getWorktreePath', 'analyzeSkillSuggestionsForRepo', 'respondToPermission',
       'respondToElicitation', 'rewindFiles', 'bringBackFiles', 'getCheckpointDiff', 'listCheckpoints', 'getDiffHistory',
-      'getCheckpointFiles', 'getCheckpointFileDiff', 'getCheckpointFileLines', 'threadUsage', 'getSystemInfo', 'setLinked',
+      'getCheckpointFiles', 'getCheckpointFileDiff', 'getCheckpointFileLines', 'threadUsage', 'getSystemInfo', 'setLinked', 'unlinkStopped',
     ),
     worktreeManager: fns(
       'validateRepo', 'cleanupOrphans', 'getWorktreeOrManifest', 'registerDirect', 'create', 'getRepoConfig',
@@ -53,7 +53,13 @@ const m = vi.hoisted(() => {
 
 vi.mock('execa', () => ({ execa: vi.fn() }));
 vi.mock('./agent-session.js', () => ({ sessionManager: m.sessionManager }));
-vi.mock('./worktree-manager.js', () => ({ worktreeManager: m.worktreeManager }));
+vi.mock('./worktree-manager.js', () => ({
+  worktreeManager: m.worktreeManager,
+  // As the real one: a link asked for on a branch name the thread no longer has.
+  ThreadBranchMovedError: class ThreadBranchMovedError extends Error {
+    constructor(readonly branch: string) { super(`The thread's branch is now ${branch}`); }
+  },
+}));
 vi.mock('./terminal.js', () => ({ terminalManager: m.terminalManager }));
 vi.mock('./preview.js', () => ({ previewManager: m.previewManager }));
 vi.mock('./adapters/index.js', () => ({ adapterRegistry: m.adapterRegistry, registerClaudeAccount: m.registerClaudeAccount }));
@@ -318,22 +324,37 @@ describe('SESSION_LINK_PROJECT and SESSION_UNLINK_PROJECT', () => {
     expect(m.sessionManager.setLinked).not.toHaveBeenCalled();
   });
 
-  it('unlinks a project, deleting its branch when asked, then tells and restarts the agent', async () => {
+  it('unlinks a project with the agent stopped, deleting its branch when asked, and tells the agent', async () => {
     m.worktreeManager.unlinkProject.mockResolvedValue({ repoPath: '/b', path: '/wt/b/s1', branch: 'feat' });
     m.worktreeManager.getWorktree.mockImplementation((id: string) => (id === 's1' ? wtInfo() : undefined));
+    let left: { linked: unknown[]; note: string } | undefined;
+    m.sessionManager.unlinkStopped.mockImplementation(async (_id: string, remove: () => Promise<{ linked: unknown[]; note: string }>) => { left = await remove(); });
 
     await invoke(IPC.SESSION_UNLINK_PROJECT, 's1', '/b', true);
 
+    expect(m.sessionManager.unlinkStopped).toHaveBeenCalledWith('s1', expect.any(Function));
     expect(m.worktreeManager.unlinkProject).toHaveBeenCalledWith('s1', '/b', true);
-    const [, links, note] = m.sessionManager.setLinked.mock.calls[0];
-    expect(links).toEqual([]);
-    expect(note).toContain('this thread no longer works in b. Its worktree at /wt/b/s1 was removed');
+    expect(left?.linked).toEqual([]);
+    expect(left?.note).toContain('this thread no longer works in b. Its worktree at /wt/b/s1 was removed');
   });
 
-  it('keeps the link, and the agent as it was, when the worktree cannot be removed', async () => {
-    m.worktreeManager.unlinkProject.mockRejectedValue(new Error('EBUSY'));
-    await expect(invoke(IPC.SESSION_UNLINK_PROJECT, 's1', '/b', false)).rejects.toThrow('EBUSY');
-    expect(m.sessionManager.setLinked).not.toHaveBeenCalled();
+  it("passes on why the worktree couldn't be removed", async () => {
+    m.worktreeManager.unlinkProject.mockRejectedValue(new Error('Files in the worktree of b are still in use'));
+    m.sessionManager.unlinkStopped.mockImplementation(async (_id: string, remove: () => Promise<unknown>) => { await remove(); });
+    await expect(invoke(IPC.SESSION_UNLINK_PROJECT, 's1', '/b', false)).rejects.toThrow('still in use');
+  });
+
+  it('links on the new branch name when the thread was renamed during the checks', async () => {
+    const { ThreadBranchMovedError } = await import('./worktree-manager.js');
+    m.worktreeManager.createLink
+      .mockRejectedValueOnce(new ThreadBranchMovedError('fix-login'))
+      .mockResolvedValueOnce({ repoPath: '/b', path: '/wt/b/s1', branch: 'fix-login' });
+
+    await invoke(IPC.SESSION_LINK_PROJECT, 's1', '/b');
+
+    expect(m.worktreeManager.createLink).toHaveBeenCalledTimes(2);
+    expect(m.worktreeManager.createLink).toHaveBeenLastCalledWith('s1', expect.objectContaining({ branchName: 'fix-login' }));
+    expect(m.sessionManager.setLinked).toHaveBeenCalled();
   });
 });
 
@@ -1828,6 +1849,22 @@ describe('git handlers', () => {
       expect(gh.prsForBranches).toHaveBeenCalledWith('/b', ['feat'], 'me');
       // Its folder is gone: said, nothing read.
       expect(c).toMatchObject({ repoPath: '/c', missing: true, branch: null, uncommitted: null });
+    });
+
+    it('kills git after the timeout a delete check asks for', async () => {
+      m.worktreeManager.getWorktree.mockImplementation((id: string) => (id === 's1' ? linkedInfo() : undefined));
+      vi.mocked(git.currentBranch).mockResolvedValue('feat');
+      vi.mocked(git.git).mockResolvedValue('');
+      vi.mocked(git.syncStatus).mockResolvedValue({ upstream: null, ahead: 0, behind: 0 });
+      vi.mocked(git.getDefaultBranch).mockResolvedValue('main');
+      vi.mocked(git.branchCommits).mockResolvedValue([]);
+
+      await invoke(IPC.GIT_LINKED_STATUS, 's1', { timeout: 15_000 });
+
+      expect(git.currentBranch).toHaveBeenCalledWith(wt, { timeout: 15_000 });
+      expect(git.syncStatus).toHaveBeenCalledWith(wt, { timeout: 15_000 });
+      expect(git.branchCommits).toHaveBeenCalledWith(wt, 'main', { timeout: 15_000 });
+      expect(vi.mocked(git.git).mock.calls.some(([args, cwd, o]) => args[0] === 'status' && cwd === wt && (o as { timeout?: number })?.timeout === 15_000)).toBe(true);
     });
 
     it("asks GitHub nothing unless asked, and reads what git can't as null", async () => {

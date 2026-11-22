@@ -193,6 +193,15 @@ function rootOf(wtPath: string): string {
   return path.dirname(path.dirname(wtPath));
 }
 
+/** createLink was asked for a branch name the thread no longer has: it
+ *  was renamed meanwhile. `branch` is the name it has now. */
+export class ThreadBranchMovedError extends Error {
+  constructor(readonly branch: string) {
+    super(`The thread's branch is now ${branch}`);
+    this.name = 'ThreadBranchMovedError';
+  }
+}
+
 export class WorktreeManager {
   private worktrees = new Map<string, WorktreeInfo>();
   /** What waits for a worktree to be registered (whenRegistered), by id. */
@@ -217,6 +226,7 @@ export class WorktreeManager {
   private manifestWrite: { done: Promise<void>; version: number } | null = null;
   /** Per-repo locks to serialize git worktree operations (e.g. concurrent removes). */
   private repoLocks = new Map<string, Promise<void>>();
+  private threadLocks = new Map<string, Promise<void>>();
 
   /** `worktreeFolder`: Settings > Git's worktree folder (empty: the app's
    *  data folder), read when a worktree is made and by the sweep. */
@@ -224,18 +234,30 @@ export class WorktreeManager {
 
   /** Serialize operations on the same repo to prevent concurrent git conflicts. */
   private async withRepoLock<T>(repoPath: string, fn: () => Promise<T>): Promise<T> {
-    const prev = this.repoLocks.get(repoPath) ?? Promise.resolve();
+    return this.withLock(this.repoLocks, repoPath, fn);
+  }
+
+  /** Thread `id`'s branch name and its linked worktrees change one at a
+   *  time: a link made while the branch is renamed would get the old name
+   *  (createLink, renameBranch). */
+  private async withThreadLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    return this.withLock(this.threadLocks, id, fn);
+  }
+
+  /** Run `fn` once every earlier call for `key` in `locks` is done. */
+  private async withLock<T>(locks: Map<string, Promise<void>>, key: string, fn: () => Promise<T>): Promise<T> {
+    const prev = locks.get(key) ?? Promise.resolve();
     let resolve!: () => void;
     const next = new Promise<void>((r) => { resolve = r; });
-    this.repoLocks.set(repoPath, next);
+    locks.set(key, next);
     await prev;
     try {
       return await fn();
     } finally {
       resolve();
       // Clean up lock entry when queue is drained
-      if (this.repoLocks.get(repoPath) === next) {
-        this.repoLocks.delete(repoPath);
+      if (locks.get(key) === next) {
+        locks.delete(key);
       }
     }
   }
@@ -316,6 +338,8 @@ export class WorktreeManager {
     if (folder && !worktreeFolderError(folder, process.platform === 'win32')) add(path.resolve(folder));
     for (const entry of Object.values(manifest)) {
       if (!entry.direct && entry.path) add(rootOf(entry.path));
+      // Linked worktrees may be in a folder the setting no longer names.
+      for (const link of entry.linked ?? []) add(rootOf(link.path));
     }
     return roots;
   }
@@ -510,9 +534,16 @@ export class WorktreeManager {
    * first.
    */
   async createLink(id: string, config: { repoPath: string; branchName: string; baseBranch?: string; useExisting?: boolean }): Promise<LinkedCheckout> {
+    return this.withThreadLock(id, () => this.createLinkLocked(id, config));
+  }
+
+  private async createLinkLocked(id: string, config: { repoPath: string; branchName: string; baseBranch?: string; useExisting?: boolean }): Promise<LinkedCheckout> {
     const { repoPath, branchName, baseBranch, useExisting } = config;
     const info = this.worktrees.get(id);
     if (!info) throw new Error(`Thread ${id} not found`);
+    // Renamed since the caller read it (the name after the first reply):
+    // the caller checks the new name and asks again.
+    if (!info.direct && info.branch !== branchName) throw new ThreadBranchMovedError(info.branch);
     if (samePath(info.repoPath, repoPath)) throw new Error("A thread can't link its own project.");
     if ((info.linked ?? []).some((l) => samePath(l.repoPath, repoPath))) {
       throw new Error(`This thread already works in ${path.basename(repoPath)}.`);
@@ -992,6 +1023,13 @@ export class WorktreeManager {
     });
   }
 
+  /** A linked worktree outside the data folder whose folder of worktrees
+   *  isn't there (a drive not connected): nothing can be said about it yet,
+   *  and git must keep its lock on it, so it is left as it is. */
+  private async linkOutOfReach(link: Readonly<LinkedCheckout>): Promise<boolean> {
+    return !isPathInside(this.getWorktreeRoot(), link.path) && !(await pathExists(rootOf(link.path)));
+  }
+
   /**
    * Remove thread `id`'s linked worktrees, each as remove() does the
    * thread's own: moved aside and deleted in the background, pruned from
@@ -1033,7 +1071,9 @@ export class WorktreeManager {
   async unlinkProject(id: string, repoPath: string, deleteBranch: boolean): Promise<LinkedCheckout> {
     const link = (await this.loadManifest())[id]?.linked?.find((l) => !l.pendingRemoval && samePath(l.repoPath, repoPath));
     if (!link) throw new Error(`This thread doesn't work in ${path.basename(repoPath)}.`);
-    await this.removeLink(id, link, deleteBranch);
+    if (!(await this.removeLink(id, link, deleteBranch, false))) {
+      throw new Error(`The worktree of ${path.basename(repoPath)} is in ${rootOf(link.path)}, which isn't there. Connect its drive and try again.`);
+    }
     await this.withManifest((manifest) => {
       const entry = manifest[id];
       if (!entry?.linked) return;
@@ -1052,9 +1092,15 @@ export class WorktreeManager {
 
   /** Remove one linked worktree (removeLinks). False when its folder or
    *  git's record of it is still there. */
-  private async removeLink(id: string, link: Readonly<ManifestLink>, deleteBranch: boolean): Promise<boolean> {
+  private async removeLink(id: string, link: Readonly<ManifestLink>, deleteBranch: boolean, inPlace = true): Promise<boolean> {
     return this.withRepoLock(link.repoPath, async () => {
       const there = await pathExists(link.path);
+      // Its drive isn't connected: pruning would drop git's lock on it, and
+      // its folder would come back with no record. It stays pending.
+      if (!there && await this.linkOutOfReach(link)) {
+        logger.info(`Linked worktree ${link.path} is on a drive that isn't connected; will retry`);
+        return false;
+      }
       // The branch it has now, which the delete dialog's "Also delete the
       // branch" means, else the one it was linked on.
       const current = (there ? await currentBranch(link.path).catch(() => null) : null) ?? link.branch;
@@ -1066,6 +1112,10 @@ export class WorktreeManager {
           void removeTree(moved)
             .then(() => removeIfEmpty(path.dirname(moved)))
             .catch((e: unknown) => logger.warn(`Could not delete ${moved} yet; the sweep will: ${String(e)}`));
+        } else if (!inPlace) {
+          // Deleting in place could stop part way and leave a worktree, still
+          // linked, with files missing. Left whole instead.
+          throw new Error(`Files in the worktree of ${path.basename(link.repoPath)} are still in use, so it wasn't removed. Close whatever has them open and try again.`);
         } else {
           try {
             await git(['worktree', 'remove', '--force', link.path], link.repoPath);
@@ -1305,6 +1355,10 @@ export class WorktreeManager {
   }
 
   async renameBranch(id: string, newName: string): Promise<string> {
+    return this.withThreadLock(id, () => this.renameBranchLocked(id, newName));
+  }
+
+  private async renameBranchLocked(id: string, newName: string): Promise<string> {
     const info = this.worktrees.get(id);
     if (!info) {
       // Fall back to manifest
@@ -1348,14 +1402,17 @@ export class WorktreeManager {
     await gitRenameBranch(info.path, oldName, newName);
     const renamed: LinkedCheckout[] = [];
     try {
+      // In the project folder: branches belong to the repository, so this
+      // renames the one the worktree has checked out too, and works when
+      // the worktree's folder is gone.
       for (const link of links) {
-        await gitRenameBranch(link.path, oldName, newName);
+        await gitRenameBranch(link.repoPath, oldName, newName);
         renamed.push(link);
       }
     } catch (e) {
       // Put back the ones done, so every project still has the old name.
       for (const done of [...renamed].reverse()) {
-        await gitRenameBranch(done.path, newName, oldName).catch((undo: unknown) => logger.warn(`Could not rename ${newName} back in ${done.path}: ${String(undo)}`));
+        await gitRenameBranch(done.repoPath, newName, oldName).catch((undo: unknown) => logger.warn(`Could not rename ${newName} back in ${done.repoPath}: ${String(undo)}`));
       }
       await gitRenameBranch(info.path, newName, oldName).catch((undo: unknown) => logger.warn(`Could not rename ${newName} back in ${info.path}: ${String(undo)}`));
       throw e;
@@ -1752,10 +1809,6 @@ export class WorktreeManager {
     return purged;
   }
 
-  /**
-   * Detect orphan worktrees in the manifest that are no longer valid.
-   * Called on startup to clean up after crashes.
-   */
   /** Put a linked worktree the sweep can't account for in the trash, kept
    *  a while as an orphaned thread's is, and let its project's git forget
    *  it. */
@@ -1792,7 +1845,11 @@ export class WorktreeManager {
         if (link.pendingRemoval) continue;
         const gitPaths = await gitPathsOf(link.repoPath);
         if (!gitPaths) continue;
-        if ((await pathExists(link.path)) && gitPaths.has(pathKey(link.path))) continue;
+        const there = await pathExists(link.path);
+        if (there && gitPaths.has(pathKey(link.path))) continue;
+        // On a drive that isn't connected: not gone, only away. As
+        // cleanupOrphans leaves a thread's own worktree there.
+        if (!there && await this.linkOutOfReach(link)) continue;
         logger.warn(`Found orphan linked worktree of ${id}: ${link.path}`);
         try {
           await this.trashLink(link);
@@ -1826,6 +1883,10 @@ export class WorktreeManager {
     }, (count) => count > 0);
   }
 
+  /**
+   * Detect orphan worktrees in the manifest that are no longer valid.
+   * Called on startup to clean up after crashes.
+   */
   async cleanupOrphans(repoPath: string): Promise<number> {
     // Get list of known worktrees from git
     let gitPaths: Set<string>;
@@ -1873,7 +1934,16 @@ export class WorktreeManager {
       if (!dirExists || !gitKnows) {
         logger.warn(`Found orphan worktree: ${id} (dir=${dirExists}, git=${gitKnows})`);
         // Its linked projects' worktrees go with it, to the trash too: they
-        // may hold work.
+        // may hold work. One on a drive that isn't connected keeps the
+        // entry for the next sweep, or git would lose its lock on it.
+        let away = false;
+        for (const link of entry.linked ?? []) {
+          if (!(await pathExists(link.path)) && await this.linkOutOfReach(link)) away = true;
+        }
+        if (away) {
+          logger.info(`Orphan ${id} has a linked worktree on a drive that isn't connected; will retry next sweep`);
+          continue;
+        }
         try {
           for (const link of entry.linked ?? []) await this.trashLink(link);
         } catch (e) {
