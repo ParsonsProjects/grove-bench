@@ -76,6 +76,13 @@ vi.mock('./skills.js', async (importOriginal) => ({ ...(await importOriginal<typ
 vi.mock('./background-tasks.js', () => ({ agentForProject: vi.fn(), recordedAgent: vi.fn(), backgroundModelFor: vi.fn() }));
 vi.mock('./editor-launch.js', () => ({ launchEditor: vi.fn() }));
 vi.mock('./deps-install.js', () => ({ detectPackageManager: vi.fn(), installDependencies: vi.fn() }));
+// hasSubmodules reads the worktree for real; reading git's config and the
+// setup itself are stand-ins.
+vi.mock('./worktree-submodules.js', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  initSubmodules: vi.fn(),
+  readSubmoduleConfig: vi.fn(),
+}));
 vi.mock('./commit-message.js', () => ({ generateCommitMessage: vi.fn() }));
 vi.mock('./notifications.js', () => ({ showOsNotification: vi.fn() }));
 vi.mock('./auto-updater.js', () => ({ applyUpdateSettings: vi.fn(), checkForUpdate: vi.fn(), downloadUpdate: vi.fn(), getUpdateState: vi.fn(), restartToUpdate: vi.fn() }));
@@ -117,6 +124,7 @@ import { generateBranchName } from './branch-name.js';
 import { generateGoal } from './session-goal.js';
 import { launchEditor } from './editor-launch.js';
 import { detectPackageManager, installDependencies } from './deps-install.js';
+import { initSubmodules, readSubmoduleConfig } from './worktree-submodules.js';
 import { logRendererError } from './crash-handling.js';
 import { applyAttentionBadge } from './attention-badge.js';
 import { recordedAgent } from './background-tasks.js';
@@ -462,6 +470,86 @@ describe('SESSION_CREATE', () => {
 
     expect(installDependencies).toHaveBeenCalledWith(withPkg, 'pnpm', setup.abort!.signal);
     expect(tabEvents(id)).toContainEqual({ type: 'error', message: 'pnpm install failed:\nERR_PNPM_FETCH_404' });
+  });
+
+  /** New worktrees made in a folder of their own, holding `files`. */
+  function worktreeWith(files: Record<string, string>): string {
+    const dir = fs.mkdtempSync(path.join(tmp, 'wt-'));
+    for (const [name, content] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), content);
+    m.worktreeManager.create.mockImplementation(async (c: { id: string; branchName: string }) => ({
+      id: c.id, path: dir, branch: c.branchName, repoPath: '/repo', createdAt: 0,
+    }));
+    return dir;
+  }
+
+  it('sets up the submodules of a project that has them, before copying files in and installing its dependencies', async () => {
+    m.settings.getSettings.mockReturnValue({ autoInstallDeps: true, submoduleSetup: 'all' });
+    m.worktreeManager.getRepoConfig.mockResolvedValue({ copyFiles: ['vendor/lib/.env'] });
+    const dir = worktreeWith({ '.gitmodules': '[submodule "lib"]\n', 'package.json': '{}' });
+    const order: string[] = [];
+    vi.mocked(readSubmoduleConfig).mockResolvedValue({ active: [], sshCommand: false });
+    vi.mocked(initSubmodules).mockImplementation(async () => { order.push('submodules'); });
+    m.worktreeManager.copyUntrackedFiles.mockImplementation(async () => { order.push('copy'); });
+    vi.mocked(installDependencies).mockImplementation(async () => { order.push('install'); });
+    vi.mocked(detectPackageManager).mockResolvedValue('npm');
+
+    const { id } = await create();
+    const setup = lastSetup();
+    await setup.promise;
+
+    expect(initSubmodules).toHaveBeenCalledWith(
+      dir,
+      ['-c', 'submodule.active=.', 'submodule', 'update', '--progress', '--recursive'],
+      expect.objectContaining({ GIT_TERMINAL_PROMPT: '0' }),
+      setup.abort!.signal,
+    );
+    expect(order).toEqual(['submodules', 'copy', 'install']);
+    expect(tabEvents(id).map((e) => (e as { message?: string }).message)).toContain('Setting up submodules…');
+  });
+
+  it("leaves submodules alone for a project without them, when turned off, and by default", async () => {
+    m.settings.getSettings.mockReturnValue({ autoInstallDeps: false, submoduleSetup: 'all' });
+    worktreeWith({});
+    await create();
+    await lastSetup().promise;
+
+    m.settings.getSettings.mockReturnValue({ autoInstallDeps: false, submoduleSetup: 'off' });
+    worktreeWith({ '.gitmodules': '[submodule "lib"]\n' });
+    await create();
+    await lastSetup().promise;
+
+    m.settings.getSettings.mockReturnValue({ autoInstallDeps: false });
+    worktreeWith({ '.gitmodules': '[submodule "lib"]\n' });
+    await create();
+    await lastSetup().promise;
+
+    expect(initSubmodules).not.toHaveBeenCalled();
+  });
+
+  it("checks out the top level only when set to, keeping to the project's submodule.active", async () => {
+    m.settings.getSettings.mockReturnValue({ autoInstallDeps: false, submoduleSetup: 'top' });
+    vi.mocked(readSubmoduleConfig).mockResolvedValue({ active: ['libs/a'], sshCommand: false });
+    const dir = worktreeWith({ '.gitmodules': '[submodule "lib"]\n' });
+    await create();
+    await lastSetup().promise;
+
+    expect(initSubmodules).toHaveBeenCalledWith(dir, ['-c', 'submodule.active=.', 'submodule', 'update', '--progress', '--', 'libs/a'], expect.anything(), expect.anything());
+  });
+
+  it('reports a failed submodule setup, with what to run, and still starts the agent', async () => {
+    m.settings.getSettings.mockReturnValue({ autoInstallDeps: false, submoduleSetup: 'all' });
+    vi.mocked(readSubmoduleConfig).mockResolvedValue({ active: [], sshCommand: false });
+    worktreeWith({ '.gitmodules': '[submodule "lib"]\n' });
+    vi.mocked(initSubmodules).mockRejectedValueOnce(new Error("fatal: repository 'https://example.com/lib.git/' not found"));
+
+    const { id } = await create();
+    await lastSetup().promise;
+
+    expect(tabEvents(id)).toContainEqual({
+      type: 'error',
+      message: "Not all of the project's submodules could be set up, so some of their folders may be empty in this thread:\nfatal: repository 'https://example.com/lib.git/' not found\n\nOnce that's sorted, run this in the Terminal tab:\ngit -c submodule.active=. submodule update --progress --recursive",
+    });
+    expect(m.sessionManager.createSession).toHaveBeenCalled();
   });
 
   it('reports a failed install and still starts the agent', async () => {
@@ -1421,7 +1509,7 @@ describe('git handlers', () => {
     );
     // Without the index lock, so a git command run in the terminal meanwhile
     // can't fail on it.
-    expect(git.git).toHaveBeenCalledWith(['status', '--porcelain=v1', '-z', '--untracked-files=all'], wt, { optionalLocks: false });
+    expect(git.git).toHaveBeenCalledWith(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=untracked'], wt, { optionalLocks: false });
   });
 
   it('GIT_STATUS branch scope lists a file in conflict once, as one, not as the change the diff from the base calls it', async () => {
@@ -1476,7 +1564,7 @@ describe('git handlers', () => {
 
     await invoke(IPC.GIT_STATUS, 's1', { timeout: 15_000 });
 
-    expect(git.git).toHaveBeenCalledWith(['status', '--porcelain=v1', '-z', '--untracked-files=all'], wt, { optionalLocks: false, timeout: 15_000 });
+    expect(git.git).toHaveBeenCalledWith(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=untracked'], wt, { optionalLocks: false, timeout: 15_000 });
     expect(git.git).toHaveBeenCalledWith(['diff', 'HEAD', '--numstat', '-z', '--', 'a.ts'], wt, { timeout: 15_000 });
     expect(git.hashWorkingFiles).toHaveBeenCalledWith(wt, ['a.ts'], { timeout: 15_000 });
     // It runs git with no time limit, and the delete checks don't read it.

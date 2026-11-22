@@ -55,6 +55,7 @@ import { perfSteps, logWindowTiming } from './perf-steps.js';
 import { recordTrace, lastTracePath } from './perf-trace.js';
 import { perfLogPath } from './perf-log.js';
 import { detectPackageManager, installDependencies, type PackageManager } from './deps-install.js';
+import { commandLine, hasSubmodules, initSubmodules, readSubmoduleConfig, submoduleArgs, submoduleEnv } from './worktree-submodules.js';
 import { applyAttentionBadge } from './attention-badge.js';
 import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
 import crypto from 'node:crypto';
@@ -160,8 +161,11 @@ function sanitizeWorktreeRelPath(worktreePath: string, filePath: string): { relP
  *  git's optional locks, as git-status's "Background refresh" advises: else
  *  it rewrites the index as it reads, and that lock can make a git command
  *  typed in the terminal meanwhile fail ("index.lock exists"). The diffs
- *  after it still can, once, after files change: diff ignores the setting. */
-const statusGit = (cwd: string, timeout?: number) => git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd, { optionalLocks: false, timeout });
+ *  after it still can, once, after files change: diff ignores the setting.
+ *  --ignore-submodules=untracked: a checked-out submodule still shows as
+ *  changed when a file git tracks in it is, but git doesn't walk each
+ *  submodule's folders for new files on every refresh. */
+const statusGit = (cwd: string, timeout?: number) => git(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=untracked'], cwd, { optionalLocks: false, timeout });
 
 /** A git timeout the window asked for, in ms: a positive number, or none. */
 function requestedTimeout(ms: unknown): number | undefined {
@@ -490,6 +494,32 @@ export function registerHandlers() {
         });
         perfSteps.step(id, 'worktree');
         signal.throwIfAborted();
+
+        // Submodules: git worktree add leaves them as empty folders
+        // (worktree-submodules.ts). Before the files are copied, as a copied
+        // file inside one would leave its folder not empty, and git won't
+        // clone into that; and before the install, which may need them.
+        const submodules = settings.getSettings().submoduleSetup ?? 'off';
+        if (submodules !== 'off' && await hasSubmodules(worktree.path)) {
+          emitPrelaunch({ type: 'status', message: 'Setting up submodules…' });
+          const config = await readSubmoduleConfig(worktree.path);
+          const args = submoduleArgs(submodules, config.active);
+          try {
+            await initSubmodules(worktree.path, args, submoduleEnv(process.env, config), signal);
+            perfSteps.step(id, 'submodules');
+            logger.info(`Submodules set up in worktree ${worktree.id} (${submodules})`);
+          } catch (e) {
+            if (signal.aborted) throw e;
+            perfSteps.step(id, 'submodules (failed)');
+            logger.warn(`Submodule setup failed for worktree ${worktree.id}:`, e);
+            const detail = (e as Error | null)?.message || String(e);
+            emitPrelaunch({
+              type: 'error',
+              message: `Not all of the project's submodules could be set up, so some of their folders may be empty in this thread:\n${detail}\n\nOnce that's sorted, run this in the Terminal tab:\n${commandLine(args)}`,
+            });
+          }
+          signal.throwIfAborted();
+        }
 
         // Auto-copy untracked files (.env, etc.)
         try {

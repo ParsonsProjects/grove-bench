@@ -23,6 +23,7 @@ src/
     background-work.ts # Marks the app's own polling (git status, PR status) so its git never runs in the main process
     process-host*.ts   # Utility processes git, gh and the agents' programs (claude, ACP agents) launch from, so launches can't freeze the window (3rd Vite entry)
     worktree-manager.ts
+    worktree-submodules.ts # Checks out a new worktree's submodules, which git worktree add leaves empty
     agent-session.ts   # Session lifecycle management
     session-*.ts       # Session types, event log + history, permission prompts, limits, skills, agent config, streamed text merged before IPC
     usage-ledger.ts    # Every turn's cost, tokens, time and models across threads (usage-ledger.jsonl), for the Usage dialog
