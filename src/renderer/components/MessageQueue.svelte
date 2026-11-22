@@ -15,6 +15,9 @@
 
   let queue = $derived(messageStore.getQueue(sessionId));
   let paused = $derived(messageStore.isQueuePaused(sessionId));
+  // A turn Grove Bench cut off waits above (CutOffBlock): Continue sends
+  // the queue after it.
+  let cutOff = $derived(messageStore.openCutOff(sessionId) !== null);
   let isRunning = $derived(messageStore.getIsRunning(sessionId));
   let edit = $derived(messageStore.getQueuedEdit(sessionId));
   let undo = $derived(messageStore.getQueueUndo(sessionId));
@@ -65,6 +68,9 @@
           {/if}
         </span>
         <span class="flex-1"></span>
+        {#if cutOff && paused && queue.length > 0}
+          <span class="text-caption">Goes after the cut-off turn is continued</span>
+        {/if}
         <div class="flex items-center gap-1">
           {#if paused}
             <Button
@@ -137,6 +143,8 @@
             {/if}
             {#if item.notRead}
               <Badge tone="muted" title="The agent stopped before it read this message">not read</Badge>
+            {:else if item.continued}
+              <Badge tone="muted" title="Continue on the cut-off turn: it goes once the agent is ready">continue</Badge>
             {/if}
             {#if editing}
               <span class="text-primary shrink-0">editing</span>

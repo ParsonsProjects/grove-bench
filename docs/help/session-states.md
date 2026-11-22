@@ -14,7 +14,7 @@ With **Show grove characters** on, a small pixel agent shows the state instead, 
 
 | Color | Animation | State | Description |
 |-------|-----------|-------|-------------|
-| 🟠 Amber | Pulsing | **Waiting for you** | The agent is waiting for you to approve an action, answer a question, or say whether to go on past a limit |
+| 🟠 Amber | Pulsing | **Waiting for you** | The agent is waiting for you to approve an action, answer a question, or say whether to go on past a limit. Also a thread whose turn was cut off when Grove Bench closed: the line under its name says **Cut off when Grove Bench closed** (see [Turns cut off](thread-tab.md#turns-cut-off)) |
 | 🔵 Blue | Pulsing | **Working** | The agent is processing, reading files, or generating a response, or a background agent it started is still running. The row says which: **Background agent:** and its task. A background command such as a dev server doesn't count: it gets a badge of its own (see Background Commands below) |
 | 🔵 Blue | Pulsing | **Starting** | Thread is initializing |
 | 🔵 Blue | Pulsing | **Installing** | Dependencies are being installed |

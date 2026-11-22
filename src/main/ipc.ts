@@ -6,6 +6,7 @@ import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, Br
 import { sessionManager } from './agent-session.js';
 import { todaySpend } from './session-limits.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
+import { openCutOff } from '../shared/cut-off.js';
 import { decideAutoName } from './session-auto-name.js';
 import { cleanUserGoal, generateGoal, goalInputFromEvents, type GoalInput } from './session-goal.js';
 import { launchEditor } from './editor-launch.js';
@@ -1091,7 +1092,9 @@ export function registerHandlers() {
     content: string,
     images?: import('../shared/types.js').ImageAttachment[],
     files?: import('../shared/types.js').FileAttachment[],
+    opts?: unknown,
   ) => {
+    const continued = typeof opts === 'object' && opts !== null && (opts as { continued?: unknown }).continued === true;
     // Tell the user the prompt was not delivered, then unlock the renderer
     // so it doesn't stay stuck in "Writing message".
     const notDelivered = (message: string) => {
@@ -1100,7 +1103,7 @@ export function registerHandlers() {
       event.sender.send(channel, { type: 'error', message });
       event.sender.send(channel, { type: 'process_exit' });
     };
-    sessionManager.sendMessage(sessionId, content, images, files).then(
+    sessionManager.sendMessage(sessionId, content, images, files, { continued }).then(
       (ok) => {
         if (ok === 'nothing-to-send') notDelivered('Message not sent: its attachments were left out and nothing was typed.');
         // Session is dead or never connected
@@ -1420,6 +1423,10 @@ export function registerHandlers() {
     }
   });
 
+  ipcMain.handle(IPC.SESSION_DISMISS_CUT_OFF, (_event, sessionId: unknown) => (
+    typeof sessionId === 'string' ? sessionManager.dismissCutOff(sessionId) : false
+  ));
+
   ipcMain.handle(IPC.SESSION_PREVIEWS, async (_event, sessionIds: string[]) => {
     const previews: Record<string, import('../shared/types.js').SessionPreview> = {};
     // A stopped conversation's preview parses its whole event log, and the
@@ -1428,7 +1435,11 @@ export function registerHandlers() {
     let sliceStart = performance.now();
     for (const id of sessionIds ?? []) {
       try {
-        previews[id] = extractSessionPreview(prelaunchPrefixedEvents(id));
+        const events = prelaunchPrefixedEvents(id);
+        const preview = extractSessionPreview(events);
+        // With no agent running, a turn left unfinished was cut off too.
+        const cutOff = openCutOff(events, !sessionManager.isLive(id));
+        previews[id] = cutOff ? { ...preview, cutOff: { reason: cutOff.reason, ...(cutOff.at !== undefined ? { at: cutOff.at } : {}) } } : preview;
       } catch (e) {
         logger.warn(`[session-previews] preview failed for ${id}:`, e);
       }

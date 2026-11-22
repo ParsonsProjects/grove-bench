@@ -18,6 +18,7 @@
     attachments,
     sentAt,
     steer = false,
+    continued = false,
     onRewind,
   }: {
     sessionId: string;
@@ -33,6 +34,8 @@
     sentAt?: number;
     /** Steered into a running turn, and shown where the agent read it. */
     steer?: boolean;
+    /** Sent by Continue on a turn that was cut off (cut-off.ts). */
+    continued?: boolean;
     /** When set, a "Rewind to here" action is shown on hover. Only messages
      *  with a checkpoint (a uuid) get one. */
     onRewind?: () => void;
@@ -99,6 +102,10 @@
   {#if steer}
     <span class="ml-2 shrink-0 leading-[1.6] select-none">
       <Badge tone="muted" title="Sent while the agent was working. It read this here, after a tool call.">steer</Badge>
+    </span>
+  {:else if continued}
+    <span class="ml-2 shrink-0 leading-[1.6] select-none">
+      <Badge tone="muted" title="Sent by Continue, after Grove Bench closed during the turn above">continue</Badge>
     </span>
   {/if}
   {#if sentAt !== undefined}

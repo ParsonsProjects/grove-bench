@@ -76,6 +76,7 @@ src/
   shared/
     types.ts           # Shared types between main/renderer
     brand.ts           # Brand palette, status colours, fonts (app, landing, window)
+    cut-off.ts         # Turns cut off when Grove Bench stopped: finding them in a history, the Continue prompt, the notice's words
 docs/                  # Design docs, user stories, ui-kit.md, brand/ (logo files)
 BRAND.md               # Brand: logo, palette, type, voice
 DESIGN.md              # Architecture & design document

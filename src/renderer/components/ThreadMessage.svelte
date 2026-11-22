@@ -9,6 +9,7 @@
   import QuestionBlock from './QuestionBlock.svelte';
   import ElicitationBlock from './ElicitationBlock.svelte';
   import FilesKeptBlock from './FilesKeptBlock.svelte';
+  import CutOffBlock from './CutOffBlock.svelte';
   import LimitBlock from './LimitBlock.svelte';
   import ThinkingBlock from './ThinkingBlock.svelte';
   import SystemBlock from './SystemBlock.svelte';
@@ -32,6 +33,7 @@
     attachments={msg.attachments}
     sentAt={msg.sentAt}
     steer={msg.steer}
+    continued={msg.continued}
     onRewind={msg.uuid && !msg.steer ? () => messageStore.openRewindDialog(sessionId, msg.uuid) : undefined}
   />
 
@@ -127,6 +129,9 @@
 
 {:else if msg.kind === 'files_kept'}
   <FilesKeptBlock {sessionId} reason={msg.reason} copy={msg.copy} />
+
+{:else if msg.kind === 'cut_off'}
+  <CutOffBlock {sessionId} message={msg} />
 
 {:else if msg.kind === 'files_made'}
   <FilesMadeBlock {sessionId} files={msg.files} more={msg.more} />

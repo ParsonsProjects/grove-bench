@@ -16,6 +16,13 @@ describe('sessionSubtitle', () => {
     expect(s).toEqual({ text: 'Wants to run a command', tone: 'waiting' });
   });
 
+  it('says a turn was cut off, below a pending prompt and not while it runs again', () => {
+    const base = { activity: IDLE, pendingTool: null, lastText: 'previous answer', firstPrompt: null, cutOff: true };
+    expect(sessionSubtitle({ ...base, isRunning: false })).toEqual({ text: 'Cut off when Grove Bench closed', tone: 'waiting' });
+    expect(sessionSubtitle({ ...base, isRunning: true })?.tone).toBe('working');
+    expect(sessionSubtitle({ ...base, isRunning: false, pendingTool: 'question' })?.text).toBe('Waiting for your answer');
+  });
+
   it('phrases a pending question as waiting for an answer', () => {
     const s = sessionSubtitle({ isRunning: true, activity: IDLE, pendingTool: 'question', lastText: null, firstPrompt: null });
     expect(s).toEqual({ text: 'Waiting for your answer', tone: 'waiting' });

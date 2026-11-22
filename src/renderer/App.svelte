@@ -23,6 +23,8 @@
   import DraftUndoToast from './components/DraftUndoToast.svelte';
   import MemoryToast from './components/MemoryToast.svelte';
   import CleanupToast from './components/CleanupToast.svelte';
+  import CutOffToast from './components/CutOffToast.svelte';
+  import { sessionPreviewStore } from './stores/sessionPreviews.svelte.js';
   import PlanUsageToast from './components/PlanUsageToast.svelte';
   import { memoryStore } from './stores/memory.svelte.js';
   import { prerequisitesStore } from './stores/prerequisites.svelte.js';
@@ -39,6 +41,7 @@
   import { todoStore } from './stores/todo.svelte.js';
   import { followUpsStore } from './stores/followUps.svelte.js';
   import { schedulesStore } from './stores/schedules.svelte.js';
+  import { threadCutOff } from './lib/cut-off.js';
   import { skillsPanelStore } from './stores/skillsPanel.svelte.js';
   import { agentMonitorStore } from './stores/agentMonitor.svelte.js';
   import { goalStore } from './stores/goals.svelte.js';
@@ -173,9 +176,44 @@
     restored = true;
     window.groveBench.notifyRestoreComplete();
 
+    void findCutOffs();
+
     // Bring stopped conversations' names up to date too (provider titles,
     // and names from the older heuristic). One at a time, in the background.
     void refreshAutoNames(store.sessions.map((s) => s.id));
+  }
+
+  // ─── Turns cut off when Grove Bench last stopped (shared/cut-off.ts) ───
+
+  /** The threads found cut off at launch, for CutOffToast. Null until looked. */
+  let launchCutOffs = $state<string[] | null>(null);
+  let cutOffToastClosed = $state(false);
+
+  /** Read every stopped thread's preview (the sidebar shows them anyway),
+   *  which says whether its last turn was cut off. */
+  async function findCutOffs() {
+    await sessionPreviewStore.ensure(store.sessions.filter((s) => s.status === 'stopped').map((s) => s.id));
+    launchCutOffs = store.sessions.filter((s) => threadCutOff(s.id) !== null).map((s) => s.id);
+  }
+
+  /** The ones still unanswered. Not shown for just the thread that's open:
+   *  its own notice is in view. */
+  let cutOffToastThreads = $derived.by(() => {
+    if (!launchCutOffs || cutOffToastClosed) return [];
+    const threads = store.sessions.flatMap((s) => {
+      if (!launchCutOffs?.includes(s.id)) return [];
+      const cutOff = threadCutOff(s.id);
+      return cutOff ? [{ id: s.id, name: s.displayName || s.branch, cutOff }] : [];
+    });
+    return threads.length === 1 && threads[0].id === store.activeSessionId ? [] : threads;
+  });
+
+  function continueAllCutOffs() {
+    for (const { id } of cutOffToastThreads) {
+      // Goes once its agent is up: started here for a thread that isn't open.
+      messageStore.continueCutOff(id);
+      resumeStoppedSession(store.sessions.find((s) => s.id === id));
+    }
   }
 
   // Detect a completed turn: running, then idle for a moment, so a turn that
@@ -258,7 +296,8 @@
     const enabled = settingsStore.current.notifyTaskbarBadge;
     const attention = attentionCount(
       store.sessions,
-      (s) => messageStore.needsInput(s.id),
+      // A turn cut off when Grove Bench stopped waits on the user too.
+      (s) => messageStore.needsInput(s.id) || threadCutOff(s.id) !== null,
       (s) => store.isUnread(s),
     );
     const count = enabled ? attention : 0;
@@ -736,6 +775,12 @@
   <PlanUsageToast />
   <MemoryToast />
   <CleanupToast />
+  <CutOffToast
+    threads={cutOffToastThreads}
+    onContinueAll={continueAllCutOffs}
+    onShow={() => { const first = cutOffToastThreads[0]; if (first) store.activeSessionId = first.id; }}
+    onClose={() => { cutOffToastClosed = true; }}
+  />
 </div>
 
 <SpellcheckMenu />

@@ -152,6 +152,7 @@ const mockGroveBench = {
   openInEditor: vi.fn(() => Promise.resolve()),
   getFileLines: vi.fn((_sessionId: string, _filePath: string, _staged?: boolean) => Promise.resolve(null as import('../../shared/types.js').FileLinesResult)),
   sendMessage: vi.fn(),
+  dismissCutOff: vi.fn(async (_sessionId: string) => true),
   steerMessage: vi.fn(async (_sessionId: string, _content: string, _uuid: string): Promise<'steered' | 'not-running' | 'unsupported'> => 'steered'),
   openAttachedFile: vi.fn(() => Promise.resolve(true)),
   readAttachedFile: vi.fn((): Promise<string | null> => Promise.resolve(null)),
