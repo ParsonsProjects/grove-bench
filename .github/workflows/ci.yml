@@ -77,6 +77,10 @@ jobs:
           # The merge commit and its first parent (the base), to see what
           # the pull request changes.
           fetch-depth: 2
+          # ESLint plugins and knip run here, so the token isn't left in
+          # .git/config. The base-branch fetch below works without it while
+          # the repository is public.
+          persist-credentials: false
 
       - name: Anything to check?
         # Before setup-node: the runner's own Node runs it.

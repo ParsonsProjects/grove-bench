@@ -5,7 +5,7 @@ Thanks for your interest in contributing to Grove Bench! Please read this guide 
 ## Getting Started
 
 1. Fork the repository
-2. Clone your fork and install dependencies:
+2. Clone your fork and install dependencies (needs Node.js 22.12.0 or later and npm 11.19.0 or later; see the README):
    ```bash
    git clone https://github.com/<your-username>/grove-bench.git
    cd grove-bench

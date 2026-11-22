@@ -18,6 +18,7 @@ import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, worktreeBranches, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, isTracked, patchResult, patchOverLimit, MAX_TEXT_FILE_BYTES, resolveMergeBase, blobLines, hashWorkingFiles, listProjectFiles, revertFile, gitOperation, continueGitOperation, abortGitOperation, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, textLines, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, MissingBaseError, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
 import { inspectProjectFolder, projectKind } from './project-path.js';
+import { projectPickerStart } from './folder-picker.js';
 import { prsForBranches, prCreate, prReviewComments, prJobLog, prRerunFailed, ghLogin, isNetworkError, isRateLimitError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE, GH_RATE_LIMITED_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
@@ -248,19 +249,6 @@ async function openInEditor(file: string, line: unknown): Promise<boolean> {
   return (await shell.openPath(file)) === '';
 }
 
-/** Where "Select a project folder" opens: the folder holding the project
- *  added last, else the home folder. Since Electron 43 the picker opens in
- *  Downloads when it's given no defaultPath, and Windows no longer reopens
- *  the last folder used. */
-async function projectPickerStart(): Promise<string> {
-  const last = lastAddedProject();
-  if (last) {
-    const parent = path.dirname(last);
-    if (await fs.stat(parent).then((s) => s.isDirectory(), () => false)) return parent;
-  }
-  return app.getPath('home');
-}
-
 export function registerHandlers() {
   // ─── Repo ───
 
@@ -271,7 +259,7 @@ export function registerHandlers() {
     const result = await dialog.showOpenDialog(win, {
       properties: ['openDirectory'],
       title: 'Select a project folder',
-      defaultPath: await projectPickerStart(),
+      defaultPath: await projectPickerStart(lastAddedProject(), app.getPath('home')),
     });
 
     if (result.canceled || result.filePaths.length === 0) return null;

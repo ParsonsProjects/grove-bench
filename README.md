@@ -37,7 +37,7 @@ The in-app help (the **?** in the title bar) covers each step in detail.
 
 ## Building from Source
 
-Needs npm 11.19.0 or later (`npm install -g npm@11`). The repo's `.npmrc` only installs package versions that have been public for at least 7 days, only lets the dependencies listed under `allowScripts` in `package.json` run install scripts, and only installs from the npm registry. Older npm would skip those checks, so it refuses to install instead. If an install stops because a new package has an install script, `.npmrc` says how to approve or deny it.
+Needs Node.js 22.12.0 or later (Electron 45 and its download helpers require it) and npm 11.19.0 or later (`npm install -g npm@11`). The repo's `.npmrc` only installs package versions that have been public for at least 7 days, only lets the dependencies listed under `allowScripts` in `package.json` run install scripts, and only installs from the npm registry. Older npm would skip those checks, so it refuses to install instead. If an install stops because a new package has an install script, `.npmrc` says how to approve or deny it.
 
 ```bash
 # Install dependencies

@@ -10,6 +10,7 @@
   },
   "main": "dist/main/index.js",
   "engines": {
+    "node": ">=22.12.0",
     "npm": ">=11.19.0"
   },
   "allowScripts": {

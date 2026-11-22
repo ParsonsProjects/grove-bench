@@ -166,9 +166,11 @@ Go straight from 33 to 44. 34 to 43 are all out of support, so stopping at any o
   - Click, type, and trigger an alert.
   - Check that `preview_logs` shows console messages at the right level.
   - Check that a `file://` outside the worktree is blocked, and so is a download.
+  - Check that the agent's local page can't make signed-in requests to a site you're signed in to in your page: its requests off this machine, and a service worker's, go without `Cookie`, and their `Set-Cookie` is dropped. `DESIGN.md` says this was checked with Electron 33.
 - **Attachments:**
   - Paste an image into the prompt and check that it still shows after a restart (`grove-attachment://image`).
   - Check that an image the agent made in the worktree shows (`grove-attachment://worktree`).
+  - Attach a file with the paperclip twice, and check where its file picker opens the second time. Electron 43 made `dialog.*` start in Downloads without a `defaultPath`; its doc doesn't say whether `<input type="file">` changed too.
 - **Credentials:**
   - Check that a key saved under 33 still works after the upgrade.
   - Save a new key, then clear it.

@@ -743,8 +743,9 @@ export function rememberProject(repoPath: string): void {
   }, 0);
 }
 
-/** The project added most recently, or null: the folder picker opens next
- *  to it. */
+/** The last project in the list, or null: the folder picker opens next to
+ *  it. Usually the one added most recently, but listProjects also appends
+ *  projects only the worktree manifest knows. */
 export function lastAddedProject(): string | null {
   return pick((state) => state.projects)?.at(-1) ?? null;
 }
