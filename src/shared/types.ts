@@ -1902,6 +1902,9 @@ export interface GroveBenchAPI {
   // Settings
   getSettings(): Promise<GroveBenchSettings>;
   saveSettings(settings: GroveBenchSettings): Promise<void>;
+  /** Settings main changed itself, such as closeWindow from the first-close
+   *  offer. Returns an unsubscribe. */
+  onSettingsChanged(callback: (patch: Partial<GroveBenchSettings>) => void): () => void;
 
   // App state persistence
   getOpenTabs(): Promise<string[]>;
@@ -2104,6 +2107,10 @@ export interface ClaudeAccountSetting {
   configDir: string;
 }
 
+/** What closing the window does (settings.closeWindow). */
+export type CloseWindowAction = 'quit' | 'tray';
+export const CLOSE_WINDOW_ACTIONS: readonly CloseWindowAction[] = ['quit', 'tray'];
+
 /** How a new worktree's submodules are checked out (settings.submoduleSetup). */
 export type SubmoduleSetup = 'all' | 'top' | 'off';
 export const SUBMODULE_SETUPS: readonly SubmoduleSetup[] = ['all', 'top', 'off'];
@@ -2247,6 +2254,9 @@ export interface GroveBenchSettings {
    *  and Alt+Enter queues it; false (the default) the other way round.
    *  Agents that can't steer always queue. */
   steerOnEnter: boolean;
+  /** What closing the window does: quit (the default), or hide it and keep
+   *  running in the tray, threads still working (close-to-tray.ts). */
+  closeWindow: CloseWindowAction;
 
   // Notifications (OS-level; shown only while the window is unfocused)
   /** Notify when an agent finishes a turn. Default true. */
@@ -2710,6 +2720,8 @@ export const IPC = {
   WIN_CLOSE: 'win:close',
   WIN_IS_MAXIMIZED: 'win:isMaximized',
   SETTINGS_GET: 'settings:get',
+  /** Main changed a setting itself (the first-close offer): the patch. */
+  SETTINGS_CHANGED: 'settings:changed',
   SETTINGS_SAVE: 'settings:save',
   APP_STATE_GET_OPEN_TABS: 'appState:getOpenTabs',
   APP_STATE_SET_OPEN_TABS: 'appState:setOpenTabs',

@@ -101,6 +101,19 @@ export const Notification = Object.assign(
   { isSupported: vi.fn(() => true) },
 );
 
+// A tray icon (close-to-tray.ts): `emit` stands in for a click on it.
+export const Tray = vi.fn(function (this: Record<string, unknown>, image: unknown) {
+  const handlers = new Map<string, () => void>();
+  let destroyed = false;
+  this.image = image;
+  this.setToolTip = vi.fn();
+  this.on = vi.fn((event: string, handler: () => void) => { handlers.set(event, handler); });
+  this.emit = (event: string) => handlers.get(event)?.();
+  this.popUpContextMenu = vi.fn();
+  this.destroy = vi.fn(() => { destroyed = true; });
+  this.isDestroyed = vi.fn(() => destroyed);
+});
+
 export const contentTracing = {
   startRecording: vi.fn(),
   stopRecording: vi.fn(),
@@ -120,6 +133,7 @@ export default {
   nativeTheme,
   contextBridge,
   Notification,
+  Tray,
   contentTracing,
 };
 

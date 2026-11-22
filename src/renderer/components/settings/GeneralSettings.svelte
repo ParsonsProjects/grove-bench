@@ -198,6 +198,20 @@
       <Segmented.Item value="steer">Steers it into this turn</Segmented.Item>
     </Segmented.Root>
   </SettingRow>
+  <SettingRow
+    setting="close-window"
+    label="When you close the window"
+    description="Keep running in the tray: threads keep working with the window closed. Open Grove Bench again from its tray icon, or quit from the icon's menu. Quit stops every thread, and they reopen next time you start it."
+  >
+    <Segmented.Root
+      bind:value={() => draft.closeWindow ?? 'quit', (v) => { settingsStore.draft.closeWindow = v === 'tray' ? 'tray' : 'quit'; }}
+      class="self-start"
+      aria-label="When you close the window"
+    >
+      <Segmented.Item value="quit">Quit Grove Bench</Segmented.Item>
+      <Segmented.Item value="tray">Keep running in the tray</Segmented.Item>
+    </Segmented.Root>
+  </SettingRow>
 </SettingsGroup>
 
 <SettingsGroup title="Updates">

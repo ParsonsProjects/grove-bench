@@ -4,7 +4,8 @@ import { registerHandlers, appEvents } from './ipc.js';
 import { sessionManager } from './agent-session.js';
 import { worktreeManager } from './worktree-manager.js';
 import { keepOnScreen, loadWindowState, trackWindowState } from './window-state.js';
-import { flushPendingSaves } from './app-state.js';
+import { flushPendingSaves, loadTrayIntroduced, saveTrayIntroduced } from './app-state.js';
+import { closeToTray } from './close-to-tray.js';
 import * as settings from './settings.js';
 import { catalogs } from './catalogs.js';
 import { logger } from './logger.js';
@@ -78,6 +79,13 @@ let isQuitting = false;
 // Electron's crash dialog take every agent session down with it.
 installProcessErrorHandlers({ getWindow: () => mainWindow });
 
+/** The app's .ico, for the window and the tray. */
+function appIcon(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.ico')
+    : path.join(__dirname, '..', '..', 'src', 'main', 'icon.ico');
+}
+
 function createWindow() {
   const state = keepOnScreen(loadWindowState(), screen.getAllDisplays().map((d) => d.workArea));
 
@@ -89,9 +97,7 @@ function createWindow() {
     minWidth: 800,
     minHeight: 600,
     frame: false,
-    icon: app.isPackaged
-      ? path.join(process.resourcesPath, 'icon.ico')
-      : path.join(__dirname, '..', '..', 'src', 'main', 'icon.ico'),
+    icon: appIcon(),
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
       contextIsolation: true,
@@ -141,6 +147,12 @@ function createWindow() {
 
   initAutoUpdater(mainWindow, { shutdown });
 
+  // Close to tray (close-to-tray.ts): hides the window instead of closing
+  // it when the setting says so, or first offers that.
+  mainWindow.on('close', (event) => closeToTray.onClose(event));
+  // Windows is logging off or shutting down: it closes for real.
+  mainWindow.on('session-end', () => closeToTray.markQuitting());
+
   mainWindow.on('closed', () => {
     mainWindow = null;
     // The agent's Preview pages are hidden windows; close them so the app quits.
@@ -170,6 +182,18 @@ void app.whenReady().then(() => {
   handleAttachmentProtocol((id) => worktreeManager.getWorktree(id)?.path);
   void removeDeletedFolders();
   createWindow();
+  closeToTray.install({
+    getWindow: () => mainWindow,
+    iconPath: appIcon(),
+    closeAction: () => settings.getSettings().closeWindow,
+    setCloseAction: (closeWindow) => {
+      settings.saveSettings({ ...settings.getSettings(), closeWindow });
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.SETTINGS_CHANGED, { closeWindow });
+    },
+    working: () => sessionManager.workingCount,
+    introduced: loadTrayIntroduced,
+    setIntroduced: saveTrayIntroduced,
+  });
 
   // Background worktree sweep. The first run waits until the renderer has
   // finished restoring sessions (disk and CPU are busiest then), with a
@@ -291,6 +315,8 @@ function shutdown(): Promise<void> {
 }
 
 app.on('before-quit', (event) => {
+  // The window closes for real from here on, whatever closing it does.
+  closeToTray.markQuitting();
   // App-state changes (open tabs, groups, …) not in the file yet, waiting to
   // be saved or on their way in the background: written synchronously, since
   // a background save might not finish before the process exits.

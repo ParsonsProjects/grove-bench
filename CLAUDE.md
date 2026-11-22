@@ -31,6 +31,7 @@ src/
     terminal.ts        # node-pty management
     app-state.ts       # Persistent app state
     window-state.ts    # Window position/size persistence
+    close-to-tray.ts   # Closing the window hides it in the tray (setting), with the tray icon and menu, and a one-time offer
     memory.ts          # Project memory system
     memory-autosave.ts # Auto-save memory on interval
     follow-ups.ts      # Work agents leave for later threads (follow-ups.json), for the grove-followups tools, the Follow-ups drawer and the board's Follow-ups column

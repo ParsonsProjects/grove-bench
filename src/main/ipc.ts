@@ -57,6 +57,7 @@ import { perfLogPath } from './perf-log.js';
 import { detectPackageManager, installDependencies, type PackageManager } from './deps-install.js';
 import { commandLine, hasSubmodules, initSubmodules, readSubmoduleConfig, submoduleArgs, submoduleEnv } from './worktree-submodules.js';
 import { applyAttentionBadge } from './attention-badge.js';
+import { closeToTray } from './close-to-tray.js';
 import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
@@ -2352,6 +2353,7 @@ export function registerHandlers() {
     const saved = settings.getSettings();
     settings.applyImmediateEffects(win, saved);
     applyUpdateSettings(saved);
+    closeToTray.apply(saved.closeWindow);
   });
 
   // ─── App State ───
@@ -2483,6 +2485,7 @@ export function registerHandlers() {
     if (!win || win.isDestroyed()) return;
     const n = typeof count === 'number' && Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
     applyAttentionBadge(win, n, typeof dataUrl === 'string' ? dataUrl : null);
+    closeToTray.noteAttention(n);
   });
 
   // ─── Spell check ───

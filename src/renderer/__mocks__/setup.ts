@@ -162,6 +162,7 @@ const mockGroveBench = {
   testNotification: vi.fn().mockResolvedValue('sent'),
   getSettings: vi.fn(),
   saveSettings: vi.fn(),
+  onSettingsChanged: vi.fn((_callback: (patch: Partial<import('../../shared/types.js').GroveBenchSettings>) => void) => () => {}),
   listSessions: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').SessionInfo[])),
   validateRepo: vi.fn(() => Promise.resolve(true)),
   checkPrerequisites: vi.fn(() => Promise.resolve({ git: { available: true, meetsMinimum: true }, agents: { 'claude-code': { available: true, authenticated: true } } } as import('../../shared/types.js').PrerequisiteStatus)),

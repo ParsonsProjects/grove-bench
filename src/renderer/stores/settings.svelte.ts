@@ -41,6 +41,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   defaultActivityView: 'summary',
   spellcheck: true,
   steerOnEnter: false,
+  closeWindow: 'quit',
   notifyOnTurnComplete: true,
   notifyOnPermission: true,
   notifyOnPrAlert: true,
@@ -99,6 +100,7 @@ class SettingsStore {
   /** Reload from disk. Pending edits are saved first, so a reload can't
    *  undo them. */
   async load() {
+    this.unsubscribeChanges ??= window.groveBench.onSettingsChanged((patch) => this.applyChanged(patch));
     await this.save();
     // That save failed: keep the edit (and its error) rather than replace it.
     if (this.dirty) return;
@@ -117,6 +119,15 @@ class SettingsStore {
   }
 
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private unsubscribeChanges: (() => void) | null = null;
+
+  /** Settings main changed and saved itself (closeWindow, from the
+   *  first-close offer): shown, with no save of their own, and kept by the
+   *  next save, which starts from them. Other unsaved edits stay. */
+  applyChanged(patch: Partial<GroveBenchSettings>): void {
+    this.current = { ...$state.snapshot(this.current), ...patch };
+    this.draft = { ...$state.snapshot(this.draft), ...patch };
+  }
 
   /** Save the draft soon after an edit: straight away for toggles and
    *  pickers, after a pause in typing for text fields. */

@@ -37,6 +37,7 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'grove-characters', section: 'general', label: 'Show grove characters', keywords: 'pixel sprites status animation' },
   { id: 'project-colors', section: 'general', label: 'Project colors', keywords: 'accent colour repository' },
   { id: 'always-on-top', section: 'general', label: 'Always on top', keywords: 'window' },
+  { id: 'close-window', section: 'general', label: 'When you close the window', keywords: 'tray system tray icon close quit background minimize keep running hide' },
   { id: 'spellcheck', section: 'general', label: 'Spell checking', keywords: 'spelling prompt editor' },
   { id: 'enter-while-working', section: 'general', label: 'While the agent works, Enter', keywords: 'steer steering queue message box send alt enter turn' },
   { id: 'updates', section: 'general', label: 'Updates', keywords: 'version check for updates releases' },
