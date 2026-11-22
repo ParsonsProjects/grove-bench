@@ -250,6 +250,7 @@ describe('App unread flag', () => {
     settingsStore.current = off;
     settingsStore.draft = JSON.parse(JSON.stringify(off)) as typeof settingsStore.draft;
     mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(off)));
+    const loadsBefore = mockGroveBench.getSettings.mock.results.length;
     try {
       mockGroveBench.listRepos.mockResolvedValue([]);
       getOpenTabs.mockResolvedValue([]);
@@ -262,6 +263,11 @@ describe('App unread flag', () => {
 
       expect(mockGroveBench.setAttentionBadge).toHaveBeenLastCalledWith(0, null, 1);
     } finally {
+      // Let the settings load this render started land first. Nothing awaits
+      // it, and landing after the lines below it put `off` back, so the next
+      // test started with the badge turned off.
+      await vi.waitFor(() => expect(mockGroveBench.getSettings.mock.results.length).toBeGreaterThan(loadsBefore)).catch(() => {});
+      await Promise.all(mockGroveBench.getSettings.mock.results.slice(loadsBefore).map((r) => r.value));
       settingsStore.current = before;
       settingsStore.draft = draftBefore;
       mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(before)));
@@ -459,6 +465,11 @@ describe('App board (alpha)', () => {
 
   it('closes when its setting is turned off', async () => {
     withBoard();
+    // No threads, whatever the test before left in these mocks, so the
+    // board's empty state shows.
+    mockGroveBench.listRepos.mockResolvedValue([]);
+    mockGroveBench.listWorktrees.mockResolvedValue([]);
+    getOpenTabs.mockResolvedValue([]);
     render(App);
     boardStore.show();
     expect(await screen.findByText('No open threads', {}, { timeout: 5000 })).toBeInTheDocument();
