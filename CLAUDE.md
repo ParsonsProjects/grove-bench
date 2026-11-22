@@ -4,7 +4,7 @@ Multi-agent git worktree orchestrator for Claude Code. Windows-native Electron d
 
 ## Tech Stack
 
-- **Runtime:** Electron 33 (main + renderer process)
+- **Runtime:** Electron 45 (main + renderer process)
 - **UI:** Svelte 5, Tailwind CSS v4, Bits UI, xterm.js
 - **Backend:** Node.js, node-pty, execa (git CLI), Zod
 - **Build:** Vite, electron-builder (NSIS Windows installer)

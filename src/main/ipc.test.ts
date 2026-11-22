@@ -37,7 +37,7 @@ const m = vi.hoisted(() => {
     registerClaudeAccount: vi.fn((account: { id: string }) => ({ id: account.id })),
     settings: fns('getSettings', 'saveSettings', 'applyImmediateEffects'),
     appState: fns(
-      'listProjects', 'rememberProject', 'forgetProject', 'saveCollapsedPanels', 'loadConversationGroups', 'saveConversationGroups',
+      'listProjects', 'lastAddedProject', 'rememberProject', 'forgetProject', 'saveCollapsedPanels', 'loadConversationGroups', 'saveConversationGroups',
       'loadOpenTabs', 'saveOpenTabs', 'loadCollapsedRepos', 'saveCollapsedRepos', 'loadSessionSort', 'saveSessionSort',
       'loadSidebarWidth', 'saveSidebarWidth', 'loadCollapsedPanels', 'saveUnreadSessionIds',
       'loadUnreadSessionIds', 'loadTodoSessionIds', 'saveTodoSessionIds', 'flushPendingSaves', 'loadPrerequisiteCache', 'savePrerequisiteCache',
@@ -224,6 +224,27 @@ describe('repos', () => {
     expect(await invoke(IPC.REPO_SELECT)).toEqual({ kind: 'git', path: '/repo' });
     expect(m.worktreeManager.cleanupOrphans).toHaveBeenCalledWith('/repo');
     expect(m.appState.rememberProject).toHaveBeenCalledWith('/repo');
+  });
+
+  it('REPO_SELECT opens the picker next to the project added last, else in the home folder', async () => {
+    vi.mocked(dialog.showOpenDialog).mockResolvedValue({ canceled: true, filePaths: [] });
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-picker-'));
+    try {
+      m.appState.lastAddedProject.mockReturnValue(path.join(parent, 'repo'));
+      await invoke(IPC.REPO_SELECT);
+      expect(vi.mocked(dialog.showOpenDialog).mock.lastCall?.[1]).toMatchObject({ defaultPath: parent });
+
+      // Its folder is gone: the home folder.
+      m.appState.lastAddedProject.mockReturnValue(path.join(parent, 'gone', 'repo'));
+      await invoke(IPC.REPO_SELECT);
+      expect(vi.mocked(dialog.showOpenDialog).mock.lastCall?.[1]).toMatchObject({ defaultPath: '/mock/home' });
+
+      m.appState.lastAddedProject.mockReturnValue(null);
+      await invoke(IPC.REPO_SELECT);
+      expect(vi.mocked(dialog.showOpenDialog).mock.lastCall?.[1]).toMatchObject({ defaultPath: '/mock/home' });
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
   });
 
   it('REPO_SELECT returns null for a cancelled pick, and adds a plain folder without git work', async () => {

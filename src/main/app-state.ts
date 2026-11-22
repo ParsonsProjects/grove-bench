@@ -743,6 +743,12 @@ export function rememberProject(repoPath: string): void {
   }, 0);
 }
 
+/** The project added most recently, or null: the folder picker opens next
+ *  to it. */
+export function lastAddedProject(): string | null {
+  return pick((state) => state.projects)?.at(-1) ?? null;
+}
+
 export function forgetProject(repoPath: string): void {
   change((state) => {
     if (state.projects) state.projects = state.projects.filter((p) => p !== repoPath);

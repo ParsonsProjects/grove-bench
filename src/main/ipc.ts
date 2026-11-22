@@ -47,7 +47,7 @@ import { deleteSchedule, listSchedules, recordScheduleRun, saveSchedule } from '
 import { linkSkills, setSkillReach, skillSharing } from './skill-sharing.js';
 import { CLAUDE_SKILL_DIRS, markWorktreeOnly, readSkillFile, readsSharedSkills, saveSkillFile, type SkillDirs } from './skills.js';
 import { accountLinkDirs } from './session-skills.js';
-import { listProjects, rememberProject, forgetProject, loadOpenTabs, saveOpenTabs, loadCollapsedRepos, saveCollapsedRepos, loadSessionSort, saveSessionSort, loadSidebarWidth, saveSidebarWidth, loadCollapsedPanels, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, saveTodoSessionIds, loadTodoSessionIds, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
+import { listProjects, lastAddedProject, rememberProject, forgetProject, loadOpenTabs, saveOpenTabs, loadCollapsedRepos, saveCollapsedRepos, loadSessionSort, saveSessionSort, loadSidebarWidth, saveSidebarWidth, loadCollapsedPanels, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, saveTodoSessionIds, loadTodoSessionIds, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
 import { isThreadId } from './session-event-store.js';
@@ -248,6 +248,19 @@ async function openInEditor(file: string, line: unknown): Promise<boolean> {
   return (await shell.openPath(file)) === '';
 }
 
+/** Where "Select a project folder" opens: the folder holding the project
+ *  added last, else the home folder. Since Electron 43 the picker opens in
+ *  Downloads when it's given no defaultPath, and Windows no longer reopens
+ *  the last folder used. */
+async function projectPickerStart(): Promise<string> {
+  const last = lastAddedProject();
+  if (last) {
+    const parent = path.dirname(last);
+    if (await fs.stat(parent).then((s) => s.isDirectory(), () => false)) return parent;
+  }
+  return app.getPath('home');
+}
+
 export function registerHandlers() {
   // ─── Repo ───
 
@@ -258,6 +271,7 @@ export function registerHandlers() {
     const result = await dialog.showOpenDialog(win, {
       properties: ['openDirectory'],
       title: 'Select a project folder',
+      defaultPath: await projectPickerStart(),
     });
 
     if (result.canceled || result.filePaths.length === 0) return null;

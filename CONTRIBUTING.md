@@ -18,7 +18,7 @@ Thanks for your interest in contributing to Grove Bench! Please read this guide 
 
 ## Development
 
-- **Tech stack:** Electron 33, Svelte 5, Tailwind CSS v4, TypeScript 5.7
+- **Tech stack:** Electron 45, Svelte 5, Tailwind CSS v4, TypeScript 5.7
 - **Tests:** `npm test` (Vitest)
 - **Main process:** `src/main/` — IPC, git ops, PTY, sessions
 - **Renderer:** `src/renderer/` — Svelte UI components

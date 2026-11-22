@@ -53,7 +53,7 @@ import {
   saveCollapsedPanels, flushPendingSaves, validateAppState, upgradeAppState, APP_STATE_SCHEMA_VERSION,
   loadPrerequisiteCache, loadModelCatalog, saveModelCatalog, loadUsageSnapshot, saveUsageSnapshot,
   loadSkillSuggestionCache, saveSkillSuggestionCache,
-  mergeProjects, listProjects, rememberProject, forgetProject,
+  mergeProjects, listProjects, lastAddedProject, rememberProject, forgetProject,
   loadConversationGroups, saveConversationGroups,
   loadTodoSessionIds, saveTodoSessionIds,
   loadSkillSchedules, saveSkillSchedules, updateSkillSchedules,
@@ -725,6 +725,16 @@ describe('projects', () => {
     await vi.advanceTimersByTimeAsync(5_000);
     await appStateSaved();
     expect(file.get().projects).toEqual(['/kept', '/m']);
+  });
+
+  it('names the project added last, for the folder picker', () => {
+    useDisk({});
+    expect(lastAddedProject()).toBeNull();
+    rememberProject('/a');
+    rememberProject('/b');
+    expect(lastAddedProject()).toBe('/b');
+    forgetProject('/b');
+    expect(lastAddedProject()).toBe('/a');
   });
 
   it('forgets a removed project', () => {

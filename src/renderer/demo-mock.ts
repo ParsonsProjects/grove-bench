@@ -285,7 +285,7 @@ function memFile(relativePath: string, title: string, ageMs: number | null, body
 
 let memoryFiles = [
   memFile('repo/overview.md', 'Project Overview', 2 * 60 * min,
-    'Electron 33 desktop app orchestrating multiple Claude Code sessions, each in an isolated git worktree with a dedicated PTY terminal.\n\n- UI: Svelte 5 + Tailwind v4 (renderer)\n- Main process: Node, node-pty, execa git wrapper\n- Windows-native (NSIS installer), no cross-platform support in v1'),
+    'Electron 45 desktop app orchestrating multiple Claude Code sessions, each in an isolated git worktree with a dedicated PTY terminal.\n\n- UI: Svelte 5 + Tailwind v4 (renderer)\n- Main process: Node, node-pty, execa git wrapper\n- Windows-native (NSIS installer), no cross-platform support in v1'),
   memFile('repo/tech-stack.md', 'Tech Stack', 9 * day,
     'Uses Electron with a Svelte UI. Terminals via xterm.js. Git operations shell out to the git CLI via execa (not simple-git). Tests run on Vitest.'),
   memFile('conventions/naming.md', 'Naming Conventions', 6 * day,
@@ -608,7 +608,7 @@ const api: Record<string, unknown> = {
   reportFreeze: () => {},
   reportTiming: () => {},
   logIdle: () => {},
-  recordPerformanceTrace: () => new Promise((resolve) => setTimeout(() => resolve({ name: 'trace-2026-10-01T12-00-00-000Z.json', sizeBytes: 12_582_912, seconds: 10 }), 10_000)),
+  recordPerformanceTrace: () => new Promise((resolve) => setTimeout(() => resolve({ name: 'trace-2026-10-01T12-00-00-000Z.pftrace', sizeBytes: 12_582_912, seconds: 10 }), 10_000)),
   setAttentionBadge: () => {},
   getEventHistoryPage: async () => ({ events: [], totalCount: 0, startIndex: 0, turn: { midTurn: false, pendingPromptIds: [], agentLive: false } }),
   getEventHistoryCount: async () => 0,

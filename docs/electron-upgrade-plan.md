@@ -1,10 +1,12 @@
 # Electron upgrade plan
 
-> **Status: Plan, not started.** Recommendation:
-> - Move to Electron 44.9.x in one jump, on or after 28 Oct 2026 (44.9.3, or at least 44.9.1).
-> - Move to 45 in a second PR, once 45 has had a few patch releases and well before 46 ships.
+> **Status: Done on 22 Nov 2026, straight to Electron 45.3.2** (the newest 45 at least 7 days old; `npm audit` finds no advisories in it). Both PRs below went in as one: the `allowScripts` entry, the folder dialog's `defaultPath` (the folder holding the project added last, else home), the `clipboard.writeText` catch, and `.pftrace` trace files.
 >
-> Checked on 25 Oct 2026, against the lockfile's Electron 33.3.2.
+> **Still to do, before Electron 46:** move `credentials.ts` to the async `safeStorage` calls. The sync ones are deprecated in 45 but still work. The 46.0.0-alpha.12 typings no longer have them, so `npm run typecheck` fails on a 46 bump until this is done. Left out so the stored-key change gets its own PR and a hand test on Windows.
+>
+> The hand tests below still need a run on Windows.
+>
+> The rest of this page is the plan as checked on 25 Oct 2026, against the lockfile's Electron 33.3.2.
 
 ## Where things stand
 
