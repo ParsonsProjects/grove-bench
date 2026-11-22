@@ -696,8 +696,8 @@ const api: Record<string, unknown> = {
   // earlier, merged PR on the same branch; the others show the "Create PR"
   // link (s-sidebar with unpushed commits).
   // PR actions: the demo account may bypass the rules, so every action shows.
-  getPrActionOptions: async () => ({ methods: ['squash', 'merge'], deleteBranchOnMerge: false, autoMergeAllowed: true, canMergeAsAdmin: true, canEnableAutoMerge: true, canDisableAutoMerge: true, canUpdateBranch: true, canDeleteBranch: true, stackedPrs: 0 }),
-  mergePr: async () => ({ branchDeleted: true }),
+  getPrActionOptions: async () => ({ methods: ['squash', 'merge'], deleteBranchOnMerge: false, autoMergeAllowed: true, mergeQueue: false, canMergeAsAdmin: true, canEnableAutoMerge: true, canDisableAutoMerge: true, canUpdateBranch: true, canDeleteBranch: true, stackedPrs: 0 }),
+  mergePr: async () => ({ merged: true, branchDeleted: true }),
   deletePrBranch: async () => ({ branchDeleted: true }),
   setPrAutoMerge: async () => {},
   setPrDraft: async () => {},

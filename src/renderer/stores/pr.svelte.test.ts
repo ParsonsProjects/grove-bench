@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mockGroveBench } from '../__mocks__/setup.js';
 
-import { prStore } from './pr.svelte.js';
+import { prStore, prActionError, updateBranchNote } from './pr.svelte.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { messageStore } from './messages.svelte.js';
 import { settingsStore } from './settings.svelte.js';
@@ -46,14 +46,15 @@ describe('PR actions', () => {
     localStorage.clear();
   });
 
-  it("merges the commit shown, remembers the project's method, and refetches", async () => {
-    await refreshWith(pr({ headSha: 'abc1234', headRefName: 'feat/x' }));
+  it("merges the commit the confirm showed, remembers the project's method, and refetches", async () => {
+    await refreshWith(pr({ headSha: 'def5678', headRefName: 'feat/x' }));
     expect(prStore.mergeMethod(SID, ['merge', 'rebase'])).toBe('merge');
-    mockGroveBench.mergePr.mockResolvedValueOnce({ branchDeleted: true });
+    mockGroveBench.mergePr.mockResolvedValueOnce({ merged: true, branchDeleted: true });
 
-    await prStore.mergePr(SID, { method: 'rebase', deleteBranch: true });
+    // The store has a newer head by now: the confirm's commit is what goes.
+    await prStore.mergePr(SID, { method: 'rebase', headSha: 'abc1234', deleteBranch: true });
 
-    expect(mockGroveBench.mergePr).toHaveBeenCalledWith(SID, { number: 7, method: 'rebase', headSha: 'abc1234', deleteBranch: true }, 'feat/x');
+    expect(mockGroveBench.mergePr).toHaveBeenCalledWith(SID, { number: 7, url: 'https://example.com/pull/7', method: 'rebase', headSha: 'abc1234', deleteBranch: true }, 'feat/x');
     expect(prStore.mergeMethod(SID, ['squash', 'merge', 'rebase'])).toBe('rebase');
     // Not allowed any more: the first the repository allows.
     expect(prStore.mergeMethod(SID, ['squash'])).toBe('squash');
@@ -61,14 +62,25 @@ describe('PR actions', () => {
     expect(mockGroveBench.getPrs).toHaveBeenCalledTimes(2);
   });
 
-  it("doesn't pull the update into the thread while the agent is in a turn", async () => {
+  it('names the threads working now when it updates the branch, for main to check against', async () => {
     await refreshWith(pr({ headRefName: 'feat/x' }));
     messageStore.setIsRunning(SID, true);
     await prStore.updateBranch(SID, true);
-    expect(mockGroveBench.updatePrBranch).toHaveBeenLastCalledWith(SID, 7, true, false, 'feat/x');
+    expect(mockGroveBench.updatePrBranch).toHaveBeenLastCalledWith(SID, { number: 7, url: 'https://example.com/pull/7' }, true, 'feat/x', [SID]);
     messageStore.setIsRunning(SID, false);
     await prStore.updateBranch(SID, false);
-    expect(mockGroveBench.updatePrBranch).toHaveBeenLastCalledWith(SID, 7, false, true, 'feat/x');
+    expect(mockGroveBench.updatePrBranch).toHaveBeenLastCalledWith(SID, { number: 7, url: 'https://example.com/pull/7' }, false, 'feat/x', []);
+  });
+
+  it('words what became of the thread\'s copy, and errors without the IPC wrapper', () => {
+    expect(updateBranchNote({ pulled: true })).toBeNull();
+    expect(updateBranchNote({ pulled: false, skipped: 'busy' })).toMatch(/agent is working/);
+    expect(updateBranchNote({ pulled: false, skipped: 'other-branch' })).toMatch(/another branch/);
+    expect(updateBranchNote({ pulled: false, skipped: 'diverged' })).toMatch(/doesn't match/);
+    expect(updateBranchNote({ pulled: false, skipped: 'not-yet' })).toMatch(/hadn't finished/);
+    expect(updateBranchNote({ pulled: false, pullError: 'fatal: nope' })).toBe("Updated on GitHub. The thread's copy wasn't: fatal: nope");
+    expect(prActionError(new Error("Error invoking remote method 'pr:merge': Error: Head branch was modified"), 'Merge')).toBe('Head branch was modified');
+    expect(prActionError(new Error(''), 'Merge')).toBe('Merge failed');
   });
 
   it('asks GitHub what it may offer once per state of the PR', async () => {

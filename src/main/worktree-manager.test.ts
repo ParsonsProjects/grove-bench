@@ -2045,3 +2045,81 @@ describe('whenRegistered', () => {
     await expect(manager.whenRegistered('wt-new', AbortSignal.abort())).resolves.toEqual(info);
   });
 });
+
+describe('catchUpWithRemote', () => {
+  const WT = '/worktrees/abc/wt-a';
+  const OLD = 'a'.repeat(40);
+  const NEW = 'b'.repeat(40);
+  let remote: string;
+  let head: string;
+
+  beforeEach(() => {
+    mockFs.readFile.mockImplementation(async () => JSON.stringify(savedManifest));
+    savedManifest = { 'wt-a': { repoPath: '/repo', branch: 'feat-a', createdAt: 1000 } };
+    manager.register({ id: 'wt-a', path: WT, branch: 'feat-a', repoPath: '/repo', createdAt: 1000 });
+    vi.mocked(currentBranch).mockResolvedValue('feat-a');
+    remote = NEW;
+    head = OLD;
+    mockGit.mockImplementation(async (args: string[]) => {
+      if (args[0] === 'ls-remote') return `${remote}\trefs/heads/feat-a\n`;
+      if (args[0] === 'rev-parse') return `${head}\n`;
+      return '';
+    });
+  });
+
+  const run = (over: Partial<Parameters<WorktreeManager['catchUpWithRemote']>[1]> = {}) =>
+    manager.catchUpWithRemote('wt-a', { branch: 'feat-a', from: OLD, rebase: false, isBusy: () => false, waitMs: 0, pollMs: 0, ...over });
+  const changes = () => mockGit.mock.calls.map((c) => c[0]).filter((a) => ['fetch', 'merge', 'reset'].includes(a[0]));
+
+  it('fast-forwards to the merge GitHub made, when the checkout held just what GitHub had', async () => {
+    expect(await run()).toEqual({ pulled: true });
+    expect(changes()).toEqual([['fetch', 'origin', 'refs/heads/feat-a'], ['merge', '--ff-only', NEW]]);
+  });
+
+  it("moves to GitHub's rebased commits, keeping uncommitted changes, after a rebase", async () => {
+    expect(await run({ rebase: true })).toEqual({ pulled: true });
+    expect(changes()).toEqual([['fetch', 'origin', 'refs/heads/feat-a'], ['reset', '--keep', NEW]]);
+  });
+
+  it('waits for GitHub to move the branch, and says so when it never does', async () => {
+    let looks = 0;
+    mockGit.mockImplementation(async (args: string[]) => {
+      if (args[0] === 'ls-remote') return `${++looks < 3 ? OLD : NEW}\trefs/heads/feat-a\n`;
+      if (args[0] === 'rev-parse') return `${OLD}\n`;
+      return '';
+    });
+    expect(await run({ waitMs: 1000 })).toEqual({ pulled: true });
+    expect(looks).toBe(3);
+
+    remote = OLD;
+    mockGit.mockClear();
+    mockGit.mockImplementation(async (args: string[]) => (args[0] === 'ls-remote' ? `${remote}\trefs/heads/feat-a\n` : ''));
+    expect(await run()).toEqual({ pulled: false, skipped: 'not-yet' });
+    expect(changes()).toEqual([]);
+  });
+
+  it.each([
+    ['someone is working in the checkout', { isBusy: (id: string) => id === 'wt-a' }, 'busy'],
+    ['it has commits GitHub had not', {}, 'diverged'],
+  ] as const)('leaves it alone when %s', async (_why, over, skipped) => {
+    if (skipped === 'diverged') head = 'c'.repeat(40);
+    expect(await run(over)).toEqual({ pulled: false, skipped });
+    expect(changes()).toEqual([]);
+  });
+
+  it('leaves it alone on another branch', async () => {
+    vi.mocked(currentBranch).mockResolvedValue('other');
+    expect(await run()).toEqual({ pulled: false, skipped: 'other-branch' });
+    expect(changes()).toEqual([]);
+  });
+
+  it("says why git couldn't bring it up to date", async () => {
+    mockGit.mockImplementation(async (args: string[]) => {
+      if (args[0] === 'ls-remote') return `${NEW}\trefs/heads/feat-a\n`;
+      if (args[0] === 'rev-parse') return `${OLD}\n`;
+      if (args[0] === 'merge') throw Object.assign(new Error('merge failed'), { stderr: 'error: Your local changes would be overwritten' });
+      return '';
+    });
+    expect(await run()).toEqual({ pulled: false, pullError: 'error: Your local changes would be overwritten' });
+  });
+});

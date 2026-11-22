@@ -310,17 +310,18 @@ const api: GroveBenchAPI = {
   listOpenPrs: (repoPath: string) => ipcRenderer.invoke(IPC.PR_LIST_OPEN, repoPath),
   createPr: (sessionId: string, opts: import('../shared/types.js').PrCreateOpts) =>
     ipcRenderer.invoke(IPC.PR_CREATE, sessionId, opts),
-  getPrActionOptions: (sessionId: string, prNumber: number, head: string) =>
-    ipcRenderer.invoke(IPC.PR_ACTION_OPTIONS, sessionId, prNumber, head),
+  getPrActionOptions: (sessionId: string, pr: import('../shared/types.js').PrRef, head: string) =>
+    ipcRenderer.invoke(IPC.PR_ACTION_OPTIONS, sessionId, pr, head),
   mergePr: (sessionId: string, req: import('../shared/types.js').PrMergeRequest, head?: string) =>
     ipcRenderer.invoke(IPC.PR_MERGE, sessionId, req, head),
-  deletePrBranch: (sessionId: string, branch: string) => ipcRenderer.invoke(IPC.PR_DELETE_BRANCH, sessionId, branch),
-  setPrAutoMerge: (sessionId: string, prNumber: number, on: boolean, method?: import('../shared/types.js').MergeMethod) =>
-    ipcRenderer.invoke(IPC.PR_SET_AUTO_MERGE, sessionId, prNumber, on, method),
-  setPrDraft: (sessionId: string, prNumber: number, draft: boolean) => ipcRenderer.invoke(IPC.PR_SET_DRAFT, sessionId, prNumber, draft),
-  setPrOpen: (sessionId: string, prNumber: number, open: boolean) => ipcRenderer.invoke(IPC.PR_SET_OPEN, sessionId, prNumber, open),
-  updatePrBranch: (sessionId: string, prNumber: number, rebase: boolean, pull: boolean, head?: string) =>
-    ipcRenderer.invoke(IPC.PR_UPDATE_BRANCH, sessionId, prNumber, rebase, pull, head),
+  deletePrBranch: (sessionId: string, pr: import('../shared/types.js').PrRef, branch: string) =>
+    ipcRenderer.invoke(IPC.PR_DELETE_BRANCH, sessionId, pr, branch),
+  setPrAutoMerge: (sessionId: string, pr: import('../shared/types.js').PrRef, on: boolean, method?: import('../shared/types.js').MergeMethod) =>
+    ipcRenderer.invoke(IPC.PR_SET_AUTO_MERGE, sessionId, pr, on, method),
+  setPrDraft: (sessionId: string, pr: import('../shared/types.js').PrRef, draft: boolean) => ipcRenderer.invoke(IPC.PR_SET_DRAFT, sessionId, pr, draft),
+  setPrOpen: (sessionId: string, pr: import('../shared/types.js').PrRef, open: boolean) => ipcRenderer.invoke(IPC.PR_SET_OPEN, sessionId, pr, open),
+  updatePrBranch: (sessionId: string, pr: import('../shared/types.js').PrRef, rebase: boolean, head: string, busySessionIds: string[]) =>
+    ipcRenderer.invoke(IPC.PR_UPDATE_BRANCH, sessionId, pr, rebase, head, busySessionIds),
   getPrReviewComments: (sessionId: string, prNumber: number) =>
     ipcRenderer.invoke(IPC.PR_REVIEW_COMMENTS, sessionId, prNumber),
   submitPrReview: (sessionId: string, review: import('../shared/types.js').PrReviewSubmit) =>
