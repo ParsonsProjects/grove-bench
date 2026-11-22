@@ -24,6 +24,9 @@ const localStorageMock = (() => {
     setItem: vi.fn((key: string, value: string) => { store[key] = value; }),
     removeItem: vi.fn((key: string) => { delete store[key]; }),
     clear: vi.fn(() => { store = {}; }),
+    // As Storage has them, for code that walks every key (queue-storage.ts).
+    get length() { return Object.keys(store).length; },
+    key: vi.fn((index: number) => Object.keys(store)[index] ?? null),
   };
 })();
 Object.defineProperty(globalThis, 'localStorage', { value: localStorageMock });
@@ -41,6 +44,14 @@ const mockGroveBench = {
   respondToLimit: vi.fn().mockResolvedValue(true),
   getDailySpend: vi.fn().mockResolvedValue(0),
   getThreadUsage: vi.fn().mockResolvedValue({ spendUsd: 0, tokens: { input: 0, output: 0 } }),
+  getUsageSummary: vi.fn().mockResolvedValue({
+    total: { usd: 0, input: 0, output: 0, ms: 0, turns: 0 },
+    byModel: [],
+    byThread: [],
+    undated: { usd: 0, input: 0, output: 0, ms: 0, turns: 0 },
+    recordingSince: null,
+    backfilling: false,
+  }),
   setMode: vi.fn().mockResolvedValue(undefined),
   getControls: vi.fn().mockResolvedValue({ descriptors: [], values: {} }),
   setControl: vi.fn().mockResolvedValue(undefined),
@@ -144,6 +155,7 @@ const mockGroveBench = {
   openInEditor: vi.fn(() => Promise.resolve()),
   getFileLines: vi.fn((_sessionId: string, _filePath: string, _staged?: boolean) => Promise.resolve(null as import('../../shared/types.js').FileLinesResult)),
   sendMessage: vi.fn(),
+  steerMessage: vi.fn(async (_sessionId: string, _content: string, _uuid: string): Promise<'steered' | 'not-running' | 'unsupported'> => 'steered'),
   openAttachedFile: vi.fn(() => Promise.resolve(true)),
   readAttachedFile: vi.fn((): Promise<string | null> => Promise.resolve(null)),
   openWorktreeFile: vi.fn((): Promise<OpenWorktreeFileResult> => Promise.resolve({ kind: 'opened' })),
@@ -201,6 +213,15 @@ const mockGroveBench = {
     Promise.resolve({ ...b, id: 'generated-id', createdAt: 0 })),
   removeBookmark: vi.fn(() => Promise.resolve()),
   updateBookmark: vi.fn(() => Promise.resolve()),
+  listFollowUps: vi.fn(() => Promise.resolve([] as import('../../shared/follow-ups.js').FollowUp[] | null)),
+  addFollowUp: vi.fn((repoPath: string, title: string, details: string) => Promise.resolve({
+    followUp: { id: 'new1', repoPath, title, details, createdAt: 0 },
+    existing: false,
+  })),
+  setFollowUpDone: vi.fn(() => Promise.resolve()),
+  followUpStarted: vi.fn(() => Promise.resolve()),
+  removeFollowUp: vi.fn(() => Promise.resolve()),
+  onFollowUpsChanged: vi.fn((_callback: (change: import('../../shared/follow-ups.js').FollowUpsChange) => void) => () => {}),
   findEventIndexByUuid: vi.fn(() => Promise.resolve(null as number | null)),
   memoryList: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').MemoryEntry[])),
   memoryRead: vi.fn(() => Promise.resolve(null as string | null)),

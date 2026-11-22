@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
-  import { arrivalScene } from '../stores/arrivalScene.svelte.js';
+  import { interruptTurn } from '../lib/interrupt-turn.js';
   import { settingsStore } from '../stores/settings.svelte.js';
   import { terminalStore } from '../stores/terminal.svelte.js';
   import { agentsStore } from '../stores/agents.svelte.js';
@@ -14,6 +14,8 @@
   import { Kbd } from '$lib/components/ui/kbd/index.js';
   import * as Command from '$lib/components/ui/command/index.js';
   import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
+  import CheckIcon from '@lucide/svelte/icons/check';
+  import CornerDownRightIcon from '@lucide/svelte/icons/corner-down-right';
   import ListPlusIcon from '@lucide/svelte/icons/list-plus';
   import PaperclipIcon from '@lucide/svelte/icons/paperclip';
   import Maximize2Icon from '@lucide/svelte/icons/maximize-2';
@@ -77,7 +79,8 @@
     lastInsertNonce = req.nonce;
     // An insert with no text (a queued image-only prompt) adds no new line.
     value = req.replace ? req.text : value && req.text ? `${value}\n${req.text}` : value || req.text;
-    if (req.attachments?.length) attachedFiles = [...attachedFiles, ...req.attachments];
+    if (req.replaceAttachments) attachedFiles = [...(req.attachments ?? [])];
+    else if (req.attachments?.length) attachedFiles = [...attachedFiles, ...req.attachments];
     void tick().then(() => { textarea?.focus(); autoResize(); });
   });
   let userResized = $state(false);
@@ -124,7 +127,7 @@
     if (e.dataTransfer?.types.includes('Files')) void handleDrop(e);
   }
   function sendExpanded() {
-    handleSubmit();
+    handleSubmit({ steer: steersWith(false) });
     // Sent (or queued) empties the box; anything else leaves it to edit.
     if (!value) expanded = false;
   }
@@ -192,6 +195,21 @@
   // or mid-turn) is queued in the store and sent when the turn finishes; the
   // queue is shown above the input so items can be removed before they go.
   let willQueue = $derived(!messageStore.canSendNow(sessionId));
+  // A queued message open in the box: Enter saves it in its place.
+  let queuedEdit = $derived(messageStore.getQueuedEdit(sessionId));
+  // Claude can take a message into the turn it is running (a steer); other
+  // agents queue it. Only an agent that says so can (declares, not supports).
+  let canSteer = $derived(agentsStore.declares(sessionStore.sessions.find((s) => s.id === sessionId)?.agentType, 'steering'));
+  let steerable = $derived(isRunning && canSteer && !queuedEdit);
+  // Alt held in the box swaps what Enter and the send button do.
+  let altHeld = $state(false);
+  // Only a setting that says so makes Enter steer.
+  let enterSteers = $derived(settingsStore.current.steerOnEnter === true);
+  let steerNow = $derived(steerable && enterSteers !== altHeld);
+  /** Whether a send with Alt held (or not) steers. */
+  function steersWith(alt: boolean): boolean {
+    return steerable && enterSteers !== alt;
+  }
   // The agent's guess at the next prompt, shown as the empty box's
   // placeholder until something is typed. Tab takes it.
   let suggestion = $derived(
@@ -214,7 +232,7 @@
     });
   });
 
-  function handleSubmit() {
+  function handleSubmit(opts: { steer?: boolean } = {}) {
     if (!canSend) return;
     const text = value.trim();
 
@@ -267,8 +285,16 @@
     // Kept on a queued prompt so Edit can restore it as typed.
     const typed = { text, attachments: $state.snapshot(attachedFiles) };
 
-    // Sends now if the agent is idle, otherwise parks the prompt in the queue.
+    // Sends now if the agent is idle, otherwise parks the prompt in the
+    // queue, or steers it into the running turn. A steer is text only: one
+    // with images or other files waits for the turn to end.
+    const steer = opts.steer === true && images.length === 0 && files.length === 0;
+    if (opts.steer && !steer) showDropMessage("Messages with attached images or files can't be steered, so this one waits in the queue.", false);
     function send(outgoing: string) {
+      if (steer) {
+        messageStore.submitSteer(sessionId, { displayText, outgoing, typed });
+        return;
+      }
       messageStore.submitMessage(sessionId, {
         displayText,
         outgoing,
@@ -391,10 +417,23 @@
       return;
     }
 
+    // Esc leaves the queued message being edited as it was.
+    if (e.key === 'Escape' && queuedEdit) {
+      e.preventDefault();
+      messageStore.cancelQueuedEdit(sessionId);
+      return;
+    }
+
+    if (e.key === 'Alt') altHeld = true;
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSubmit();
+      handleSubmit({ steer: steersWith(e.altKey) });
     }
+  }
+
+  function handleKeyup(e: KeyboardEvent) {
+    if (e.key === 'Alt') altHeld = false;
   }
 
   function autoResize() {
@@ -486,10 +525,7 @@
   }
 
   function handleStop() {
-    messageStore.markSessionStopped(sessionId, { byUser: true });
-    // A stopped turn may report no result, so nothing else would end it.
-    arrivalScene.end(sessionId);
-    void window.groveBench.stopSession(sessionId);
+    interruptTurn(sessionId);
   }
 
   // ─── Drag & Drop ───
@@ -663,6 +699,15 @@
   <!-- Queued messages (waiting for the agent to be free) -->
   <MessageQueue {sessionId} />
 
+  {#if queuedEdit}
+    <div class="flex items-center gap-2 px-4 pt-2 text-xs text-muted-foreground" data-testid="queued-edit">
+      <span class="text-primary">Editing</span>
+      <span class="min-w-0 truncate">queued message {queuedEdit.position}. Enter saves it in its place.</span>
+      <span class="flex-1"></span>
+      <Button variant="quiet" size="inline" onclick={() => messageStore.cancelQueuedEdit(sessionId)} title="Leave the queued message as it was (Esc)">Cancel</Button>
+    </div>
+  {/if}
+
   <div class="flex gap-2 items-end px-4 pb-3 pt-2">
     <!-- Hidden file input for picker -->
     <input
@@ -704,8 +749,14 @@
         spellcheck={settingsStore.current.spellcheck}
         oninput={handleInput}
         onkeydown={handleKeydown}
+        onkeyup={handleKeyup}
+        onblur={() => (altHeld = false)}
         onpaste={handlePaste}
-        placeholder={(showSuggestion ? suggestion : null) ?? (willQueue ? 'Message (Enter to queue, sent when the agent is free)' : 'Message (Enter to send, @ for files, / for commands, ! for shell)')}
+        placeholder={(showSuggestion ? suggestion : null) ?? (queuedEdit
+          ? 'Queued message (Enter saves it, Esc cancels)'
+          : steerable
+            ? (enterSteers ? 'Message (Enter to steer into this turn, Alt+Enter to queue)' : 'Message (Enter to queue, Alt+Enter to steer into this turn)')
+            : willQueue ? 'Message (Enter to queue, sent when the agent is free)' : 'Message (Enter to send, @ for files, / for commands, ! for shell)')}
         aria-keyshortcuts={showSuggestion ? 'Tab' : undefined}
         rows="1"
         class="flex-1 min-w-0 bg-card border border-input px-3 py-[7px] text-sm text-foreground
@@ -721,12 +772,18 @@
     <Button
       variant="default"
       size="icon"
-      onclick={handleSubmit}
+      onclick={(e: MouseEvent) => handleSubmit({ steer: steersWith(e.altKey) })}
       disabled={!canSend}
-      title={willQueue ? 'Add to the queue; sent once the agent is free' : 'Send now'}
-      aria-label={willQueue ? 'Queue' : 'Send'}
+      title={queuedEdit
+        ? 'Save it in its place in the queue'
+        : steerNow
+          ? 'Steer it into this turn: the agent reads it after its current tool call. You have 5 seconds to take it back.'
+          : steerable
+            ? `Add to the queue; sent once the agent is free. ${enterSteers ? 'Enter' : 'Alt+Enter'} steers it into this turn.`
+            : willQueue ? 'Add to the queue; sent once the agent is free' : 'Send now'}
+      aria-label={queuedEdit ? 'Save queued message' : steerNow ? 'Steer' : willQueue ? 'Queue' : 'Send'}
     >
-      {#if willQueue}<ListPlusIcon />{:else}<ArrowUpIcon />{/if}
+      {#if queuedEdit}<CheckIcon />{:else if steerNow}<CornerDownRightIcon />{:else if willQueue}<ListPlusIcon />{:else}<ArrowUpIcon />{/if}
     </Button>
     {#if isRunning}
       <Button variant="outline-destructive" size="icon" onclick={handleStop} title="Stop the agent" aria-label="Stop">

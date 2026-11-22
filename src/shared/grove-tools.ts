@@ -6,11 +6,25 @@
 export const GROVE_TOOL_NAMES = {
   'grove-memory': ['memory_list', 'memory_read', 'memory_write', 'memory_delete'],
   'grove-preview': ['preview_open', 'preview_screenshot', 'preview_read', 'preview_logs', 'preview_click', 'preview_type'],
+  'grove-followups': ['followup_add', 'followup_list', 'followup_done'],
 } as const;
 
 export type GroveServerName = keyof typeof GROVE_TOOL_NAMES;
 
+type GroveToolName = (typeof GROVE_TOOL_NAMES)[GroveServerName][number];
+
+/** Grove's tools the Thread tab's Summary still shows, where it hides the
+ *  rest of Grove's: adding a follow-up and marking one done change what is
+ *  left for later threads. Typed against the table, so a rename there
+ *  can't leave this list behind. */
+export const GROVE_TOOLS_IN_SUMMARY: ReadonlySet<string> = new Set<GroveToolName>(['followup_add', 'followup_done']);
+
 export const GROVE_SERVER_NAMES = Object.keys(GROVE_TOOL_NAMES) as GroveServerName[];
+
+/** A Grove tool's name in the forms groveToolOf reads (see there). */
+const SERVERS = GROVE_SERVER_NAMES.join('|');
+const NAMED = new RegExp(`^(?:mcp__)?(${SERVERS})(?:__|_)(\\w+)$`);
+const TITLED = new RegExp(`^(\\w+) \\((${SERVERS}) MCP Server\\)$`);
 
 /**
  * Which of Grove's tools a call is, from the name the agent gives it, in the
@@ -22,9 +36,9 @@ export const GROVE_SERVER_NAMES = Object.keys(GROVE_TOOL_NAMES) as GroveServerNa
  */
 export function groveToolOf(name: string): { server: GroveServerName; tool: string } | null {
   const trimmed = name.trim();
-  const named = /^(?:mcp__)?(grove-memory|grove-preview)(?:__|_)(\w+)$/.exec(trimmed);
+  const named = NAMED.exec(trimmed);
   if (named) return { server: named[1] as GroveServerName, tool: named[2] };
-  const titled = /^(\w+) \((grove-memory|grove-preview) MCP Server\)$/.exec(trimmed);
+  const titled = TITLED.exec(trimmed);
   return titled ? { server: titled[2] as GroveServerName, tool: titled[1] } : null;
 }
 

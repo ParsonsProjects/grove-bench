@@ -27,15 +27,19 @@ import { z } from 'zod';
 import { asarUnpackedPath, cleanEnv, isPathInside, toolCallSpecifier, readableStreamToAsyncIterable } from '../agent-utils.js';
 import { decideToolCall, groveServersOf, type PolicyDecision } from '../tool-policy.js';
 import { categoryForView, claudeToolView } from '../../shared/tool-view.js';
+import { nonNegative } from '../../shared/limits.js';
 import { attachedFilesNote } from './file-attachments.js';
+import { SteerTracker, STEER_HOLD_MS, type SteerObservation } from './claude-steers.js';
 import { checkKeyWithGet, type KeyCheckFetch } from './key-check.js';
 import { createMemoryMcpServer } from './memory-mcp-server.js';
 import { createPreviewMcpServer } from './preview-mcp-server.js';
+import { followUpsServer } from './grove-tools.js';
+import { toSdkMcpServer } from './sdk-mcp.js';
 import * as skillsModule from '../skills.js';
 import { accountEnv, accountSignInCommand, type ClaudeAccount } from './claude-accounts.js';
 import { logger } from '../logger.js';
 import { writeFileAtomic } from '../fs-utils.js';
-import { RunningCost, RunningTokens } from './running-cost.js';
+import { RunningCost, RunningModels, RunningTokens, type RunningModel } from './running-cost.js';
 import { runProcess, spawnProcess, type HostedOptions, type HostedProcess, type ProcessResult } from '../process-host.js';
 import { runInAgentHost, type AgentHostRunOptions } from '../process-host-run.js';
 import { windowsExeName } from '../process-memory.js';
@@ -222,6 +226,8 @@ interface MessageContext {
   cost?: RunningCost;
   /** The same for its running token totals. */
   tokens?: RunningTokens;
+  /** Splits each turn's tokens and cost by model. */
+  models?: RunningModels;
   /** Shown when the API refuses the sign-in. CLAUDE_AUTH_ERROR_MESSAGE when
    *  unset; an account agent names its own. */
   authErrorMessage?: string;
@@ -626,6 +632,8 @@ export function transformMessage(
         outputTokens?: number;
         cacheReadInputTokens?: number;
         cacheCreationInputTokens?: number;
+        costUSD?: number;
+        canonicalModel?: string;
       }> | undefined;
       const mainUsage = modelUsage
         ? Object.values(modelUsage).reduce<(typeof modelUsage)[string] | undefined>((best, u) => {
@@ -650,23 +658,41 @@ export function transformMessage(
         input: sum.input + (u.inputTokens ?? 0) + (u.cacheReadInputTokens ?? 0) + (u.cacheCreationInputTokens ?? 0),
         output: sum.output + (u.outputTokens ?? 0),
       }), { input: 0, output: 0 }) : undefined;
+      // Each model's running totals, for the turn's split by model. Shown
+      // under the id its price was looked up by, which leaves off provider
+      // prefixes and aliases.
+      const runningModels: RunningModel[] = modelUsage ? Object.entries(modelUsage).map(([key, u]) => ({
+        key,
+        model: u.canonicalModel || key,
+        input: (u.inputTokens ?? 0) + (u.cacheReadInputTokens ?? 0) + (u.cacheCreationInputTokens ?? 0),
+        output: u.outputTokens ?? 0,
+        costUsd: nonNegative(u.costUSD),
+      })) : [];
       // The session totals are the trackers' rather than the result's, which
       // a failed start or crash can report zeroed: saved as the totals to
       // resume from, those would count the earlier turns again.
       const cost = ctx.cost ?? new RunningCost();
       const tokens = ctx.tokens ?? new RunningTokens();
+      const models = ctx.models ?? new RunningModels();
+      const turnCostUsd = runningCost !== undefined ? cost.turnCost(runningCost, message.is_error) : undefined;
+      const turnTokens = runningTokens ? tokens.turnTokens(runningTokens, message.is_error) : undefined;
+      const turnModels = models.turnModels(runningModels, { ...(turnTokens ?? { input: 0, output: 0 }), ...(turnCostUsd !== undefined ? { costUsd: turnCostUsd } : {}) }, message.is_error);
       events.push({
         type: 'result',
         subtype: message.subtype,
         result: 'result' in message ? message.result : undefined,
         structured_output: 'structured_output' in message ? message.structured_output : undefined,
-        ...(runningCost !== undefined ? {
-          totalCostUsd: cost.turnCost(runningCost, message.is_error),
+        ...(turnCostUsd !== undefined ? {
+          totalCostUsd: turnCostUsd,
           sessionCostUsd: cost.total,
         } : {}),
-        ...(runningTokens ? {
-          turnTokens: tokens.turnTokens(runningTokens, message.is_error),
+        ...(turnTokens ? {
+          turnTokens,
           sessionTokens: tokens.total,
+        } : {}),
+        ...(runningModels.length > 0 ? {
+          ...(turnModels.length > 0 ? { models: turnModels } : {}),
+          sessionModels: models.totals,
         } : {}),
         durationMs: message.duration_ms,
         isError: message.is_error,
@@ -764,6 +790,7 @@ export function transformMessage(
       if (message.trigger === 'clear') {
         ctx.cost = new RunningCost();
         ctx.tokens = new RunningTokens();
+        ctx.models = new RunningModels();
       }
       break;
     }
@@ -1735,6 +1762,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     skills: true,
     usage: true,
     compact: true,
+    steering: true,
     imageAttachments: true,
     structuredOutput: true,
     sandbox: true,
@@ -1998,6 +2026,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       mcpServers = { ...(mcpServers ?? {}), 'grove-preview': previewServer };
     }
 
+    // Follow-ups for later threads. Run without a prompt, like memory.
+    if (config.followUpOperations) {
+      const followUps = await toSdkMcpServer(followUpsServer(config.followUpOperations));
+      mcpServers = { ...(mcpServers ?? {}), 'grove-followups': followUps };
+    }
+
     // Create input stream for multi-turn conversations
     let inputController: ReadableStreamDefaultController<SDKUserMessage> | null = null;
     const inputStream = new ReadableStream<SDKUserMessage>({
@@ -2180,32 +2214,75 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       groveMode: config.permissionMode,
       cost: new RunningCost(config.resumeSessionId ? (config.priorCostUsd ?? null) : null),
       tokens: new RunningTokens(config.resumeSessionId ? (config.priorTokens ?? null) : null),
+      models: new RunningModels(config.resumeSessionId ? (config.priorModels ?? null) : null),
       authErrorMessage: this.authErrorMessage,
     };
 
     // Create the async event generator
+    // Steers sent into the running turn, and the result held while one is
+    // unread (claude-steers.ts).
+    const steers = new SteerTracker();
+
+    function* handleMessage(message: SDKMessage): Generator<AdapterEvent> {
+      // Capture session ID from system_init
+      if (message.type === 'system' && message.subtype === 'init') {
+        sessionId = message.session_id;
+      }
+
+      // The conversation to resume is gone. Say so instead of passing on
+      // the error result, so the session manager can start a new one.
+      const missing = config.resumeSessionId ? missingConversationError(message) : null;
+      if (missing) throw new ResumeNotFoundError(missing);
+
+      yield* transformMessage(message, ctx);
+    }
+
+    function* handleObservation(seen: SteerObservation): Generator<AdapterEvent> {
+      yield* seen.events;
+      for (const message of seen.pass) yield* handleMessage(message);
+    }
+
     async function* eventGenerator(): AsyncGenerator<AdapterEvent> {
-      for await (const message of q) {
-        if (abortController.signal.aborted) break;
+      const messages = q[Symbol.asyncIterator]();
+      // A read still waiting for the next message: kept across a hold that
+      // ran out, asked for afresh after each message is handled.
+      let pending: Promise<IteratorResult<SDKMessage>> | null = null;
+      // When a held result goes out anyway: STEER_HOLD_MS from when it was
+      // held, however many other messages (a subagent's) arrive meanwhile.
+      let holdUntil: number | null = null;
+      try {
+        for (;;) {
+          pending ??= messages.next();
+          if (!steers.holding) holdUntil = null;
+          else holdUntil ??= Date.now() + STEER_HOLD_MS;
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const step = await (holdUntil !== null
+            ? Promise.race([pending, new Promise<'hold-over'>((resolve) => { timer = setTimeout(() => resolve('hold-over'), Math.max(0, holdUntil! - Date.now())); })])
+            : pending);
+          clearTimeout(timer);
+          if (step === 'hold-over') {
+            holdUntil = null;
+            yield* handleObservation(steers.holdOver());
+            continue;
+          }
+          pending = null;
+          if (step.done) break;
+          const message = step.value;
+          if (abortController.signal.aborted) break;
 
-        // A subagent's token stream makes no events (see transformMessage):
-        // skip it before any other work. The SDK has parsed it already.
-        if (message.type === 'stream_event' && message.parent_tool_use_id) continue;
+          // A subagent's token stream makes no events (see transformMessage):
+          // skip it before any other work. The SDK has parsed it already.
+          if (message.type === 'stream_event' && message.parent_tool_use_id) continue;
 
-        // Capture session ID from system_init
-        if (message.type === 'system' && message.subtype === 'init') {
-          sessionId = message.session_id;
+          yield* handleObservation(steers.observe(message));
         }
-
-        // The conversation to resume is gone. Say so instead of passing on
-        // the error result, so the session manager can start a new one.
-        const missing = config.resumeSessionId ? missingConversationError(message) : null;
-        if (missing) throw new ResumeNotFoundError(missing);
-
-        const agentEvents = transformMessage(message, ctx);
-        for (const event of agentEvents) {
-          yield event;
-        }
+        // A result still held when the stream ends goes out with it.
+        if (!abortController.signal.aborted) yield* handleObservation(steers.release());
+      } finally {
+        // As for await does on an early exit: close the query. Not waited on
+        // while a read is still out, which would wait for that message.
+        if (pending) void messages.return?.();
+        else await messages.return?.();
       }
     }
 
@@ -2229,6 +2306,24 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           message: { role: 'user', content: userMessageContent(message) },
           parent_tool_use_id: null,
         } as SDKUserMessage);
+      },
+
+      steer(message: UserMessage, uuid: string) {
+        // Thrown, so the session manager queues it for the next turn rather
+        // than waiting on a read that can't come.
+        if (!inputController) throw new Error("the agent's input is closed");
+        // 'next': read once the tool calls in flight finish. 'now' would
+        // cancel them and report them refused (claude-steers.ts). Tracked
+        // only once it is in the stream.
+        inputController.enqueue({
+          type: 'user',
+          uuid,
+          priority: 'next',
+          session_id: sessionId ?? '',
+          message: { role: 'user', content: userMessageContent(message) },
+          parent_tool_use_id: null,
+        } as SDKUserMessage);
+        steers.add(uuid);
       },
 
       abort() {

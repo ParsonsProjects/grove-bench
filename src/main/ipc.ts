@@ -45,6 +45,7 @@ import * as skillSuggestions from './skill-suggestions.js';
 import * as memory from './memory.js';
 import * as memoryCompact from './memory-compact.js';
 import * as bookmarks from './bookmarks.js';
+import * as followUps from './follow-ups.js';
 import { deleteSchedule, listSchedules, recordScheduleRun, saveSchedule } from './skill-schedules.js';
 import { linkSkills, setSkillReach, skillSharing } from './skill-sharing.js';
 import { CLAUDE_SKILL_DIRS, markWorktreeOnly, readSkillFile, readsSharedSkills, saveSkillFile, type SkillDirs } from './skills.js';
@@ -57,6 +58,7 @@ import { perfSteps, logWindowTiming } from './perf-steps.js';
 import { recordTrace, lastTracePath } from './perf-trace.js';
 import { perfLogPath } from './perf-log.js';
 import { detectPackageManager, installDependencies, type PackageManager } from './deps-install.js';
+import { commandLine, hasSubmodules, initSubmodules, readSubmoduleConfig, submoduleArgs, submoduleEnv } from './worktree-submodules.js';
 import { applyAttentionBadge } from './attention-badge.js';
 import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
 import crypto from 'node:crypto';
@@ -163,8 +165,11 @@ function sanitizeWorktreeRelPath(worktreePath: string, filePath: string): { relP
  *  git's optional locks, as git-status's "Background refresh" advises: else
  *  it rewrites the index as it reads, and that lock can make a git command
  *  typed in the terminal meanwhile fail ("index.lock exists"). The diffs
- *  after it still can, once, after files change: diff ignores the setting. */
-const statusGit = (cwd: string, timeout?: number) => git(['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd, { optionalLocks: false, timeout });
+ *  after it still can, once, after files change: diff ignores the setting.
+ *  --ignore-submodules=untracked: a checked-out submodule still shows as
+ *  changed when a file git tracks in it is, but git doesn't walk each
+ *  submodule's folders for new files on every refresh. */
+const statusGit = (cwd: string, timeout?: number) => git(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=untracked'], cwd, { optionalLocks: false, timeout });
 
 /** A git timeout the window asked for, in ms: a positive number, or none. */
 function requestedTimeout(ms: unknown): number | undefined {
@@ -344,6 +349,31 @@ export function registerHandlers() {
       checksDone();
     }
   });
+
+  /**
+   * A linked project's new worktree's submodules, as a thread's own get
+   * them (worktree-submodules.ts): git worktree add leaves them empty.
+   * Before untracked files are copied and dependencies installed, for the
+   * same reasons. Null when done or not asked for in Settings; else what to
+   * tell the user. Throws only when `signal` aborts.
+   */
+  async function linkSubmodules(dir: string, project: string, signal: AbortSignal, onStart?: () => void): Promise<string | null> {
+    const submodules = settings.getSettings().submoduleSetup ?? 'off';
+    if (submodules === 'off' || !(await hasSubmodules(dir))) return null;
+    onStart?.();
+    const config = await readSubmoduleConfig(dir);
+    const args = submoduleArgs(submodules, config.active);
+    try {
+      await initSubmodules(dir, args, submoduleEnv(process.env, config), signal);
+      logger.info(`Submodules set up in linked worktree ${dir} (${submodules})`);
+      return null;
+    } catch (e) {
+      if (signal.aborted) throw e;
+      logger.warn(`Submodule setup failed for linked worktree ${dir}:`, e);
+      const detail = (e as Error | null)?.message || String(e);
+      return `Not all of ${project}'s submodules could be set up, so some of their folders may be empty in its worktree:\n${detail}\n\nOnce that's sorted, run this in ${dir}:\n${commandLine(args)}`;
+    }
+  }
 
   /**
    * The other projects a new thread asks to work in
@@ -540,6 +570,32 @@ export function registerHandlers() {
         perfSteps.step(id, 'worktree');
         signal.throwIfAborted();
 
+        // Submodules: git worktree add leaves them as empty folders
+        // (worktree-submodules.ts). Before the files are copied, as a copied
+        // file inside one would leave its folder not empty, and git won't
+        // clone into that; and before the install, which may need them.
+        const submodules = settings.getSettings().submoduleSetup ?? 'off';
+        if (submodules !== 'off' && await hasSubmodules(worktree.path)) {
+          emitPrelaunch({ type: 'status', message: 'Setting up submodules…' });
+          const config = await readSubmoduleConfig(worktree.path);
+          const args = submoduleArgs(submodules, config.active);
+          try {
+            await initSubmodules(worktree.path, args, submoduleEnv(process.env, config), signal);
+            perfSteps.step(id, 'submodules');
+            logger.info(`Submodules set up in worktree ${worktree.id} (${submodules})`);
+          } catch (e) {
+            if (signal.aborted) throw e;
+            perfSteps.step(id, 'submodules (failed)');
+            logger.warn(`Submodule setup failed for worktree ${worktree.id}:`, e);
+            const detail = (e as Error | null)?.message || String(e);
+            emitPrelaunch({
+              type: 'error',
+              message: `Not all of the project's submodules could be set up, so some of their folders may be empty in this thread:\n${detail}\n\nOnce that's sorted, run this in the Terminal tab:\n${commandLine(args)}`,
+            });
+          }
+          signal.throwIfAborted();
+        }
+
         // Auto-copy untracked files (.env, etc.)
         try {
           const config = await worktreeManager.getRepoConfig(opts.repoPath);
@@ -598,6 +654,10 @@ export function registerHandlers() {
           try {
             const link = await worktreeManager.createLink(id, { repoPath: plan.repoPath, branchName: branch, baseBranch: plan.baseBranch, useExisting: plan.useExisting });
             perfSteps.step(id, `link ${project}`);
+            const submoduleError = await linkSubmodules(link.path, project, signal,
+              () => emitPrelaunch({ type: 'status', message: `Setting up ${project}'s submodules…` }));
+            if (submoduleError) emitPrelaunch({ type: 'error', message: submoduleError });
+            signal.throwIfAborted();
             try {
               const config = await worktreeManager.getRepoConfig(plan.repoPath);
               if (config.copyFiles.length > 0) await worktreeManager.copyProjectFiles(plan.repoPath, link.path, config.copyFiles);
@@ -800,7 +860,7 @@ export function registerHandlers() {
     if (!plan) throw new Error("A thread can't link its own project.");
     const link = await worktreeManager.createLink(id, { repoPath: plan.repoPath, branchName: worktree.branch, baseBranch: plan.baseBranch, useExisting: plan.useExisting });
     const project = path.basename(plan.repoPath);
-    let warning: string | undefined;
+    let warning = (await linkSubmodules(link.path, project, new AbortController().signal)) ?? undefined;
     try {
       const config = await worktreeManager.getRepoConfig(plan.repoPath);
       if (config.copyFiles.length > 0) await worktreeManager.copyProjectFiles(plan.repoPath, link.path, config.copyFiles);
@@ -816,9 +876,9 @@ export function registerHandlers() {
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
           logger.warn(`${manager} install failed in ${link.path}:`, e);
-          warning = `${manager} install failed in ${project}, so its worktree has no dependencies installed: ${errorMessage(e)}`;
+          warning = [warning, `${manager} install failed in ${project}, so its worktree has no dependencies installed: ${errorMessage(e)}`].filter(Boolean).join('\n\n');
         } else if (manager !== 'npm') {
-          warning = `${project} uses ${manager}, which isn't installed or isn't on PATH, so its worktree's dependencies weren't installed.`;
+          warning = [warning, `${project} uses ${manager}, which isn't installed or isn't on PATH, so its worktree's dependencies weren't installed.`].filter(Boolean).join('\n\n');
         }
       }
     }
@@ -1232,6 +1292,13 @@ export function registerHandlers() {
     );
   });
 
+  // A steer: a message into the turn that is running now. The renderer
+  // queues it instead when this says it didn't go.
+  ipcMain.handle(IPC.AGENT_STEER, (_event, sessionId: unknown, content: unknown, uuid: unknown) =>
+    typeof sessionId === 'string' && typeof content === 'string' && typeof uuid === 'string'
+      ? sessionManager.steerMessage(sessionId, content, uuid)
+      : 'not-running');
+
   // The file name is checked against the stored-name pattern, so it can't
   // reach outside the conversation's attachments folder.
   ipcMain.handle(IPC.ATTACHMENT_OPEN, (_event, sessionId: unknown, file: unknown) =>
@@ -1455,6 +1522,9 @@ export function registerHandlers() {
   // The id names the thread's log file: a plain name only.
   ipcMain.handle(IPC.LIMITS_THREAD_USAGE, (_event, sessionId: unknown): Promise<ThreadUsage> | ThreadUsage =>
     isThreadId(sessionId) ? sessionManager.threadUsage(sessionId) : { spendUsd: 0, tokens: { input: 0, output: 0 } });
+
+  ipcMain.handle(IPC.USAGE_SUMMARY, (_event, since: unknown) =>
+    sessionManager.usageSummary(typeof since === 'number' && Number.isFinite(since) ? since : null));
 
   ipcMain.handle(IPC.AGENT_HISTORY, (_event, sessionId: string) => {
     const prelaunch = prelaunchEvents.get(sessionId) ?? [];
@@ -2462,6 +2532,44 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.BOOKMARK_UPDATE, (_event, id: string, patch: Partial<Pick<import('../shared/types.js').Bookmark, 'note' | 'eventIndex'>>) => {
     bookmarks.updateBookmark(id, patch);
+  });
+
+  // ─── Follow-ups ───
+
+  ipcMain.handle(IPC.FOLLOW_UPS_LIST, () => followUps.listFollowUps());
+
+  // Added by hand, from the Follow-ups drawer or the board. Nothing names
+  // the thread it came from: it came from you.
+  ipcMain.handle(IPC.FOLLOW_UP_ADD, async (_event, repoPath: unknown, title: unknown, details: unknown) => {
+    if (typeof repoPath !== 'string' || !repoPath || typeof title !== 'string' || typeof details !== 'string') {
+      throw new Error('A follow-up needs a project and a title.');
+    }
+    // Only a project Grove Bench lists: one for any other path would never
+    // show, in the drawer's count or on the board.
+    if (!listProjects(await worktreeManager.listRepos()).includes(repoPath)) {
+      throw new Error("That project isn't in Grove Bench any more. Add it again, or pick another.");
+    }
+    return followUps.addFollowUp({ repoPath, title, details, byUser: true });
+  });
+
+  ipcMain.handle(IPC.FOLLOW_UP_SET_DONE, (_event, id: string, done: boolean) => {
+    if (done) followUps.markFollowUpDone(id);
+    else followUps.reopenFollowUp(id);
+  });
+
+  ipcMain.handle(IPC.FOLLOW_UP_STARTED, (_event, id: string, sessionId: string) => {
+    followUps.markFollowUpStarted(id, sessionId);
+  });
+
+  ipcMain.handle(IPC.FOLLOW_UP_REMOVE, (_event, id: string) => {
+    followUps.removeFollowUp(id);
+  });
+
+  // An agent adding one (or another window changing one) shows at once.
+  followUps.onFollowUpsChanged((change) => {
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send(IPC.FOLLOW_UPS_CHANGED, change);
+    }
   });
 
   // ─── Settings ───

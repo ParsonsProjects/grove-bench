@@ -401,6 +401,25 @@ describe('global sweep', () => {
     expect(fetchesOf(B)).toBe(1); // idle: only the first sweep
   });
 
+  it('refreshes threads with a PR every sweep while the board shows, and sweeps as it opens', async () => {
+    // A has a PR, B has none.
+    mockGroveBench.getPrs.mockImplementation(async (id: string) => (id === A ? [{ number: 7, url: 'u', state: 'OPEN' }] : []));
+    prStore.startGlobalPolling(() => [A, B]);
+    await vi.advanceTimersByTimeAsync(60_000); // first sweep: both fetched
+    expect([fetchesOf(A), fetchesOf(B)]).toEqual([1, 1]);
+
+    prStore.setBoardShowing(true);
+    await vi.advanceTimersByTimeAsync(0); // the board opening sweeps at once
+    expect(fetchesOf(A)).toBe(2);
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(fetchesOf(A)).toBe(4);
+    expect(fetchesOf(B)).toBe(1); // no PR: idle cadence still
+
+    prStore.setBoardShowing(false);
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(fetchesOf(A)).toBe(4); // back to idle once the board closes
+  });
+
   it('keeps a conversation on the full rate for 10 minutes after leaving it', async () => {
     mockGroveBench.getPrs.mockResolvedValue([]);
     prStore.startGlobalPolling(() => [A]);

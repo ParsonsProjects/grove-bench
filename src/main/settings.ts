@@ -2,7 +2,7 @@ import path from 'node:path';
 import { app, BrowserWindow, nativeTheme } from 'electron';
 import { NIGHT, PAPER } from '../shared/brand.js';
 import { z } from 'zod';
-import type { GroveBenchSettings } from '../shared/types.js';
+import { SUBMODULE_SETUPS, type GroveBenchSettings } from '../shared/types.js';
 import { effectiveCompactTimeoutSeconds } from '../shared/compact-timeout.js';
 import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-state.js';
 import { readJsonFile, writeFileAtomicSync } from './json-file.js';
@@ -37,6 +37,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 
   // Worktree
   autoInstallDeps: false,
+  submoduleSetup: 'off',
   worktreeFolder: '', // empty = the app's data folder
 
   // Preview
@@ -57,11 +58,13 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   // Appearance
   repoColors: {},
   groveCharacters: true,
+  boardView: false,
 
   // Editor
   diffViewMode: 'unified',
   defaultActivityView: 'summary',
   spellcheck: true,
+  steerOnEnter: false,
 
   // Notifications
   notifyOnTurnComplete: true,
@@ -258,6 +261,7 @@ const settingsSchema = z.object({
   backgroundModels: z.record(z.string(), z.string()).catch(DEFAULT_SETTINGS.backgroundModels),
 
   autoInstallDeps: z.boolean().catch(DEFAULT_SETTINGS.autoInstallDeps),
+  submoduleSetup: z.enum(SUBMODULE_SETUPS).catch(DEFAULT_SETTINGS.submoduleSetup),
   worktreeFolder: z.string().trim().catch(DEFAULT_SETTINGS.worktreeFolder),
 
   previewAgentTools: z.boolean().catch(DEFAULT_SETTINGS.previewAgentTools),
@@ -273,10 +277,12 @@ const settingsSchema = z.object({
 
   repoColors: z.record(z.string(), hexColor).catch(DEFAULT_SETTINGS.repoColors),
   groveCharacters: z.boolean().catch(DEFAULT_SETTINGS.groveCharacters),
+  boardView: z.boolean().catch(DEFAULT_SETTINGS.boardView),
 
   diffViewMode: z.enum(['unified', 'side-by-side']).catch(DEFAULT_SETTINGS.diffViewMode),
   defaultActivityView: z.enum(['detailed', 'summary', 'focus']).catch(DEFAULT_SETTINGS.defaultActivityView),
   spellcheck: z.boolean().catch(DEFAULT_SETTINGS.spellcheck),
+  steerOnEnter: z.boolean().catch(DEFAULT_SETTINGS.steerOnEnter),
 
   notifyOnTurnComplete: z.boolean().catch(DEFAULT_SETTINGS.notifyOnTurnComplete),
   notifyOnPermission: z.boolean().catch(DEFAULT_SETTINGS.notifyOnPermission),

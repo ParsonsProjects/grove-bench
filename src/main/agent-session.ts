@@ -1,6 +1,6 @@
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { AgentSystemInfo, SessionInfo, SessionStatus, AgentEvent, ThreadUsage, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls, ThreadTurnState, EventHistoryPage, LinkedCheckout } from '../shared/types.js';
+import type { AgentSystemInfo, SessionInfo, SessionStatus, AgentEvent, ThreadUsage, UsageSummary, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls, ThreadTurnState, EventHistoryPage, LinkedCheckout } from '../shared/types.js';
 import { CONTROL_IDS, MCP_SIGN_IN_TIMEOUT_MS, isMcpServerDown, isPermissionMode, subagentParent } from '../shared/types.js';
 import { userEventText } from '../shared/prompt-text.js';
 import { errorMessage } from '../shared/error-message.js';
@@ -19,12 +19,13 @@ import * as settings from './settings.js';
 import * as memory from './memory.js';
 import * as memoryAutosave from './memory-autosave.js';
 import * as memoryCompact from './memory-compact.js';
+import * as followUps from './follow-ups.js';
 import { adapterRegistry } from './adapters/index.js';
 import { isClaudeAccountId, removedAccountMessage } from './adapters/claude-accounts.js';
 import type { AgentAdapter, AgentQueryHandle, UserMessage } from './adapters/types.js';
 import { audioSentInline, inlineAudioType } from './adapters/file-attachments.js';
 import { ResumeNotFoundError } from './adapters/types.js';
-import { lastRunningCost, lastRunningTokens } from './adapters/running-cost.js';
+import { lastRunningCost, lastRunningModels, lastRunningTokens } from './adapters/running-cost.js';
 import { getGitIdentity } from './git.js';
 import { capToolResult, findRewindForkPoint, isAuthFailure, lastTurnUuid } from './agent-utils.js';
 import { hasApiKey, isApiKeyRejected, markApiKeyRejected } from './credentials.js';
@@ -34,7 +35,8 @@ import { noGitCheckpoints } from './no-git-checkpoints.js';
 import { within } from './within.js';
 import { previewManager } from './preview.js';
 import type { Emit, ManagedSession, SessionCompletionResult } from './session-types.js';
-import { SessionEventStore, TRANSIENT_EVENT_TYPES, eventLogPath } from './session-event-store.js';
+import { SessionEventStore, TRANSIENT_EVENT_TYPES, eventLogPath, getEventsDir } from './session-event-store.js';
+import { UsageLedger, eventLogSources, recordOf, summarize, usageLedgerPath } from './usage-ledger.js';
 import { lastSystemInit, systemInfoOf } from '../shared/live-events.js';
 import { StreamDeltas, isStreamDelta } from './session-stream.js';
 import {
@@ -82,6 +84,9 @@ type RunError = {
   exitCode?: number | string;
   code?: number | string;
 };
+
+/** A steer's uuid, as the renderer makes it (crypto.randomUUID). */
+const STEER_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Whether `session` is in a turn: from the prompt's user_message (still on
  *  its way to the agent, see unsentPrompts) or the agent starting to reply,
@@ -185,6 +190,8 @@ class AgentSessionManager {
   private eventListeners = new Map<string, ((event: AgentEvent) => void)[]>();
 
   private events = new SessionEventStore();
+  /** Every turn's usage, across threads, for the Usage dialog. */
+  private usage = new UsageLedger(usageLedgerPath, async () => eventLogSources(getEventsDir(), await worktreeManager.threadLabels()));
   private skills = new SessionSkills();
   private promptSuggestions = new SessionPromptSuggestions();
 
@@ -631,6 +638,7 @@ class AgentSessionManager {
         write: (p, c) => memory.writeMemoryFile(session.repoPath, p, c),
         delete: (p) => memory.deleteMemoryFile(session.repoPath, p),
       },
+      followUpOperations: followUps.followUpOperationsFor(session),
       previewOperations: currentSettings.previewAgentTools
         ? previewManager.operationsFor(id, session.worktreePath, session.repoPath)
         : null,
@@ -644,6 +652,7 @@ class AgentSessionManager {
       resumeAtUuid: caps.resume && caps.rewind ? resumeAtUuid : null,
       priorCostUsd: caps.resume && session.providerSessionId ? lastRunningCost(session.eventHistory) : null,
       priorTokens: caps.resume && session.providerSessionId ? lastRunningTokens(session.eventHistory) : null,
+      priorModels: caps.resume && session.providerSessionId ? lastRunningModels(session.eventHistory) : null,
       toolAllowRules: currentSettings.toolAllowRules,
       toolDenyRules: currentSettings.toolDenyRules,
       alwaysAllowedTools: session.alwaysAllowedTools,
@@ -752,6 +761,14 @@ class AgentSessionManager {
     // Process event stream from the adapter
     try {
       for await (const adapterEvent of handle.events) {
+        // A steer the agent read or let go (claude-steers.ts): these are the
+        // session manager's own, never passed on as they are.
+        if (adapterEvent.type === 'steer_read' || adapterEvent.type === 'steer_dropped') {
+          // Not from a run that was stopped or replaced: its steers went
+          // back to the window already (returnUnreadSteers).
+          if (session.queryHandle === handle) this.settleSteer(session, adapterEvent);
+          continue;
+        }
         if (!TRANSIENT_EVENT_TYPES.has(adapterEvent.type)) {
           logger.debug(`[runQuery] session=${id} event type=${adapterEvent.type}`);
         }
@@ -947,6 +964,8 @@ class AgentSessionManager {
     // would leave the text it streamed last waiting on the timer. Those
     // return below with no status, which would send it.
     this.flushStream(session);
+    // This run's agent has gone, and with it any steer it hadn't read.
+    this.returnUnreadSteers(session, session.stoppedByUser, handle);
     // A close or delete decides itself, once the agent is dead, whether the
     // turn ended (see shutDown).
     if (session.turnHandle === handle && !session.destroying) session.turnHandle = null;
@@ -1022,6 +1041,8 @@ class AgentSessionManager {
     emit: Emit,
   ): Promise<void> {
     const { id } = session;
+    // When the turn ended, for the Usage dialog's ranges.
+    event.at ??= Date.now();
     let logged!: () => void;
     const logging = new Promise<void>((resolve) => { logged = resolve; });
     session.resultLogging = logging;
@@ -1041,6 +1062,8 @@ class AgentSessionManager {
       turnEnded(session.limits, event);
       const { threadSpendUsd, threadTokens } = session.limits;
       if (threadSpendUsd !== spent || threadTokens.input !== input || threadTokens.output !== output) this.saveThreadLimits(session);
+      const record = recordOf(event, { id, agent: session.adapter.id, repoPath: session.repoPath, title: session.displayName || session.branch });
+      if (record) this.usage.record(record);
       session.lastResult = {
         isError: event.isError,
         totalCostUsd: event.totalCostUsd,
@@ -1244,6 +1267,77 @@ class AgentSessionManager {
       return false;
     }
     return true;
+  }
+
+  /**
+   * Send `content` into the turn that is running now (a steer), for the agent
+   * to read once its current tool calls finish. It joins the history only
+   * when the agent reads it, as a user_message marked `steer`, so the thread
+   * shows it where the agent took it in (settleSteer). It takes no
+   * checkpoint: it is part of the turn already running. Text only.
+   *
+   * Returns why it didn't go, so the renderer can queue it instead: there
+   * is no turn running to take it, or the agent can't steer. `uuid` is the
+   * renderer's name for it, a UUID, which the user_message carries.
+   */
+  steerMessage(id: string, content: string, uuid: string): 'steered' | 'not-running' | 'unsupported' {
+    const session = this.sessions.get(id);
+    const handle = session?.queryHandle;
+    if (!session || !handle || session.destroying) return 'not-running';
+    if (!session.adapter.capabilities.steering || typeof handle.steer !== 'function') return 'unsupported';
+    // Only into a turn the agent is running. A prompt still waiting for its
+    // checkpoint hasn't reached it, and a stop is under way.
+    if (session.turnHandle !== handle || session.unsentPrompts?.size || session.interrupting) return 'not-running';
+    // The renderer names it, so it can match the read that comes back.
+    if (!content.trim() || !STEER_UUID.test(uuid) || session.pendingSteers?.has(uuid)) return 'not-running';
+    const steers = session.pendingSteers ??= new Map();
+    steers.set(uuid, { text: content, sentAt: Date.now(), handle });
+    try {
+      handle.steer({ text: content }, uuid);
+    } catch (e) {
+      steers.delete(uuid);
+      logger.warn(`[steerMessage] session=${id} steer failed:`, e);
+      return 'not-running';
+    }
+    logger.debug(`[steerMessage] session=${id} steered uuid=${uuid}`);
+    return 'steered';
+  }
+
+  /** The agent read a steer, or let it go unread. */
+  private settleSteer(session: ManagedSession, event: { type: 'steer_read' | 'steer_dropped'; uuid: string }) {
+    if (event.type === 'steer_dropped') {
+      const steer = session.pendingSteers?.get(event.uuid);
+      if (!steer) return;
+      session.pendingSteers!.delete(event.uuid);
+      (session.returnedSteers ??= new Map()).set(event.uuid, { text: steer.text, sentAt: steer.sentAt });
+      session.emit?.({ type: 'steer_returned', steers: [{ uuid: event.uuid, text: steer.text }] });
+      return;
+    }
+    // A steer given back and then read after all is still recorded: the
+    // renderer takes it off its queue when this arrives.
+    const steer = session.pendingSteers?.get(event.uuid) ?? session.returnedSteers?.get(event.uuid);
+    if (!steer) return;
+    session.pendingSteers?.delete(event.uuid);
+    session.returnedSteers?.delete(event.uuid);
+    session.emit?.({ type: 'user_message', text: steer.text, uuid: event.uuid, at: steer.sentAt, steer: true });
+  }
+
+  /** Give the steers the agent never read back to the window's queue: a
+   *  Stop came first (`stopped`), or the agent (`handle`'s run, or any)
+   *  went away. */
+  private returnUnreadSteers(session: ManagedSession, stopped: boolean, handle?: AgentQueryHandle) {
+    const pending = session.pendingSteers;
+    if (!pending?.size) return;
+    const back: { uuid: string; text: string }[] = [];
+    for (const [uuid, steer] of pending) {
+      if (handle && steer.handle !== handle) continue;
+      pending.delete(uuid);
+      (session.returnedSteers ??= new Map()).set(uuid, { text: steer.text, sentAt: steer.sentAt });
+      back.push({ uuid, text: steer.text });
+    }
+    if (back.length === 0) return;
+    logger.debug(`[steers] session=${session.id} ${back.length} unread steer(s) back to the queue${stopped ? ' (stopped)' : ''}`);
+    session.emit?.({ type: 'steer_returned', steers: back, ...(stopped ? { stopped: true as const } : {}) });
   }
 
   /** Send a prompt. True once the agent has it; false when the session is
@@ -1945,7 +2039,19 @@ class AgentSessionManager {
     // doesn't support in-place interrupt → fall back to the teardown+respawn
     // path, which already handles the startup race via restartRequested.
     if (!handle || typeof handle.interrupt !== 'function') {
+      this.returnUnreadSteers(session, true);
       return this.stopQuery(id);
+    }
+
+    // An unread steer is in Claude Code's own queue, and a plain interrupt
+    // leaves queued messages to run as the next turn (the SDK's interrupt
+    // receipt lists them as still_queued). The SDK offers no way to cancel
+    // one, so Stop ends the agent process instead; the steer goes back to
+    // the paused queue in the window.
+    if (session.pendingSteers?.size) {
+      logger.debug(`[interruptQuery] session=${id} has ${session.pendingSteers.size} unread steer(s): stopping the process instead`);
+      this.returnUnreadSteers(session, true);
+      return this.stopQuery(id, undefined, { killTree: true });
     }
 
     const emit = session.emit ?? this.createEmitter(session);
@@ -2032,7 +2138,7 @@ class AgentSessionManager {
     await this.stopQuery(id);
   }
 
-  async stopQuery(id: string, beforeRestart?: () => Promise<void>): Promise<void> {
+  async stopQuery(id: string, beforeRestart?: () => Promise<void>, opts: { killTree?: boolean } = {}): Promise<void> {
     const session = this.sessions.get(id);
     // Being deleted (still listed until it's gone): shutDown() stops it.
     if (!session || session.destroying) return;
@@ -2060,10 +2166,21 @@ class AgentSessionManager {
     // Tell runQuery not to emit process_exit / SESSION_STATUS 'stopped'
     session.stoppedByUser = true;
 
+    // `killTree` (Stop with an unread steer): end the agent's process tree
+    // first. A closed query's process can run on for seconds on Windows, and
+    // this one could still read the steer, which Claude Code keeps in its
+    // own queue, beside the resumed process. Detached first, as a sleep
+    // does, so runQuery takes its exit for a retired run, not an error.
+    const stopping = session.queryHandle;
+    if (opts.killTree && stopping) {
+      session.queryHandle = null;
+      await killAgentTree(stopping, id);
+    }
+
     // Close the query *before* aborting so the SDK can
     // clean up gracefully and avoid dangling async operations that reject
     // with "Operation aborted" after the signal fires.
-    try { session.queryHandle?.close(); } catch { /* may already be closed */ }
+    try { stopping?.close(); } catch { /* may already be closed */ }
 
     // Now abort — any remaining in-flight SDK operations will be cancelled
     session.abortController.abort();
@@ -2411,6 +2528,18 @@ class AgentSessionManager {
       return undefined;
     }));
     return { spendUsd: limits.threadSpendUsd, tokens: { ...limits.threadTokens } };
+  }
+
+  /** Usage across every thread since `since` (epoch ms; null for all
+   *  time), removed threads included, for the Usage dialog. */
+  async usageSummary(since: number | null): Promise<UsageSummary> {
+    const [{ records, backfilling }, labels] = await Promise.all([this.usage.read(), worktreeManager.threadLabels()]);
+    // A loaded thread's name can be newer than the manifest's.
+    for (const s of this.sessions.values()) {
+      const label = labels.get(s.id);
+      if (label && s.displayName) label.title = s.displayName;
+    }
+    return { ...summarize(records, since, labels), backfilling };
   }
 
   /** Save a thread's spend and spend allowance, which its history may not

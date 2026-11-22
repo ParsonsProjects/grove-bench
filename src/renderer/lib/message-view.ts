@@ -2,7 +2,7 @@ import type { ChatMessage } from '../stores/messages.svelte.js';
 import type { ActivityViewMode } from '../../shared/types.js';
 import { changesFiles, toolViewOf, type ToolView } from '../../shared/tool-view.js';
 import { taskListOf } from '../../shared/thread-items.js';
-import { GROVE_SERVER_NAMES, titledAsGroveTool } from '../../shared/grove-tools.js';
+import { GROVE_SERVER_NAMES, GROVE_TOOLS_IN_SUMMARY, titledAsGroveTool } from '../../shared/grove-tools.js';
 
 /** See ActivityViewMode in shared/types.ts for what each mode shows. */
 export type MessageViewMode = ActivityViewMode;
@@ -78,7 +78,7 @@ export function threadMessages(messages: ChatMessage[], parentToolUseId?: string
 function shownInSummary(call: Extract<ChatMessage, { kind: 'tool_call' }>): boolean {
   const view = toolViewOf(call);
   if (changesFiles(view, call.toolCategory)) return true;
-  if (view.mcp) return !GROVE_MCP_SERVERS.has(view.mcp.server);
+  if (view.mcp) return !GROVE_MCP_SERVERS.has(view.mcp.server) || GROVE_TOOLS_IN_SUMMARY.has(view.mcp.tool);
   return !!call.toolView && view.kind === 'other' && (call.toolCategory ?? 'other') === 'other'
     && !titledAsGroveTool(call.toolName) && !taskListOf(call.toolName, call.toolInput);
 }
@@ -120,8 +120,12 @@ export function isMessageVisible(msg: ChatMessage, mode: MessageViewMode): boole
       // Questions stay visible once answered: the block shows the user's
       // reply, which is part of the conversation the user needs to follow.
       return true;
+    case 'result':
+      // A turn that went fine needs nothing from the user: its "done" line
+      // (cost, time) is noise here. One that ended with errors stays.
+      return msg.isError;
     default:
-      // user, text, error, git_identity_missing, files_kept, result. Every assistant text block is kept: agents
+      // user, text, error, git_identity_missing, files_kept. Every assistant text block is kept: agents
       // routinely split one answer across several blocks (findings, then next
       // steps), so keeping only the last would hide the part that matters.
       // The notes written while working fold into one line instead
@@ -201,6 +205,8 @@ export function foldNarration(visible: ChatMessage[], notes: Set<string>): Threa
  * Whether a chat, as filtered for its view mode, shows anything from the
  * agent yet: a message other than the user's own and the app's notes. The end
  * of a turn (result, error) counts, so a turn that ends without a reply does.
+ * Focus hides a turn that ended fine, so check the unfiltered thread for one
+ * too (OutputPanel).
  */
 export function hasAgentReply(visible: ChatMessage[]): boolean {
   return visible.some((m) => m.kind !== 'user' && m.kind !== 'system' && m.kind !== 'git_identity_missing' && m.kind !== 'files_kept');

@@ -6,6 +6,7 @@ import { withSkill } from '../../shared/skill-line.js';
 import { errorMessage } from '../../shared/error-message.js';
 import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
 import { store as sessionStore } from './sessions.svelte.js';
+import { boardStore } from './board.svelte.js';
 import { groupStore } from './groups.svelte.js';
 import { todoStore } from './todo.svelte.js';
 import { messageStore } from './messages.svelte.js';
@@ -16,6 +17,8 @@ import { resolveBaseBranch } from '../lib/base-branch.js';
 import { attachmentPayload, type AttachedFile } from '../lib/file-attachments.js';
 import { buildOutgoingMessage } from '../lib/prompt-file-refs.js';
 import { trackEvent } from '../lib/analytics.js';
+import { followUpsStore } from './followUps.svelte.js';
+import { followUpPrompt, type FollowUp } from '../../shared/follow-ups.js';
 
 /**
  * A new conversation before its first message. Opening one creates nothing:
@@ -57,6 +60,9 @@ export interface Draft {
    *  on the thread's branch name (docs/linked-projects-plan.md). Not for a
    *  thread in the project folder. */
   linkedRepos?: string[];
+  /** The follow-up this draft was started from (openFollowUp): the thread
+   *  is noted against it once it starts. */
+  followUpId?: string;
 }
 
 /** Whether a draft has a first message to send: something typed, or
@@ -208,11 +214,15 @@ class DraftStore {
       void this.refreshKind(repo);
     }
     sessionStore.activeSessionId = null;
+    // The draft takes the main pane, so the board (alpha) gives way.
+    boardStore.close();
   }
 
   /** Bring an existing draft back into view. */
   show(): void {
-    if (this.draft) sessionStore.activeSessionId = null;
+    if (!this.draft) return;
+    sessionStore.activeSessionId = null;
+    boardStore.close();
   }
 
   discard(): void {
@@ -257,6 +267,27 @@ class DraftStore {
 
   setText(text: string): void {
     if (this.draft) this.draft.text = text;
+  }
+
+  /** A draft with a message or files of its own: opening a follow-up would
+   *  only show it (openFollowUp), so the board says so instead. */
+  get hasMessage(): boolean {
+    return !!this.draft && hasMessage(this.draft);
+  }
+
+  /** Open the draft in a follow-up's project with the follow-up as its first
+   *  message, to look over and send. A draft with a message or files of its
+   *  own is only shown, so nothing typed is lost: false. */
+  openFollowUp(f: FollowUp): boolean {
+    if (this.draft && hasMessage(this.draft)) {
+      this.show();
+      return false;
+    }
+    this.open(f.repoPath);
+    if (!this.draft || this.draft.repoPath !== f.repoPath) return false;
+    this.draft.text = followUpPrompt(f);
+    this.draft.followUpId = f.id;
+    return true;
   }
 
   /** List the draft agent's skills in its project: when either changes, and
@@ -339,8 +370,9 @@ class DraftStore {
     this.draft.repoPath = repo;
     // A thread can't link its own project.
     if (this.draft.linkedRepos?.includes(repo)) this.draft.linkedRepos = this.draft.linkedRepos.filter((r) => r !== repo);
-    // Branches belong to the old project.
+    // Branches belong to the old project, and so does a follow-up.
     this.resetToNewBranch();
+    delete this.draft.followUpId;
     void this.refreshKind(repo);
   }
 
@@ -712,6 +744,7 @@ class DraftStore {
       // A group ungrouped while this ran is gone, and add() does nothing.
       if (d.groupId) groupStore.add(d.groupId, id);
       else if (d.newGroupName) groupStore.create(d.newGroupName, [id]);
+      if (d.followUpId) void followUpsStore.started(d.followUpId, id);
       // Main holds a prompt sent during setup until the agent is ready. Not
       // for a thread closed or deleted meanwhile: main closes that one once
       // it's up.

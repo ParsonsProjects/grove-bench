@@ -1529,6 +1529,19 @@ export class WorktreeManager {
     return this.worktrees.get(id);
   }
 
+  /** Each thread in the manifest (not those being removed): its name, as
+   *  the sidebar shows it, its project and its agent. For the Usage dialog,
+   *  which reads every thread without loading any. */
+  async threadLabels(): Promise<Map<string, { title: string; repoPath: string; agent: string }>> {
+    const manifest = await this.loadManifest();
+    const labels = new Map<string, { title: string; repoPath: string; agent: string }>();
+    for (const [id, entry] of Object.entries(manifest)) {
+      if (entry.pendingRemoval) continue;
+      labels.set(id, { title: entry.displayName || entry.branch, repoPath: entry.repoPath, agent: agentTypeOf(entry) });
+    }
+    return labels;
+  }
+
   /** Look up a worktree by ID, falling back to the manifest if not in memory. */
   async getWorktreeOrManifest(id: string): Promise<WorktreeInfo | undefined> {
     const mem = this.worktrees.get(id);

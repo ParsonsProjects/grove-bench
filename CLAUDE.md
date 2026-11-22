@@ -23,15 +23,18 @@ src/
     background-work.ts # Marks the app's own polling (git status, PR status) so its git never runs in the main process
     process-host*.ts   # Utility processes git, gh and the agents' programs (claude, ACP agents) launch from, so launches can't freeze the window (3rd Vite entry)
     worktree-manager.ts
+    worktree-submodules.ts # Checks out a new worktree's submodules, which git worktree add leaves empty
     linked-projects.ts # A thread's other projects, each a worktree on its branch: the folders, protected roots and instruction files the agent gets (docs/linked-projects-plan.md)
     agent-session.ts   # Session lifecycle management
     session-*.ts       # Session types, event log + history, permission prompts, limits, skills, agent config, streamed text merged before IPC
+    usage-ledger.ts    # Every turn's cost, tokens, time and models across threads (usage-ledger.jsonl), for the Usage dialog
     agent-utils.ts     # Agent helper utilities
     terminal.ts        # node-pty management
     app-state.ts       # Persistent app state
     window-state.ts    # Window position/size persistence
     memory.ts          # Project memory system
     memory-autosave.ts # Auto-save memory on interval
+    follow-ups.ts      # Work agents leave for later threads (follow-ups.json), for the grove-followups tools, the Follow-ups drawer and the board's Follow-ups column
     skill-schedules.ts # Skills run in a new thread on a schedule (docs/skill-schedules-plan.md)
     skill-sharing.ts   # Skills every agent can use: .agents/skills, with links in .claude/skills for Claude Code
     settings.ts        # User settings
@@ -54,10 +57,11 @@ src/
       types.ts         # Adapter interfaces
       registry.ts      # Adapter registry
       claude-code.ts   # Claude Code adapter implementation
+      claude-steers.ts # Steers: messages sent into a running Claude turn, and when Claude reads them
       claude-accounts.ts # Other Claude accounts: one adapter each, with its own CLAUDE_CONFIG_DIR
       acp/             # Agent Client Protocol adapter (Gemini CLI, Copilot CLI, OpenCode, custom agents)
       file-attachments.ts # How attached files reach each agent (by path; audio inline for ACP agents that take it)
-      grove-tools.ts   # Grove's memory and Preview tools, defined once
+      grove-tools.ts   # Grove's memory, Preview and follow-up tools, defined once
       grove-mcp-http.ts # Those tools over MCP HTTP, for agents other than Claude Code
       mcp-bridge/      # stdio bridge to that server, for agents without HTTP MCP (2nd Vite entry)
       preview-mcp-server.ts # Agent browser tools (grove-preview)

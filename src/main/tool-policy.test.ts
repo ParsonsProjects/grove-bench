@@ -76,6 +76,15 @@ describe('decideToolCall', () => {
       .toMatchObject({ behavior: 'deny' });
   });
 
+  it("runs Grove's follow-up tools without a prompt when it gave the agent them", () => {
+    const groveServers = groveServersOf({ followUpOperations: {} as never });
+    for (const name of ['mcp__grove-followups__followup_add', 'grove-followups_followup_done', 'followup_list (grove-followups MCP Server)']) {
+      expect(decideToolCall(call(name, { kind: 'other' }), ctx({ groveServers })), name).toEqual({ behavior: 'allow' });
+    }
+    expect(decideToolCall(call('mcp__grove-followups__followup_add', { kind: 'other' }), ctx({ groveServers: groveServersOf({}) })))
+      .toEqual({ behavior: 'ask' });
+  });
+
   it("asks about a call named for a Grove server Grove didn't give the agent: another server took the name", () => {
     // The user turned the Preview tools off, so Grove started no grove-preview.
     const groveServers = groveServersOf({ memoryOperations: {} as never, previewOperations: null });
@@ -142,5 +151,7 @@ describe('groveToolOf', () => {
     expect(groveToolOf('memory_list (grove-memory MCP Server)')).toEqual({ server: 'grove-memory', tool: 'memory_list' });
     expect(groveToolOf('memory_read(path: "a.md")')).toBeNull();
     expect(groveToolOf('grove-memoryx_memory_read')).toBeNull();
+    expect(groveToolOf('mcp__grove-followups__followup_add')).toEqual({ server: 'grove-followups', tool: 'followup_add' });
+    expect(groveToolOf('followup_done (grove-followups MCP Server)')).toEqual({ server: 'grove-followups', tool: 'followup_done' });
   });
 });

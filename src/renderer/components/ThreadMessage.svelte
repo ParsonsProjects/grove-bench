@@ -31,7 +31,8 @@
     images={msg.images}
     attachments={msg.attachments}
     sentAt={msg.sentAt}
-    onRewind={msg.uuid ? () => messageStore.openRewindDialog(sessionId, msg.uuid) : undefined}
+    steer={msg.steer}
+    onRewind={msg.uuid && !msg.steer ? () => messageStore.openRewindDialog(sessionId, msg.uuid) : undefined}
   />
 
 {:else if msg.kind === 'text'}
@@ -131,13 +132,15 @@
   <FilesMadeBlock {sessionId} files={msg.files} more={msg.more} />
 
 {:else if msg.kind === 'result'}
+  <!-- Focus only shows a turn that ended with errors (isMessageVisible), and
+       without its cost and time. -->
   <div class="py-1 border-t border-border mt-1">
     <div class="text-xs text-muted-foreground">
       {msg.isError ? 'completed with errors' : 'done'}
-      {#if msg.totalCostUsd !== undefined}
+      {#if msg.totalCostUsd !== undefined && viewMode !== 'focus'}
         <span class="ml-2">${msg.totalCostUsd.toFixed(4)}</span>
       {/if}
-      {#if msg.durationMs !== undefined}
+      {#if msg.durationMs !== undefined && viewMode !== 'focus'}
         <span class="ml-2">{(msg.durationMs / 1000).toFixed(1)}s</span>
       {/if}
     </div>

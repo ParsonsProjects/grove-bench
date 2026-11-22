@@ -10,6 +10,8 @@ import statusBar from '../../../docs/help/status-bar.md?raw';
 import promptEditor from '../../../docs/help/prompt-editor.md?raw';
 import settings from '../../../docs/help/settings.md?raw';
 import memory from '../../../docs/help/memory.md?raw';
+import agentMonitor from '../../../docs/help/agent-monitor.md?raw';
+import followUps from '../../../docs/help/follow-ups.md?raw';
 import keyboardShortcuts from '../../../docs/help/keyboard-shortcuts.md?raw';
 
 export interface HelpTopic {
@@ -32,5 +34,7 @@ export const topics: HelpTopic[] = [
   { id: 'prompt-editor', title: 'Prompt Editor', section: 'Interface', content: promptEditor },
   { id: 'settings', title: 'Settings', section: 'Features', content: settings },
   { id: 'memory', title: 'Project Memory', section: 'Features', content: memory },
+  { id: 'agent-monitor', title: 'Agent Monitor', section: 'Features', content: agentMonitor },
+  { id: 'follow-ups', title: 'Follow-ups', section: 'Features', content: followUps },
   { id: 'keyboard-shortcuts', title: 'Keyboard Shortcuts', section: 'Features', content: keyboardShortcuts },
 ];

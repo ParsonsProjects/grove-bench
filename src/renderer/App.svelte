@@ -37,16 +37,20 @@
   import { bookmarkStore } from './stores/bookmarks.svelte.js';
   import { groupStore } from './stores/groups.svelte.js';
   import { todoStore } from './stores/todo.svelte.js';
+  import { followUpsStore } from './stores/followUps.svelte.js';
   import { schedulesStore } from './stores/schedules.svelte.js';
   import { skillsPanelStore } from './stores/skillsPanel.svelte.js';
+  import { agentMonitorStore } from './stores/agentMonitor.svelte.js';
   import { goalStore } from './stores/goals.svelte.js';
   import { panelStore } from './stores/panels.svelte.js';
   import { previewStore } from './stores/preview.svelte.js';
   import { backgroundAgentStore } from './stores/background-agent.svelte.js';
   import { linkedStore } from './stores/linked.svelte.js';
+  import { usageReportStore } from './stores/usageReport.svelte.js';
   import type { AppErrorReport } from '../shared/types.js';
   import { isTempBranch } from '../shared/temp-branch.js';
   import { draftStore } from './stores/draft.svelte.js';
+  import { boardStore } from './stores/board.svelte.js';
   import DraftPane from './components/DraftPane.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Notice } from '$lib/components/ui/notice/index.js';
@@ -58,10 +62,30 @@
   const loadSessionFinder = lazyComponent(() => import('./components/SessionFinder.svelte'));
   const loadBackgroundAgentDialog = lazyComponent(() => import('./components/BackgroundAgentDialog.svelte'));
   const loadLinkProjectDialog = lazyComponent(() => import('./components/LinkProjectDialog.svelte'));
+  // New follow-up, from the + in the Follow-ups drawer or the board.
+  const loadFollowUpDialog = lazyComponent(() => import('./components/FollowUpDialog.svelte'));
+  const loadUsageDialog = lazyComponent(() => import('./components/UsageDialog.svelte'));
   const loadSkillsPanel = lazyComponent(() => import('./components/SkillsPanel.svelte'));
+  const loadAgentMonitor = lazyComponent(() => import('./components/AgentMonitorDialog.svelte'));
+  // Mounted once opened, so its close animation plays.
+  let agentMonitorOpened = $state(false);
+  $effect(() => { if (agentMonitorStore.open) agentMonitorOpened = true; });
   // The Skills drawer stays mounted once opened, as Settings and Memory do.
   let skillsPanelOpened = $state(false);
   $effect(() => { if (skillsPanelStore.open) skillsPanelOpened = true; });
+  // The board (alpha), from the sidebar's List / Board switch.
+  const loadBoardPane = lazyComponent(() => import('./components/BoardPane.svelte'));
+  // It gives way when a thread opens from anywhere (a card, the sidebar, the
+  // finder, a notification), and goes when its setting is turned off.
+  $effect(() => {
+    if (store.activeSessionId !== null || !settingsStore.current.boardView) untrack(() => boardStore.close());
+  });
+  // Its Review and Done columns follow the threads' PRs, so they refresh
+  // faster while it shows (prStore.setBoardShowing).
+  $effect(() => {
+    const showing = boardStore.open;
+    untrack(() => prStore.setBoardShowing(showing));
+  });
 
   /** Whether a thread's pane (WorkspacePane) is mounted: while it runs or
    *  can be woken. Otherwise the walk shows while it reconnects. */
@@ -302,6 +326,10 @@
       e.preventDefault();
       settingsStore.panelOpen = !settingsStore.panelOpen;
     }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'a') {
+      e.preventDefault();
+      agentMonitorStore.toggle();
+    }
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === 'n') {
       e.preventDefault();
       // A draft in the project of the conversation being looked at.
@@ -405,6 +433,7 @@
     void bookmarkStore.load();
     void groupStore.load();
     void todoStore.load();
+    void followUpsStore.load();
     // Listens before the restore ends: main's scheduler starts after it.
     schedulesStore.init();
     void panelStore.load();
@@ -543,7 +572,20 @@
 
   <!-- relative: DraftUndoToast centres on this pane, not the window. -->
   <main class="relative flex-1 flex flex-col min-w-0 min-h-0">
-    {#if draftStore.visible}
+    {#if boardStore.open}
+      <svelte:boundary onerror={(e) => console.error('Board crashed:', e)}>
+        {#await loadBoardPane() then BoardPane}
+          <BoardPane />
+        {:catch error}
+          <Notice tone="danger" class="m-3">
+            <p>Couldn't load the board ({errorMessage(error)}). Restart Grove Bench to try again; if that doesn't help, reinstall it.</p>
+          </Notice>
+        {/await}
+        {#snippet failed(error: unknown, reset: () => void)}
+          {@render crashed('The board', error, reset)}
+        {/snippet}
+      </svelte:boundary>
+    {:else if draftStore.visible}
       <svelte:boundary onerror={(e) => console.error('Draft pane crashed:', e)}>
         <DraftPane />
         {#snippet failed(error, reset)}
@@ -643,7 +685,7 @@
   <!-- Bookmarks, docked here when no thread shows (the draft, the landing, a
        thread still reconnecting). In a thread it docks in the thread's pane,
        above its bottom bar. -->
-  <SideDock bookmarks={!threadPaneShown} />
+  <SideDock shared={!threadPaneShown} />
 </div>
 <AnalyticsConsent visible={showAnalyticsConsent} />
 </div>
@@ -651,6 +693,12 @@
 {#if store.finderOpen}
   {#await loadSessionFinder() then SessionFinder}
     <SessionFinder onclose={() => store.finderOpen = false} />
+  {/await}
+{/if}
+
+{#if followUpsStore.addingIn}
+  {#await loadFollowUpDialog() then FollowUpDialog}
+    <FollowUpDialog />
   {/await}
 {/if}
 
@@ -665,6 +713,19 @@
   {@const linkFor = linkedStore.linkDialogFor}
   {#await loadLinkProjectDialog() then LinkProjectDialog}
     <LinkProjectDialog sessionId={linkFor} />
+  {/await}
+{/if}
+
+{#if usageReportStore.open}
+  {#await loadUsageDialog() then UsageDialog}
+    <UsageDialog />
+  {/await}
+{/if}
+
+<!-- Opened from the title bar's activity counts, or Ctrl+Shift+A. -->
+{#if agentMonitorStore.open || agentMonitorOpened}
+  {#await loadAgentMonitor() then AgentMonitorDialog}
+    <AgentMonitorDialog />
   {/await}
 {/if}
 

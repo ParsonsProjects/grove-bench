@@ -43,7 +43,7 @@ export interface PolicyContext {
   /** Tools the user said to always allow in this thread. */
   alwaysAllowedTools: ReadonlySet<string>;
   /** Grove's own MCP servers this agent was given (groveServersOf): their
-   *  memory and Preview looking tools run without a prompt. */
+   *  memory, follow-up and Preview looking tools run without a prompt. */
   groveServers?: ReadonlySet<GroveServerName>;
   /** Approve edits whose every path is inside `cwd`, or inside one of
    *  `linkedWorktrees`: Edit and Read-safe modes, for agents whose modes
@@ -100,13 +100,14 @@ export function decideToolCall(call: PolicyCall, ctx: PolicyContext): PolicyDeci
   return { behavior: 'ask' };
 }
 
-/** The Grove servers an agent is given for a session: memory when the
- *  session has memory operations, Preview when the user left the agent's
- *  browser tools on. */
-export function groveServersOf(config: Pick<AdapterConfig, 'memoryOperations' | 'previewOperations'>): ReadonlySet<GroveServerName> {
+/** The Grove servers an agent is given for a session: memory and
+ *  follow-ups when the session has their operations, Preview when the user
+ *  left the agent's browser tools on. */
+export function groveServersOf(config: Pick<AdapterConfig, 'memoryOperations' | 'previewOperations' | 'followUpOperations'>): ReadonlySet<GroveServerName> {
   const servers = new Set<GroveServerName>();
   if (config.memoryOperations) servers.add('grove-memory');
   if (config.previewOperations) servers.add('grove-preview');
+  if (config.followUpOperations) servers.add('grove-followups');
   return servers;
 }
 

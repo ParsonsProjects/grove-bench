@@ -35,6 +35,19 @@ vi.mock('node:fs', () => ({
   mkdirSync: vi.fn(),
 }));
 
+/** What the usage ledger was given, kept in memory instead of on disk. */
+const usageLedger = vi.hoisted(() => ({ records: [] as unknown[] }));
+vi.mock('./usage-ledger.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('./usage-ledger.js')>();
+  return {
+    ...real,
+    UsageLedger: class {
+      record(r: unknown) { usageLedger.records.push(r); }
+      read() { return Promise.resolve({ records: usageLedger.records, backfilling: false }); }
+    },
+  };
+});
+
 // Mock dependencies
 vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), close: vi.fn() },
@@ -53,6 +66,7 @@ vi.mock('./worktree-manager.js', () => ({
     writeAgentSettings: vi.fn().mockResolvedValue(undefined),
     list: vi.fn().mockResolvedValue([]),
     getWorktreeOrManifest: vi.fn().mockResolvedValue(undefined),
+    threadLabels: vi.fn().mockResolvedValue(new Map()),
   },
 }));
 /** The agent host killing a mock agent's process tree (killProcessTree). */
@@ -272,7 +286,7 @@ class MockAdapter implements AgentAdapter {
     };
     this.control = control;
 
-    async function* eventGenerator(): AsyncGenerator<AgentEvent> {
+    async function* eventGenerator(): AsyncGenerator<AdapterEvent> {
       while (true) {
         if (eventQueue.length > 0) {
           yield eventQueue.shift()!;
@@ -294,6 +308,8 @@ class MockAdapter implements AgentAdapter {
     const handle: AgentQueryHandle = {
       events: eventGenerator(),
       sendMessage: vi.fn(),
+      // Taken only when capabilities.steering is set (steerMessage).
+      steer: vi.fn(),
       abort: vi.fn(() => {
         abortController.abort();
         done = true;
@@ -1388,6 +1404,26 @@ describe('AgentSessionManager limits', () => {
     expect(last[1].spendUsd).toBeCloseTo(0.5);
 
     await sessionManager.destroySession('test-spend');
+  });
+
+  it('records each turn for the Usage dialog, stamped with when it ended', async () => {
+    const win = makeMockWindow();
+    usageLedger.records.length = 0;
+    await sessionManager.createSession({ id: 'test-ledger', branch: 'feat/usage', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    const models = [{ model: 'opus', input: 900, output: 40, costUsd: 0.4 }];
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false, totalCostUsd: 0.4, sessionCostUsd: 0.4, turnTokens: { input: 900, output: 40 }, durationMs: 1200, models });
+    await vi.waitFor(() => expect(usageLedger.records).toHaveLength(1));
+    const result = sessionManager.getEventHistory('test-ledger').find((e) => e.type === 'result');
+    expect(result).toMatchObject({ at: expect.any(Number) });
+    expect(usageLedger.records[0]).toEqual({
+      at: (result as { at: number }).at, thread: 'test-ledger', repoPath: '/repo', title: 'feat/usage', agent: 'mock',
+      usd: 0.4, tokens: { input: 900, output: 40 }, ms: 1200, models,
+    });
+    // Not in the manifest (the mock's is empty): shown as removed.
+    expect((await sessionManager.usageSummary(null)).byThread).toEqual([expect.objectContaining({ thread: 'test-ledger', title: 'feat/usage', removed: true, usd: 0.4 })]);
+
+    await sessionManager.destroySession('test-ledger');
   });
 
   it('adds up each turn\'s tokens for the thread and saves them, even with no cost', async () => {
@@ -4032,6 +4068,111 @@ describe('AgentSessionManager.sendMessage()', () => {
 
     // The entry is cleared once settled: later sends fail fast, not hang.
     expect(await sessionManager.sendMessage('test-send-failed-setup', 'Hello again')).toBe(false);
+  });
+});
+
+describe('AgentSessionManager.steerMessage()', () => {
+  const UUID = '0b6a2f4e-1c3d-4e5f-8a9b-0c1d2e3f4a5b';
+
+  async function running(id: string) {
+    const win = makeMockWindow();
+    await sessionManager.createSession({ id, branch: 'main', cwd: '/repo', repoPath: '/repo', window: win, adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 's', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    return win;
+  }
+  const steerOn = () => { (mockAdapter.capabilities as Record<string, boolean>).steering = true; };
+
+  it("says 'unsupported' for an agent that can't steer", async () => {
+    await running('test-steer-unsupported');
+    await sessionManager.sendMessage('test-steer-unsupported', 'go');
+
+    expect(sessionManager.steerMessage('test-steer-unsupported', 'also this', UUID)).toBe('unsupported');
+
+    await sessionManager.destroySession('test-steer-unsupported');
+  });
+
+  it("says 'not-running' with no turn running, or for a uuid that isn't one", async () => {
+    steerOn();
+    await running('test-steer-idle');
+
+    expect(sessionManager.steerMessage('test-steer-idle', 'also this', UUID)).toBe('not-running');
+    await sessionManager.sendMessage('test-steer-idle', 'go');
+    expect(sessionManager.steerMessage('test-steer-idle', 'also this', 'not-a-uuid')).toBe('not-running');
+    expect(mockAdapter.lastHandle!.steer).not.toHaveBeenCalled();
+
+    await sessionManager.destroySession('test-steer-idle');
+  });
+
+  it('steers into the running turn, and records it in the history only once it is read', async () => {
+    steerOn();
+    await running('test-steer-read');
+    await sessionManager.sendMessage('test-steer-read', 'go');
+
+    expect(sessionManager.steerMessage('test-steer-read', 'use date-fns', UUID)).toBe('steered');
+    expect(mockAdapter.lastHandle!.steer).toHaveBeenCalledWith({ text: 'use date-fns' }, UUID);
+    const steers = () => sessionManager.getEventHistory('test-steer-read').filter((e) => e.type === 'user_message' && e.steer);
+    expect(steers()).toEqual([]);
+
+    mockAdapter.control!.emitEvent({ type: 'steer_read', uuid: UUID });
+    await vi.waitFor(() => expect(steers()).toEqual([expect.objectContaining({ type: 'user_message', text: 'use date-fns', uuid: UUID, steer: true })]));
+    // A second steer with the same uuid would be a different message.
+    expect(sessionManager.getEventHistory('test-steer-read').some((e) => e.type === ('steer_read' as string))).toBe(false);
+
+    await sessionManager.destroySession('test-steer-read');
+  });
+
+  it('gives a dropped steer back to the window, unread', async () => {
+    steerOn();
+    const win = await running('test-steer-dropped');
+    await sessionManager.sendMessage('test-steer-dropped', 'go');
+    sessionManager.steerMessage('test-steer-dropped', 'never mind', UUID);
+
+    mockAdapter.control!.emitEvent({ type: 'steer_dropped', uuid: UUID });
+
+    await vi.waitFor(() => expect(win._send.mock.calls.map(([, e]: [string, AgentEvent]) => e)).toContainEqual(
+      { type: 'steer_returned', steers: [{ uuid: UUID, text: 'never mind' }] },
+    ));
+    await sessionManager.destroySession('test-steer-dropped');
+  });
+
+  it('ignores a steer read reported by a run that was stopped', async () => {
+    steerOn();
+    await running('test-steer-retired');
+    await sessionManager.sendMessage('test-steer-retired', 'go');
+    sessionManager.steerMessage('test-steer-retired', 'wait', UUID);
+    const oldControl = mockAdapter.control!;
+
+    await sessionManager.interruptQuery('test-steer-retired');
+    await new Promise((r) => setTimeout(r, 100));
+    oldControl.emitEvent({ type: 'steer_read', uuid: UUID });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(sessionManager.getEventHistory('test-steer-retired').some((e) => e.type === 'user_message' && e.steer)).toBe(false);
+    await sessionManager.destroySession('test-steer-retired');
+  });
+
+  it('Stop with an unread steer ends the agent process instead of interrupting, and gives the steer back', async () => {
+    steerOn();
+    const win = await running('test-steer-stop');
+    await sessionManager.sendMessage('test-steer-stop', 'go');
+    const handle = mockAdapter.lastHandle!;
+    const kill = vi.spyOn(handle, 'killProcessTree');
+    sessionManager.steerMessage('test-steer-stop', 'wait', UUID);
+
+    await sessionManager.interruptQuery('test-steer-stop');
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(handle.interrupt).not.toHaveBeenCalled();
+    // The old agent can't read the steer beside the resumed one.
+    expect(kill).toHaveBeenCalledOnce();
+    expect(mockAdapter.startCallCount).toBe(2);
+    expect(win._send.mock.calls.map(([, e]: [string, AgentEvent]) => e)).toContainEqual(
+      { type: 'steer_returned', steers: [{ uuid: UUID, text: 'wait' }], stopped: true },
+    );
+
+    await sessionManager.destroySession('test-steer-stop');
   });
 });
 

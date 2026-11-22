@@ -70,6 +70,11 @@ describe('activityMenuEntries', () => {
     expect(labels(activityMenuEntries({ message: imageOnly }))).toEqual(['Rewind to this message']);
   });
 
+  it('offers no Rewind for a steer, which has no checkpoint', () => {
+    const steer = { kind: 'user' as const, id: 's', text: 'use date-fns', uuid: 's1', steer: true };
+    expect(labels(activityMenuEntries({ message: steer }))).toEqual(['Copy message']);
+  });
+
   it('offers the Focus panel only for document-like replies', () => {
     const short: ChatMessage = { kind: 'text', id: 'a', text: 'Done.', uuid: '' };
     const doc: ChatMessage = { kind: 'text', id: 'b', text: '## One\n\ntext\n\n## Two\n\ntext\n\n## Three\n\ntext', uuid: '' };

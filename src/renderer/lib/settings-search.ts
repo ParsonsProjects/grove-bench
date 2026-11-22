@@ -9,6 +9,7 @@ export const SETTINGS_SECTIONS = [
   { id: 'git', grove: 'Branches & roots', label: 'Git & worktrees', description: 'How new threads get their branch and worktree.' },
   { id: 'notifications', grove: 'Bells', label: 'Notifications', description: 'Desktop notifications and taskbar alerts.' },
   { id: 'limits', grove: 'Fences', label: 'Limits & alerts', description: 'Plan usage alerts, and limits on spend and long turns that pause a thread to ask you.' },
+  { id: 'usage', grove: 'The harvest', label: 'Usage', description: 'Cost, tokens and agent time across every thread and model.' },
   { id: 'background', grove: 'Tending', label: 'Background work', description: 'Project memory, prompt and skill suggestions, thread goals and sleeping idle threads.' },
   { id: 'mcp', grove: 'Tool shed', label: 'MCP servers', description: 'Servers that give agents extra tools.' },
   { id: 'plugins', grove: 'Seed packets', label: 'Plugins', description: 'Add and manage plugins.' },
@@ -31,11 +32,13 @@ export interface SettingsEntry {
 export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'default-thread-view', section: 'general', label: 'Default thread view', keywords: 'summary focus detailed activity' },
   { id: 'default-diff-view', section: 'general', label: 'Default diff view', keywords: 'unified side-by-side' },
+  { id: 'board-view', section: 'general', label: 'Board', keywords: 'kanban columns stages cards lanes alpha' },
   { id: 'theme', section: 'general', label: 'Theme', keywords: 'dark light mode colour color scheme appearance' },
   { id: 'grove-characters', section: 'general', label: 'Show grove characters', keywords: 'pixel sprites status animation' },
   { id: 'project-colors', section: 'general', label: 'Project colors', keywords: 'accent colour repository' },
   { id: 'always-on-top', section: 'general', label: 'Always on top', keywords: 'window' },
   { id: 'spellcheck', section: 'general', label: 'Spell checking', keywords: 'spelling prompt editor' },
+  { id: 'enter-while-working', section: 'general', label: 'While the agent works, Enter', keywords: 'steer steering queue message box send alt enter turn' },
   { id: 'updates', section: 'general', label: 'Updates', keywords: 'version check for updates releases' },
   { id: 'auto-download-updates', section: 'general', label: 'Download updates automatically', keywords: 'install background restart' },
 
@@ -60,6 +63,7 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'branch-naming-rule', section: 'git', label: 'Branch naming rule', keywords: 'branch name ticket' },
   { id: 'worktree-folder', section: 'git', label: 'Worktree folder', keywords: 'dev drive location path disk' },
   { id: 'auto-install-deps', section: 'git', label: 'Auto-install dependencies', keywords: 'npm pnpm yarn bun install' },
+  { id: 'submodules', section: 'git', label: 'Submodules in new worktrees', keywords: 'submodule gitmodules recursive nested worktree empty folder' },
 
   { id: 'notify-turn-complete', section: 'notifications', label: 'Agent finishes a turn', keywords: 'done' },
   { id: 'notify-permission', section: 'notifications', label: 'Agent is waiting on a permission, question or limit', keywords: 'needs you paused' },
@@ -74,6 +78,7 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'daily-spend-limit', section: 'limits', label: 'Daily spend limit', keywords: 'cost budget dollars money cap day today pause' },
   { id: 'turn-tool-call-limit', section: 'limits', label: 'Tool calls per turn', keywords: 'runaway steps cap pause' },
   { id: 'turn-minutes-limit', section: 'limits', label: 'Minutes per turn', keywords: 'time runaway cap long pause' },
+  { id: 'usage-report', section: 'usage', label: 'Usage across threads', keywords: 'cost spend dollars tokens time models history report total' },
 
   { id: 'memory-auto-save', section: 'background', label: 'Auto-save project memory' },
   { id: 'memory-compact-timeout', section: 'background', label: 'Compaction timeout', keywords: 'memory seconds' },

@@ -6,6 +6,7 @@
   import { formatSentTime } from '$lib/message-dates.js';
   import { showAttachedText } from '$lib/thread-files.js';
   import { Button } from '$lib/components/ui/button/index.js';
+  import { Badge } from '$lib/components/ui/badge/index.js';
   import type { SentBlock } from '../../shared/prompt-text.js';
   import type { ThreadFile, ThreadImage } from '../stores/messages.svelte.js';
 
@@ -16,6 +17,7 @@
     images,
     attachments,
     sentAt,
+    steer = false,
     onRewind,
   }: {
     sessionId: string;
@@ -29,6 +31,8 @@
     attachments?: ThreadFile[];
     /** When it was sent (epoch ms), shown as a time. Older history has none. */
     sentAt?: number;
+    /** Steered into a running turn, and shown where the agent read it. */
+    steer?: boolean;
     /** When set, a "Rewind to here" action is shown on hover. Only messages
      *  with a checkpoint (a uuid) get one. */
     onRewind?: () => void;
@@ -92,6 +96,11 @@
       <MarkdownBlock content={text} />
     {/if}
   </div>
+  {#if steer}
+    <span class="ml-2 shrink-0 leading-[1.6] select-none">
+      <Badge tone="muted" title="Sent while the agent was working. It read this here, after a tool call.">steer</Badge>
+    </span>
+  {/if}
   {#if sentAt !== undefined}
     <!-- The outer span takes the prompt's line height, so the smaller time
          sits on the first line's baseline. -->

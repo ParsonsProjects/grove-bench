@@ -77,6 +77,10 @@ const api: GroveBenchAPI = {
     images?: import('../shared/types.js').ImageAttachment[],
     files?: import('../shared/types.js').FileAttachment[],
   ) => ipcRenderer.send(IPC.AGENT_SEND, sessionId, content, images, files),
+  /** Send a message into the turn that is running now (Claude Code). Says
+   *  'not-running' or 'unsupported' when it didn't go, to queue it instead. */
+  steerMessage: (sessionId: string, content: string, uuid: string): Promise<'steered' | 'not-running' | 'unsupported'> =>
+    ipcRenderer.invoke(IPC.AGENT_STEER, sessionId, content, uuid),
   openAttachedFile: (sessionId: string, file: string) =>
     ipcRenderer.invoke(IPC.ATTACHMENT_OPEN, sessionId, file),
   readAttachedFile: (sessionId: string, file: string) =>
@@ -97,6 +101,8 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.LIMITS_DAILY_SPEND) as Promise<number>,
   getThreadUsage: (sessionId: string) =>
     ipcRenderer.invoke(IPC.LIMITS_THREAD_USAGE, sessionId) as Promise<import('../shared/types.js').ThreadUsage>,
+  getUsageSummary: (since: number | null) =>
+    ipcRenderer.invoke(IPC.USAGE_SUMMARY, since) as Promise<import('../shared/types.js').UsageSummary>,
   onAgentEvent: (sessionId: string, callback: (event: import('../shared/types.js').AgentEvent) => void) => {
     const channel = `${IPC.AGENT_EVENT}:${sessionId}`;
     const handler = (_event: Electron.IpcRendererEvent, data: import('../shared/types.js').AgentEvent) =>
@@ -135,6 +141,20 @@ const api: GroveBenchAPI = {
   removeBookmark: (id: string) => ipcRenderer.invoke(IPC.BOOKMARK_REMOVE, id),
   updateBookmark: (id: string, patch: Partial<Pick<import('../shared/types.js').Bookmark, 'note' | 'eventIndex'>>) =>
     ipcRenderer.invoke(IPC.BOOKMARK_UPDATE, id, patch),
+
+  // Follow-ups
+  listFollowUps: () => ipcRenderer.invoke(IPC.FOLLOW_UPS_LIST),
+  addFollowUp: (repoPath: string, title: string, details: string) => ipcRenderer.invoke(IPC.FOLLOW_UP_ADD, repoPath, title, details),
+  setFollowUpDone: (id: string, done: boolean) => ipcRenderer.invoke(IPC.FOLLOW_UP_SET_DONE, id, done),
+  followUpStarted: (id: string, sessionId: string) => ipcRenderer.invoke(IPC.FOLLOW_UP_STARTED, id, sessionId),
+  removeFollowUp: (id: string) => ipcRenderer.invoke(IPC.FOLLOW_UP_REMOVE, id),
+  onFollowUpsChanged: (callback: (change: import('../shared/follow-ups.js').FollowUpsChange) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, change: import('../shared/follow-ups.js').FollowUpsChange) => callback(change);
+    ipcRenderer.on(IPC.FOLLOW_UPS_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.FOLLOW_UPS_CHANGED, handler);
+    };
+  },
 
   // Mode control
   setMode: (sessionId: string, mode: string) =>
