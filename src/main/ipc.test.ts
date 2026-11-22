@@ -111,6 +111,12 @@ vi.mock('./gh.js', async (importOriginal) => ({
   prsForBranches: vi.fn(), prCreate: vi.fn(), prReviewComments: vi.fn(), ghLogin: vi.fn(), openPrs: vi.fn(),
   prJobLog: vi.fn(), prRerunFailed: vi.fn(),
 }));
+// Its input checks are real; what it does on GitHub is a stand-in.
+vi.mock('./pr-actions.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./pr-actions.js')>()),
+  prActionOptions: vi.fn(), prMerge: vi.fn(), deletePrBranch: vi.fn(), prSetAutoMerge: vi.fn(),
+  prSetDraft: vi.fn(), prSetOpen: vi.fn(), prUpdateBranch: vi.fn(),
+}));
 vi.mock('./branch-name.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./branch-name.js')>()),
   generateBranchName: vi.fn(),
@@ -132,6 +138,7 @@ import { launchEditor } from './editor-launch.js';
 import { detectPackageManager, installDependencies } from './deps-install.js';
 import { initSubmodules, readSubmoduleConfig } from './worktree-submodules.js';
 import { logRendererError } from './crash-handling.js';
+import * as prActions from './pr-actions.js';
 import { applyAttentionBadge } from './attention-badge.js';
 import { recordedAgent } from './background-tasks.js';
 import { generateCommitMessage } from './commit-message.js';
@@ -1966,6 +1973,63 @@ describe('pull requests', () => {
     vi.mocked(gh.prRerunFailed).mockResolvedValue();
     await invoke(IPC.PR_RERUN_FAILED, 's1', 'o/r', '123');
     expect(gh.prRerunFailed).toHaveBeenCalledWith('/repo', 'o/r', '123');
+  });
+
+  describe('PR actions', () => {
+    beforeEach(() => {
+      // The thread's branch is 'feat' (wtInfo); it's checked out.
+      vi.mocked(git.currentBranch).mockResolvedValue('feat');
+      vi.mocked(git.recentCheckouts).mockResolvedValue([]);
+    });
+
+    it('merges only what the popup could have asked for', async () => {
+      vi.mocked(prActions.prMerge).mockResolvedValue({ branchDeleted: true });
+      await expect(invoke(IPC.PR_MERGE, 's1', { number: 42, method: 'squash', headSha: 'abc1234', deleteBranch: true, admin: 'yes' }, 'feat'))
+        .resolves.toEqual({ branchDeleted: true });
+      expect(prActions.prMerge).toHaveBeenCalledWith('/repo', { number: 42, method: 'squash', headSha: 'abc1234', deleteBranch: true }, 'feat');
+
+      await expect(invoke(IPC.PR_MERGE, 's1', { number: 42, method: 'octopus', headSha: 'abc1234' })).rejects.toThrow('Not a merge the popup asked for');
+      await expect(invoke(IPC.PR_MERGE, 's1', { number: 42, method: 'squash', headSha: '--admin' })).rejects.toThrow('Not a merge the popup asked for');
+      await expect(invoke(IPC.PR_MERGE, 'nope', { number: 42, method: 'squash', headSha: 'abc1234' })).rejects.toThrow("This thread's worktree isn't there any more");
+      expect(prActions.prMerge).toHaveBeenCalledTimes(1);
+    });
+
+    it("deletes only one of the thread's own branches", async () => {
+      vi.mocked(prActions.deletePrBranch).mockResolvedValue({ branchDeleted: true });
+      await invoke(IPC.PR_DELETE_BRANCH, 's1', 'feat');
+      expect(prActions.deletePrBranch).toHaveBeenCalledWith('/repo', 'feat');
+
+      await expect(invoke(IPC.PR_DELETE_BRANCH, 's1', 'main')).rejects.toThrow("That branch isn't one of this thread's");
+      await expect(invoke(IPC.PR_MERGE, 's1', { number: 42, method: 'squash', headSha: 'abc1234', deleteBranch: true }, 'release')).rejects.toThrow("That branch isn't one of this thread's");
+      expect(prActions.deletePrBranch).toHaveBeenCalledTimes(1);
+    });
+
+    it("updates the branch on GitHub, then the thread's copy only when asked and on that branch", async () => {
+      vi.mocked(git.git).mockResolvedValue('');
+      await expect(invoke(IPC.PR_UPDATE_BRANCH, 's1', 42, false, true, 'feat')).resolves.toEqual({ pulled: true });
+      expect(prActions.prUpdateBranch).toHaveBeenCalledWith('/repo', 42, false);
+      expect(git.git).toHaveBeenCalledWith(['pull', '--ff-only', 'origin', 'feat'], wt, expect.objectContaining({ timeout: expect.any(Number) }));
+
+      vi.mocked(git.git).mockClear();
+      // The agent is in a turn: its files aren't pulled from under it.
+      await expect(invoke(IPC.PR_UPDATE_BRANCH, 's1', 42, true, false, 'feat')).resolves.toEqual({ pulled: false });
+      await expect(invoke(IPC.PR_UPDATE_BRANCH, 's1', 42, true, true, 'other')).resolves.toEqual({ pulled: false });
+      expect(git.git).not.toHaveBeenCalled();
+
+      vi.mocked(git.git).mockRejectedValue(Object.assign(new Error('pull failed'), { stderr: 'fatal: Not possible to fast-forward, aborting.' }));
+      await expect(invoke(IPC.PR_UPDATE_BRANCH, 's1', 42, true, true, 'feat')).resolves.toEqual({ pulled: false, pullError: 'fatal: Not possible to fast-forward, aborting.' });
+    });
+
+    it('takes a PR number and nothing else for the other actions', async () => {
+      await invoke(IPC.PR_SET_AUTO_MERGE, 's1', 42, true, 'rebase');
+      await invoke(IPC.PR_SET_AUTO_MERGE, 's1', 42, true, 'octopus');
+      await invoke(IPC.PR_SET_DRAFT, 's1', 42, false);
+      await invoke(IPC.PR_SET_OPEN, 's1', 42, false);
+      expect(vi.mocked(prActions.prSetAutoMerge).mock.calls).toEqual([['/repo', 42, true, 'rebase'], ['/repo', 42, true, 'squash']]);
+      expect(prActions.prSetDraft).toHaveBeenCalledWith('/repo', 42, false);
+      expect(prActions.prSetOpen).toHaveBeenCalledWith('/repo', 42, false);
+      await expect(invoke(IPC.PR_SET_OPEN, 's1', '42; rm', false)).rejects.toThrow('Not a PR number');
+    });
   });
 
   it('PR_JOB_LOG and PR_RERUN_FAILED refuse arguments that are not strings, and unknown threads', async () => {

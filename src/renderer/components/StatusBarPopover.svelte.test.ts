@@ -37,6 +37,27 @@ describe('StatusBarPopover', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Open' }));
   });
 
+  it('leaves Escape to a menu over it: one that handled the key first, or one still open inside', async () => {
+    // Registered before the panel's own listener, as a menu's may be. On a
+    // real key press the menu has already gone from the page by the time the
+    // panel looks, so the mark is what it goes by.
+    const menuFirst = (e: KeyboardEvent) => e.preventDefault();
+    window.addEventListener('keydown', menuFirst, true);
+    try {
+      renderOpen();
+      await fireEvent.keyDown(window, { key: 'Escape' });
+      expect(screen.queryByTestId('panel')).not.toBeNull();
+    } finally {
+      window.removeEventListener('keydown', menuFirst, true);
+      cleanup();
+    }
+
+    const withMenu = createRawSnippet(() => ({ render: () => '<div role="menu"><button>Item</button></div>' }));
+    render(StatusBarPopover, { open: true, trigger, children: withMenu, testid: 'panel' });
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByTestId('panel')).not.toBeNull();
+  });
+
   it("leaves Escape alone while its pane is hidden, so the pane on screen gets it", async () => {
     // jsdom has no checkVisibility; a hidden pane's elements report false.
     Element.prototype.checkVisibility = () => false;

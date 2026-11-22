@@ -40,8 +40,12 @@ export interface ShipStage {
 }
 
 /** What the Next notice offers: an action this app takes, a page on
- *  GitHub, or nothing while waiting. */
-export type ShipAction = 'retry-push' | 'push' | 'create-pr' | 'fix-ci' | 'address-reviews' | 'merge-on-github' | 'open-pr';
+ *  GitHub, or nothing while waiting. The PR actions (merge, mark ready,
+ *  auto-merge, update the branch, tidy up after a merge) run gh in the
+ *  project (pr-actions.ts); the popup offers each only where GitHub says
+ *  this account may (PrActionOptions). */
+export type ShipAction = 'retry-push' | 'push' | 'create-pr' | 'fix-ci' | 'address-reviews' | 'open-pr'
+  | 'merge' | 'mark-ready' | 'auto-merge' | 'disable-auto-merge' | 'update-branch' | 'tidy';
 
 /** The one thing to do now, for the popup's Next notice. act: something
  *  for you to do (the lozenge's green mark). wait: nothing to do but wait.
@@ -52,6 +56,10 @@ export interface ShipNext {
   detail?: string;
   action?: ShipAction;
   tone: 'act' | 'wait' | 'done';
+  /** What merging now would skip, in words, when it waits on the base
+   *  branch's rules: the popup offers Merge anyway to an account that may
+   *  bypass them, and its confirm lists these. */
+  skips?: string[];
 }
 
 export interface ShipTrack {
@@ -145,7 +153,7 @@ export function shipTrack({ sync, pr, pushFailed, canCreatePr }: ShipTrackInput)
   // The green mark: something to do now, or a PR GitHub says is ready that
   // you merge (Grove doesn't). Not for one someone else opened, such as a PR
   // you watch to another repository: its author or a maintainer merges it.
-  const actionable = !!next && (next.tone === 'act' || (next.action === 'merge-on-github' && pr?.viewerIsAuthor !== false));
+  const actionable = !!next && (next.tone === 'act' || (next.action === 'merge' && pr?.viewerIsAuthor !== false));
   const summary = [
     push.detail,
     pr ? `PR ${prStep.detail}` : canCreatePr ? 'no PR yet' : '',
@@ -179,7 +187,7 @@ function nextStep({ sync, pr, pushFailed, canCreatePr }: ShipTrackInput, open: b
     }
     if (sync.ahead > 0) return { step: 'push', headline: `${plural(sync.ahead, 'commit')} not pushed`, action: 'push', tone: 'act' };
     if (pr?.state === 'MERGED') {
-      return { step: 'merge', headline: `#${pr.number} merged`, ...(canCreatePr ? { detail: 'For more work on this branch, open a new PR.', action: 'create-pr' as const } : {}), tone: 'done' };
+      return { step: 'merge', headline: `Merged into ${pr.baseRefName ?? 'its base'}`, detail: 'Close the thread when you\'re done with it, and delete the branch if it\'s still on GitHub.', action: 'tidy', tone: 'done' };
     }
     if (pr?.state === 'CLOSED') {
       return { step: 'merge', headline: `#${pr.number} closed without merging`, ...(canCreatePr ? { detail: 'Open a new PR for more work on this branch.', action: 'create-pr' as const } : {}), tone: 'wait' };
@@ -208,22 +216,25 @@ function nextStep({ sync, pr, pushFailed, canCreatePr }: ShipTrackInput, open: b
   if (pr!.mergeState === 'dirty') {
     return { step: 'merge', headline: `Conflicts with ${base}`, detail: `Merge ${base} into the branch and resolve them, then push.`, action: 'open-pr', tone: 'act' };
   }
-  if (pr!.isDraft) return { step: 'pr', headline: 'Draft PR', detail: 'Mark it ready for review on GitHub when the work is done.', action: 'open-pr', tone: 'wait' };
-  if (checks && checks.pending > 0) {
-    return { step: 'checks', headline: 'Checks running', detail: `${checks.passed} of ${checks.total} passed.`, tone: 'wait' };
-  }
+  if (pr!.isDraft) return { step: 'pr', headline: 'Draft PR', detail: 'Mark it ready when the work is done. GitHub then asks its reviewers, and it can be merged.', action: 'mark-ready', tone: 'wait' };
   if (pr!.mergeState === 'behind') {
-    return { step: 'merge', headline: `Behind ${base}`, detail: `${base} has moved on. Update the branch before merging.`, action: 'open-pr', tone: 'act' };
+    return { step: 'merge', headline: `Behind ${base}`, detail: `${base} has commits this branch doesn't, and it needs them before it merges.`, action: 'update-branch', tone: 'act' };
+  }
+  if (pr!.autoMerge) return { step: 'merge', headline: 'Auto-merge is on', detail: 'GitHub merges it as soon as nothing stops it.', action: 'disable-auto-merge', tone: 'wait' };
+  // Waiting on the base branch's rules: auto-merge merges it once they're
+  // met, and an account that may bypass them can merge now (skips).
+  const reviewSkip = pr!.reviewDecision === 'REVIEW_REQUIRED' ? ['An approving review (it has none yet)'] : [];
+  if (checks && checks.pending > 0) {
+    return { step: 'checks', headline: 'Checks running', detail: `${checks.passed} of ${checks.total} passed.`, action: 'auto-merge', tone: 'wait', skips: [`${plural(checks.pending, 'check')} still running`, ...reviewSkip] };
   }
   if (pr!.reviewDecision === 'REVIEW_REQUIRED') {
     const asked = pr!.requestedReviewers ?? [];
-    return { step: 'review', headline: 'Waiting for a review', detail: asked.length ? `Asked of ${asked.join(', ')}.` : `${base} needs an approving review to merge.`, tone: 'wait' };
+    return { step: 'review', headline: 'Waiting for a review', detail: `It needs an approving review to merge into ${base}.${asked.length ? ` Asked of ${asked.join(', ')}.` : ''}`, action: 'auto-merge', tone: 'wait', skips: reviewSkip };
   }
-  if (pr!.autoMerge) return { step: 'merge', headline: 'Merges by itself', detail: 'Auto-merge is on: GitHub merges it once nothing stops it.', tone: 'wait' };
   if (pr!.mergeState === 'clean' || pr!.mergeState === 'has_hooks' || pr!.mergeState === 'unstable') {
-    return { step: 'merge', headline: 'Ready to merge', action: 'merge-on-github', tone: 'done' };
+    return { step: 'merge', headline: 'Ready to merge', action: 'merge', tone: 'done' };
   }
-  if (pr!.mergeState === 'blocked') return { step: 'merge', headline: 'Blocked', detail: 'A branch rule stops the merge: see the PR on GitHub.', action: 'open-pr', tone: 'wait' };
+  if (pr!.mergeState === 'blocked') return { step: 'merge', headline: 'Blocked', detail: `A rule on ${base} stops the merge.`, action: 'auto-merge', tone: 'wait', skips: [`A rule on ${base} that blocks it`] };
   // GitHub hasn't given a verdict yet (unknown, or none).
   return { step: 'merge', headline: 'Waiting for GitHub', detail: 'It hasn\'t said yet whether the PR can merge.', action: 'open-pr', tone: 'wait' };
 }

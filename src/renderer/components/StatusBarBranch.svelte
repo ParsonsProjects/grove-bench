@@ -35,6 +35,9 @@
   import StatusBarPopover from './StatusBarPopover.svelte';
   import StatusBarSteps from './StatusBarSteps.svelte';
   import ShipIcon from './ShipIcon.svelte';
+  import DropdownMenu, { type DropdownItem } from './DropdownMenu.svelte';
+  import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
+  import { errorMessage } from '../../shared/error-message.js';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -175,6 +178,40 @@
   // ── Creating a PR ──
   let createPrOpen = $state(false);
 
+  // ── The ⋯ menu: the PR actions that aren't the next step (pr-actions.ts) ──
+
+  $effect(() => {
+    if (shipOpen && prInfo) void prStore.loadActionOptions(sessionId);
+  });
+  let prOptions = $derived(prStore.getActionOptions(sessionId));
+
+  function prAction(label: string, run: () => Promise<unknown>) {
+    shipOpen = false;
+    run().catch((e: unknown) => store.setError(errorMessage(e, `${label} failed`)));
+  }
+
+  let prMenuItems = $derived.by((): DropdownItem[] => {
+    if (!prInfo) return [];
+    const open = prInfo.state === 'OPEN';
+    const method = prStore.mergeMethod(sessionId, prOptions?.methods);
+    const items: DropdownItem[] = [];
+    if (open && !prInfo.isDraft) items.push({ label: 'Mark as draft', detail: 'Stops it being merged for now', onclick: () => prAction('Mark as draft', () => prStore.setDraft(sessionId, true)) });
+    if (open && prInfo.isDraft) items.push({ label: 'Mark ready for review', onclick: () => prAction('Mark ready', () => prStore.setDraft(sessionId, false)) });
+    if (open && !prInfo.autoMerge && prOptions?.canEnableAutoMerge) {
+      items.push({ label: 'Turn on auto-merge', detail: `Merges once nothing stops it (${method === 'merge' ? 'merge commit' : method})`, onclick: () => prAction('Turn on auto-merge', () => prStore.setAutoMerge(sessionId, true, method)) });
+    }
+    if (open && prInfo.autoMerge && prOptions?.canDisableAutoMerge !== false) items.push({ label: 'Turn off auto-merge', onclick: () => prAction('Turn off auto-merge', () => prStore.setAutoMerge(sessionId, false)) });
+    if (open && prOptions?.canUpdateBranch) {
+      items.push({ label: 'Update branch', detail: `Merges ${prInfo.baseRefName ?? 'the base branch'} into it on GitHub`, onclick: () => prAction('Update branch', () => prStore.updateBranch(sessionId, false)) });
+    }
+    if (prInfo.state === 'MERGED' && prOptions?.canDeleteBranch && prOptions.stackedPrs === 0 && !prStore.branchDeleted(sessionId)) {
+      items.push({ label: 'Delete branch on GitHub', detail: 'The thread keeps its own copy', onclick: () => prAction('Delete branch', () => prStore.deletePrBranch(sessionId)) });
+    }
+    if (prInfo.state === 'CLOSED') items.push({ label: 'Reopen PR', onclick: () => prAction('Reopen', () => prStore.setOpen(sessionId, true)) });
+    if (open) items.push({ label: 'Close PR', detail: 'Without merging. You can reopen it', tone: 'destructive', separator: items.length > 0, onclick: () => prAction('Close', () => prStore.setOpen(sessionId, false)) });
+    return items;
+  });
+
   /** Set while the PR turn is being prepared (the base branch lookup runs
    *  git), so a double click can't send it twice. */
   let preparingPrTurn = $state(false);
@@ -235,10 +272,20 @@
             <span class="font-medium text-foreground shrink-0">#{prInfo.number}</span>
             {#if prInfo.title}<span class="truncate text-foreground" title={prInfo.title}>{prInfo.title}</span>{/if}
             <Badge tone={prBadge.tone} class="shrink-0">{prBadge.label}</Badge>
+            {#if prMenuItems.length > 0}
+              <span class="ml-auto shrink-0">
+                <DropdownMenu
+                  label="More PR actions"
+                  items={prMenuItems}
+                  align="right"
+                  triggerClass="inline-flex size-5 items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground"
+                ><EllipsisIcon class="size-3.5" /></DropdownMenu>
+              </span>
+            {/if}
             <Button
               variant="external"
               size="icon-2xs"
-              class="ml-auto shrink-0"
+              class="{prMenuItems.length > 0 ? '' : 'ml-auto'} shrink-0"
               onclick={() => window.groveBench.openExternal(prInfo.url)}
               title="Open #{prInfo.number} on GitHub"
               aria-label="Open #{prInfo.number} on GitHub"

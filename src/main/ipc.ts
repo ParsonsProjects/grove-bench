@@ -2,12 +2,13 @@ import { app, ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { isSkipped, runProcess } from './process-host.js';
 import { inBackground } from './background-work.js';
 import { IPC, isPermissionMode } from '../shared/types.js';
-import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, EventHistoryPage, ThreadUsage, OpenPrSummary, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, SkillReach, WorktreeInfo, LinkedCheckout } from '../shared/types.js';
+import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, EventHistoryPage, ThreadUsage, OpenPrSummary, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, SkillReach, WorktreeInfo, LinkedCheckout, PrBranchResult, PrMergeRequest } from '../shared/types.js';
 import { errorMessage } from '../shared/error-message.js';
 import { linkedProjectNotes } from './linked-projects.js';
 import { linkChangeNote } from './session-config.js';
 import { sessionManager } from './agent-session.js';
 import { todaySpend } from './session-limits.js';
+import { deletePrBranch, isCommitSha, isMergeMethod, isPrNumber, prActionOptions, prMerge, prSetAutoMerge, prSetDraft, prSetOpen, prUpdateBranch } from './pr-actions.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
 import { openCutOff } from '../shared/cut-off.js';
 import { decideAutoName } from './session-auto-name.js';
@@ -20,7 +21,7 @@ import { adapterRegistry, registerClaudeAccount } from './adapters/index.js';
 import { claudeAccounts, isClaudeAccountId, newClaudeAccount } from './adapters/claude-accounts.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
-import { validateBranchName, branchExists, branchExistsAnywhere, worktreeBranches, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, isTracked, patchResult, patchOverLimit, MAX_TEXT_FILE_BYTES, resolveMergeBase, blobLines, hashWorkingFiles, listProjectFiles, revertFile, gitOperation, continueGitOperation, abortGitOperation, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, textLines, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, MissingBaseError, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
+import { validateBranchName, branchExists, branchExistsAnywhere, worktreeBranches, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, isTracked, patchResult, patchOverLimit, MAX_TEXT_FILE_BYTES, resolveMergeBase, blobLines, hashWorkingFiles, listProjectFiles, revertFile, gitOperation, continueGitOperation, abortGitOperation, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, textLines, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, MissingBaseError, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion, FETCH_TIMEOUT_MS } from './git.js';
 import { inspectProjectFolder, projectKind } from './project-path.js';
 import { prsForBranches, prCreate, prReviewComments, prJobLog, prRerunFailed, ghLogin, isNetworkError, isRateLimitError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE, GH_RATE_LIMITED_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
@@ -2233,6 +2234,83 @@ export function registerHandlers() {
     // The branch must exist on origin before gh can open a PR for it.
     await push(worktree.path, worktree.branch);
     return prCreate(worktree.repoPath, worktree.branch, opts);
+  });
+
+  // ─── PR actions from the branch popup (pr-actions.ts) ───
+
+  /** The thread's project folder, for a PR action. */
+  function prRepo(sessionId: string): { repoPath: string; worktree: WorktreeInfo } {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree || worktree.noGit) throw new Error(THREAD_FOLDER_GONE);
+    return { repoPath: worktree.repoPath, worktree };
+  }
+
+  /** A branch this thread's PRs come from (sessionPrBranches): the only
+   *  ones the popup may delete. */
+  async function threadBranch(worktree: WorktreeInfo, branch: unknown): Promise<string> {
+    if (typeof branch !== 'string' || !(await sessionPrBranches(worktree)).includes(branch)) {
+      throw new Error('That branch isn\'t one of this thread\'s');
+    }
+    return branch;
+  }
+
+  ipcMain.handle(IPC.PR_ACTION_OPTIONS, async (_event, sessionId: string, number: unknown, head: unknown) => {
+    const { repoPath, worktree } = prRepo(sessionId);
+    if (!isPrNumber(number)) throw new Error('Not a PR number');
+    return prActionOptions(repoPath, number, await threadBranch(worktree, head));
+  });
+
+  ipcMain.handle(IPC.PR_MERGE, async (_event, sessionId: string, req: unknown, head: unknown): Promise<PrBranchResult> => {
+    const { repoPath, worktree } = prRepo(sessionId);
+    const r = (req ?? {}) as Partial<PrMergeRequest>;
+    if (!isPrNumber(r.number) || !isMergeMethod(r.method) || !isCommitSha(r.headSha)) throw new Error('Not a merge the popup asked for');
+    const merge: PrMergeRequest = {
+      number: r.number, method: r.method, headSha: r.headSha,
+      ...(r.admin === true ? { admin: true } : {}),
+      ...(r.deleteBranch === true ? { deleteBranch: true } : {}),
+    };
+    return prMerge(repoPath, merge, merge.deleteBranch ? await threadBranch(worktree, head) : undefined);
+  });
+
+  ipcMain.handle(IPC.PR_DELETE_BRANCH, async (_event, sessionId: string, branch: unknown): Promise<PrBranchResult> => {
+    const { repoPath, worktree } = prRepo(sessionId);
+    return deletePrBranch(repoPath, await threadBranch(worktree, branch));
+  });
+
+  ipcMain.handle(IPC.PR_SET_AUTO_MERGE, async (_event, sessionId: string, number: unknown, on: unknown, method: unknown) => {
+    const { repoPath } = prRepo(sessionId);
+    if (!isPrNumber(number)) throw new Error('Not a PR number');
+    await prSetAutoMerge(repoPath, number, on === true, isMergeMethod(method) ? method : 'squash');
+  });
+
+  ipcMain.handle(IPC.PR_SET_DRAFT, async (_event, sessionId: string, number: unknown, draft: unknown) => {
+    const { repoPath } = prRepo(sessionId);
+    if (!isPrNumber(number)) throw new Error('Not a PR number');
+    await prSetDraft(repoPath, number, draft === true);
+  });
+
+  ipcMain.handle(IPC.PR_SET_OPEN, async (_event, sessionId: string, number: unknown, open: unknown) => {
+    const { repoPath } = prRepo(sessionId);
+    if (!isPrNumber(number)) throw new Error('Not a PR number');
+    await prSetOpen(repoPath, number, open === true);
+  });
+
+  /** Update the PR's branch on GitHub, then, when asked (the agent isn't in
+   *  a turn) and the worktree is on that branch, bring the thread's copy up
+   *  to date too, fast-forward only. That part failing doesn't fail the
+   *  update: `pulled` says what happened. */
+  ipcMain.handle(IPC.PR_UPDATE_BRANCH, async (_event, sessionId: string, number: unknown, rebase: unknown, pull: unknown, head: unknown) => {
+    const { repoPath, worktree } = prRepo(sessionId);
+    if (!isPrNumber(number)) throw new Error('Not a PR number');
+    await prUpdateBranch(repoPath, number, rebase === true);
+    if (pull !== true || typeof head !== 'string' || (await currentBranch(worktree.path)) !== head) return { pulled: false };
+    try {
+      await git(['pull', '--ff-only', 'origin', head], worktree.path, { timeout: FETCH_TIMEOUT_MS });
+      return { pulled: true };
+    } catch (e) {
+      const err = e as { stderr?: string; message?: string };
+      return { pulled: false, pullError: (err.stderr || err.message || String(e)).trim().split('\n').slice(-3).join('\n') };
+    }
   });
 
   // ─── Plugins ───

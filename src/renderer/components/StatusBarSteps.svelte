@@ -24,6 +24,10 @@
   import type { FailingJob, FailingRun, GitSyncStatus, PrInfo, PrReviewer } from '../../shared/types.js';
   import { errorMessage } from '../../shared/error-message.js';
   import ShipDot from './ShipDot.svelte';
+  import PrNext from './PrNext.svelte';
+
+  /** Next steps PrNext handles: PR actions the app takes itself. */
+  const PR_ACTIONS = new Set<ShipAction>(['merge', 'mark-ready', 'auto-merge', 'disable-auto-merge', 'update-branch', 'tidy']);
 
   let {
     sessionId,
@@ -268,8 +272,6 @@
     <Button size="xs" onclick={addressReviews} disabled={!canAgentCreatePr || addressingReviews} class="disabled:cursor-not-allowed" title={canAgentCreatePr ? 'Fetch the review comments and send a turn asking the agent to address them' : AGENT_BUSY}>
       {addressingReviews ? 'Fetching…' : 'Address with agent'}
     </Button>
-  {:else if action === 'merge-on-github'}
-    <Button size="xs" variant="external" onclick={openPr} title="Merge it on GitHub">Merge on GitHub<ExternalLink class="size-3" /></Button>
   {:else if action === 'open-pr'}
     <Button size="xs" variant="external" onclick={openPr}>Open on GitHub<ExternalLink class="size-3" /></Button>
   {/if}
@@ -281,8 +283,12 @@
   </p>
 {/if}
 
-<!-- The one thing to do now, with the popup's one main action. -->
-{#if next}
+<!-- The one thing to do now, with the popup's one main action. A PR
+     action the app takes itself has its own notice (PrNext). -->
+{#if next && prInfo && next.action && PR_ACTIONS.has(next.action)}
+  <SectionLabel class="mb-1">Next</SectionLabel>
+  <PrNext {sessionId} {next} {prInfo} {onclose} />
+{:else if next}
   <SectionLabel class="mb-1">Next</SectionLabel>
   <Notice
     tone={next.tone === 'wait' ? 'info' : 'success'}

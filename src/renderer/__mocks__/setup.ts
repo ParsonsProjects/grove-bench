@@ -118,6 +118,13 @@ const mockGroveBench = {
   getPrs: vi.fn((_sessionId: string) => Promise.resolve([] as import('../../shared/types.js').PrInfo[])),
   listOpenPrs: vi.fn((_repoPath: string) => Promise.resolve([] as import('../../shared/types.js').OpenPrSummary[])),
   createPr: vi.fn(() => Promise.resolve({ number: 1, url: 'https://example.com/pull/1' } as import('../../shared/types.js').PrInfo)),
+  getPrActionOptions: vi.fn(async () => ({ methods: ['squash', 'merge', 'rebase'], deleteBranchOnMerge: false, autoMergeAllowed: true, canMergeAsAdmin: false, canEnableAutoMerge: true, canDisableAutoMerge: true, canUpdateBranch: false, canDeleteBranch: true, stackedPrs: 0 })),
+  mergePr: vi.fn(async () => ({})),
+  deletePrBranch: vi.fn(async () => ({ branchDeleted: true })),
+  setPrAutoMerge: vi.fn(async () => {}),
+  setPrDraft: vi.fn(async () => {}),
+  setPrOpen: vi.fn(async () => {}),
+  updatePrBranch: vi.fn(async () => ({ pulled: true })),
   getPrReviewComments: vi.fn(() => Promise.resolve([] as import('../../shared/types.js').PrReviewComment[])),
   submitPrReview: vi.fn((_sessionId: string, _review: import('../../shared/types.js').PrReviewSubmit) =>
     Promise.resolve({ url: null, inline: 0, quoted: 0 } as import('../../shared/types.js').PrReviewSubmitResult)),

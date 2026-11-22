@@ -1,4 +1,4 @@
-import type { FailingJob, FailingRun, PrInfo, GitSyncStatus, PrCreateOpts, PrReviewComment, PrReviewSubmit, PrReviewSubmitResult } from '../../shared/types.js';
+import type { FailingJob, FailingRun, MergeMethod, PrActionOptions, PrBranchResult, PrInfo, GitSyncStatus, PrCreateOpts, PrReviewComment, PrReviewSubmit, PrReviewSubmitResult } from '../../shared/types.js';
 import { CI_RERUN_UNANSWERED, type CiLogTail } from '../../shared/ci-log.js';
 import { errorMessage } from '../../shared/error-message.js';
 import { messageStore } from './messages.svelte.js';
@@ -151,6 +151,29 @@ export interface BranchShip {
  *  hours, and PR alerts and auto turns have to go on. */
 function checksPaused(): boolean {
   return typeof document !== 'undefined' && document.hidden && settingsStore.current.closeWindow !== 'tray';
+}
+
+/** The PR state GitHub's action answers depend on (PrActionOptions). */
+function actionKey(pr: PrInfo): string {
+  return [pr.number, pr.headSha, pr.state, pr.mergeState, pr.autoMerge, pr.isDraft, pr.reviewDecision].join(':');
+}
+
+const MERGE_METHOD_KEY = 'grove-bench:merge-method:';
+
+/** The merge method last used in a project (localStorage), if any. */
+function readMergeMethod(repoPath: string): MergeMethod | null {
+  try {
+    const saved = localStorage.getItem(MERGE_METHOD_KEY + repoPath);
+    return saved === 'squash' || saved === 'merge' || saved === 'rebase' ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeMergeMethod(repoPath: string, method: MergeMethod): void {
+  try {
+    localStorage.setItem(MERGE_METHOD_KEY + repoPath, method);
+  } catch { /* remembered for this run only */ }
 }
 
 class PrStore {
@@ -540,6 +563,120 @@ class PrStore {
       throw e;
     }
     await this.refresh(sessionId, true);
+  }
+
+  // ─── PR actions (pr-actions.ts in main) ───
+
+  /** What the branch popup may offer for each thread's PR, and the PR state
+   *  it was asked for (actionKey): GitHub's answers change with it, as
+   *  auto-merge can't be turned on for a PR that can already merge. */
+  actionOptionsBySession = $state<Record<string, { key: string; options: PrActionOptions }>>({});
+  /** The PR number whose branch the popup deleted, until a fetch says so. */
+  branchDeletedBySession = $state<Record<string, number>>({});
+
+  /** What the popup may offer for the thread's PR, once asked for
+   *  (loadActionOptions); null before, or for a PR in another state. */
+  getActionOptions(sessionId: string): PrActionOptions | null {
+    const pr = this.getPr(sessionId);
+    const entry = this.actionOptionsBySession[sessionId];
+    return pr && entry?.key === actionKey(pr) ? entry.options : null;
+  }
+
+  /** Ask GitHub what the popup may offer for the thread's PR, unless it
+   *  already said for this state of it. Quietly gives up: the popup then
+   *  offers only what needs no answer. */
+  async loadActionOptions(sessionId: string): Promise<void> {
+    const pr = this.getPr(sessionId);
+    if (!pr?.headRefName || (pr.state !== 'OPEN' && pr.state !== 'MERGED')) return;
+    const key = actionKey(pr);
+    // Asked once: the popup's header and its Next notice both ask as it opens.
+    if (this.actionOptionsBySession[sessionId]?.key === key || this.optionsAsked.get(sessionId) === key) return;
+    this.optionsAsked.set(sessionId, key);
+    try {
+      const options = await window.groveBench.getPrActionOptions(sessionId, pr.number, pr.headRefName);
+      this.actionOptionsBySession = { ...this.actionOptionsBySession, [sessionId]: { key, options } };
+    } catch { /* offered without */ } finally {
+      if (this.optionsAsked.get(sessionId) === key) this.optionsAsked.delete(sessionId);
+    }
+  }
+  private optionsAsked = new Map<string, string>();
+
+  /** The merge method for the thread's project: the one last used there,
+   *  if the repository still allows it, else the first it allows. */
+  mergeMethod(sessionId: string, allowed?: readonly MergeMethod[]): MergeMethod {
+    const saved = readMergeMethod(this.repoOf(sessionId));
+    if (saved && (!allowed || allowed.includes(saved))) return saved;
+    return allowed?.[0] ?? 'squash';
+  }
+
+  /** Merge the thread's PR, as the popup's confirm said, then refetch.
+   *  Throws GitHub's reason when it refuses (a push meanwhile, say). */
+  async mergePr(sessionId: string, opts: { method: MergeMethod; admin?: boolean; deleteBranch?: boolean }): Promise<PrBranchResult> {
+    const pr = this.getPr(sessionId);
+    if (!pr?.headSha) throw new Error('The PR\'s head commit isn\'t known yet. Try again in a moment.');
+    const result = await window.groveBench.mergePr(sessionId, {
+      number: pr.number, method: opts.method, headSha: pr.headSha,
+      ...(opts.admin ? { admin: true } : {}),
+      ...(opts.deleteBranch ? { deleteBranch: true } : {}),
+    }, pr.headRefName);
+    writeMergeMethod(this.repoOf(sessionId), opts.method);
+    if (result.branchDeleted) this.branchDeletedBySession = { ...this.branchDeletedBySession, [sessionId]: pr.number };
+    await this.refresh(sessionId, true);
+    return result;
+  }
+
+  /** Delete the merged PR's branch on GitHub. */
+  async deletePrBranch(sessionId: string): Promise<PrBranchResult> {
+    const pr = this.getPr(sessionId);
+    if (!pr?.headRefName) throw new Error('The PR\'s branch isn\'t known');
+    const result = await window.groveBench.deletePrBranch(sessionId, pr.headRefName);
+    if (result.branchDeleted) this.branchDeletedBySession = { ...this.branchDeletedBySession, [sessionId]: pr.number };
+    return result;
+  }
+
+  /** Whether the popup deleted the PR's branch (its options may say it can
+   *  still be deleted until GitHub's next answer). */
+  branchDeleted(sessionId: string): boolean {
+    const pr = this.getPr(sessionId);
+    return !!pr && this.branchDeletedBySession[sessionId] === pr.number;
+  }
+
+  async setAutoMerge(sessionId: string, on: boolean, method?: MergeMethod): Promise<void> {
+    const pr = this.requirePr(sessionId);
+    await window.groveBench.setPrAutoMerge(sessionId, pr.number, on, method);
+    if (on && method) writeMergeMethod(this.repoOf(sessionId), method);
+    await this.refresh(sessionId, true);
+  }
+
+  async setDraft(sessionId: string, draft: boolean): Promise<void> {
+    await window.groveBench.setPrDraft(sessionId, this.requirePr(sessionId).number, draft);
+    await this.refresh(sessionId, true);
+  }
+
+  async setOpen(sessionId: string, open: boolean): Promise<void> {
+    await window.groveBench.setPrOpen(sessionId, this.requirePr(sessionId).number, open);
+    await this.refresh(sessionId, true);
+  }
+
+  /** Update the PR's branch from its base on GitHub, then the thread's
+   *  copy, unless the agent is in a turn (its files aren't pulled from under
+   *  it). Says whether the thread's copy was updated. */
+  async updateBranch(sessionId: string, rebase: boolean): Promise<{ pulled: boolean; pullError?: string }> {
+    const pr = this.requirePr(sessionId);
+    const result = await window.groveBench.updatePrBranch(sessionId, pr.number, rebase, !messageStore.getIsRunning(sessionId), pr.headRefName);
+    if (result.pulled) gitStatusStore.scheduleRefresh(sessionId, 0);
+    await this.refresh(sessionId, true);
+    return result;
+  }
+
+  private requirePr(sessionId: string): PrInfo {
+    const pr = this.getPr(sessionId);
+    if (!pr) throw new Error('This thread has no PR');
+    return pr;
+  }
+
+  private repoOf(sessionId: string): string {
+    return sessionStore.sessions.find((s) => s.id === sessionId)?.repoPath ?? '';
   }
 
   /** Push the branch and open a PR via the gh CLI (manual dialog path). */
@@ -952,6 +1089,10 @@ class PrStore {
     persistAuto(sessionId, AUTO_OFF); // drops the saved toggles
     const { [sessionId]: _f, ...restFailed } = this.fetchFailedBySession;
     this.fetchFailedBySession = restFailed;
+    const { [sessionId]: _o, ...restOptions } = this.actionOptionsBySession;
+    this.actionOptionsBySession = restOptions;
+    const { [sessionId]: _d, ...restDeleted } = this.branchDeletedBySession;
+    this.branchDeletedBySession = restDeleted;
     for (const runId of Object.keys(this.rerunsBySession[sessionId] ?? {})) this.setRerunMark(sessionId, runId, undefined);
     const { [sessionId]: _r, ...restReruns } = this.rerunsBySession;
     this.rerunsBySession = restReruns;

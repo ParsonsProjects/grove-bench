@@ -858,6 +858,56 @@ export interface PrInfo {
   runningChecks?: string[];
 }
 
+/** How a PR merges into its base: one squashed commit, a merge commit, or
+ *  its commits rebased onto the base. */
+export type MergeMethod = 'squash' | 'merge' | 'rebase';
+export const MERGE_METHODS: readonly MergeMethod[] = ['squash', 'merge', 'rebase'];
+
+/** What the branch popup may offer for a PR (pr-actions.ts): the
+ *  repository's merge settings, and what the gh account may do to it. */
+export interface PrActionOptions {
+  /** The merge methods the repository allows, in MERGE_METHODS order. */
+  methods: MergeMethod[];
+  /** The repository deletes a merged PR's branch itself. */
+  deleteBranchOnMerge: boolean;
+  /** Auto-merge can be turned on for PRs in this repository. */
+  autoMergeAllowed: boolean;
+  /** The account may bypass the base branch's rules and merge now (gh pr
+   *  merge --admin). */
+  canMergeAsAdmin: boolean;
+  canEnableAutoMerge: boolean;
+  canDisableAutoMerge: boolean;
+  /** The branch is behind its base, and the account may bring it up to date. */
+  canUpdateBranch: boolean;
+  /** The account may delete the PR's branch on GitHub (not a fork's). */
+  canDeleteBranch: boolean;
+  /** Open PRs based on this PR's branch: deleting it would pull their base
+   *  from under them, so it's kept. */
+  stackedPrs: number;
+}
+
+/** A merge the user confirmed in the branch popup. */
+export interface PrMergeRequest {
+  number: number;
+  method: MergeMethod;
+  /** The head commit the user saw: GitHub refuses the merge if the branch
+   *  has moved since (gh pr merge --match-head-commit). */
+  headSha: string;
+  /** Bypass the base branch's rules (gh pr merge --admin). */
+  admin?: boolean;
+  /** Then delete the PR's branch on GitHub. Never the local one: the
+   *  thread's worktree has it checked out. */
+  deleteBranch?: boolean;
+}
+
+/** What became of the PR's branch after a merge (or a delete). */
+export interface PrBranchResult {
+  /** It was deleted on GitHub (or was already gone). */
+  branchDeleted?: boolean;
+  /** Why it was kept, when deleting it was asked for. */
+  branchKept?: string;
+}
+
 export type PrReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
 
 /** A line comment from the Changes tab, to post with a PR review. Lines are
@@ -1903,6 +1953,22 @@ export interface GroveBenchAPI {
   /** Open PRs in a project, newest first. Throws when gh can't list them. */
   listOpenPrs(repoPath: string): Promise<OpenPrSummary[]>;
   createPr(sessionId: string, opts: PrCreateOpts): Promise<PrInfo>;
+  // PR actions from the branch popup (pr-actions.ts). Each throws with
+  // GitHub's reason when it refuses.
+  /** What the popup may offer for one of the thread's PRs, from `head`. */
+  getPrActionOptions(sessionId: string, prNumber: number, head: string): Promise<PrActionOptions>;
+  /** Merge it; `head` is its branch, deleted on GitHub after if asked. */
+  mergePr(sessionId: string, req: PrMergeRequest, head?: string): Promise<PrBranchResult>;
+  /** Delete one of the thread's PR branches on GitHub (a merged PR's). */
+  deletePrBranch(sessionId: string, branch: string): Promise<PrBranchResult>;
+  setPrAutoMerge(sessionId: string, prNumber: number, on: boolean, method?: MergeMethod): Promise<void>;
+  /** Back to draft (`true`) or ready for review (`false`). */
+  setPrDraft(sessionId: string, prNumber: number, draft: boolean): Promise<void>;
+  /** Reopen (`true`) or close (`false`). */
+  setPrOpen(sessionId: string, prNumber: number, open: boolean): Promise<void>;
+  /** Update its branch from the base on GitHub; with `pull`, then the
+   *  thread's copy too when it's on `head` (fast-forward only). */
+  updatePrBranch(sessionId: string, prNumber: number, rebase: boolean, pull: boolean, head?: string): Promise<{ pulled: boolean; pullError?: string }>;
   getPrReviewComments(sessionId: string, prNumber: number): Promise<PrReviewComment[]>;
   /** Post a review (approve, request changes or comment) on one of the
    *  session's PRs, with line comments placed inline where GitHub can take them. */
@@ -2761,6 +2827,13 @@ export const IPC = {
   PR_LIST: 'pr:list',
   PR_LIST_OPEN: 'pr:listOpen',
   PR_CREATE: 'pr:create',
+  PR_ACTION_OPTIONS: 'pr:actionOptions',
+  PR_MERGE: 'pr:merge',
+  PR_DELETE_BRANCH: 'pr:deleteBranch',
+  PR_SET_AUTO_MERGE: 'pr:setAutoMerge',
+  PR_SET_DRAFT: 'pr:setDraft',
+  PR_SET_OPEN: 'pr:setOpen',
+  PR_UPDATE_BRANCH: 'pr:updateBranch',
   PR_REVIEW_COMMENTS: 'pr:reviewComments',
   PR_SUBMIT_REVIEW: 'pr:submitReview',
   PR_JOB_LOG: 'pr:jobLog',

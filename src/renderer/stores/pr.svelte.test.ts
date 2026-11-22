@@ -40,6 +40,52 @@ beforeEach(() => {
   sessionStore.activeSessionId = null;
 });
 
+describe('PR actions', () => {
+  beforeEach(() => {
+    setStatus('running');
+    localStorage.clear();
+  });
+
+  it("merges the commit shown, remembers the project's method, and refetches", async () => {
+    await refreshWith(pr({ headSha: 'abc1234', headRefName: 'feat/x' }));
+    expect(prStore.mergeMethod(SID, ['merge', 'rebase'])).toBe('merge');
+    mockGroveBench.mergePr.mockResolvedValueOnce({ branchDeleted: true });
+
+    await prStore.mergePr(SID, { method: 'rebase', deleteBranch: true });
+
+    expect(mockGroveBench.mergePr).toHaveBeenCalledWith(SID, { number: 7, method: 'rebase', headSha: 'abc1234', deleteBranch: true }, 'feat/x');
+    expect(prStore.mergeMethod(SID, ['squash', 'merge', 'rebase'])).toBe('rebase');
+    // Not allowed any more: the first the repository allows.
+    expect(prStore.mergeMethod(SID, ['squash'])).toBe('squash');
+    expect(prStore.branchDeleted(SID)).toBe(true);
+    expect(mockGroveBench.getPrs).toHaveBeenCalledTimes(2);
+  });
+
+  it("doesn't pull the update into the thread while the agent is in a turn", async () => {
+    await refreshWith(pr({ headRefName: 'feat/x' }));
+    messageStore.setIsRunning(SID, true);
+    await prStore.updateBranch(SID, true);
+    expect(mockGroveBench.updatePrBranch).toHaveBeenLastCalledWith(SID, 7, true, false, 'feat/x');
+    messageStore.setIsRunning(SID, false);
+    await prStore.updateBranch(SID, false);
+    expect(mockGroveBench.updatePrBranch).toHaveBeenLastCalledWith(SID, 7, false, true, 'feat/x');
+  });
+
+  it('asks GitHub what it may offer once per state of the PR', async () => {
+    await refreshWith(pr({ headRefName: 'feat/x' }));
+    await Promise.all([prStore.loadActionOptions(SID), prStore.loadActionOptions(SID)]);
+    await prStore.loadActionOptions(SID);
+    expect(mockGroveBench.getPrActionOptions).toHaveBeenCalledTimes(1);
+    expect(prStore.getActionOptions(SID)?.methods).toEqual(['squash', 'merge', 'rebase']);
+
+    // Approved since: GitHub's answers may have changed.
+    await refreshWith(pr({ headRefName: 'feat/x', reviewDecision: 'APPROVED' }));
+    expect(prStore.getActionOptions(SID)).toBeNull();
+    await prStore.loadActionOptions(SID);
+    expect(mockGroveBench.getPrActionOptions).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('PR alert gating by session status', () => {
   it('alerts a running session about comments that arrived after the baseline', async () => {
     setStatus('running');

@@ -695,6 +695,14 @@ const api: Record<string, unknown> = {
   // Branch stack states: s-oauth has an open PR with a failing check plus an
   // earlier, merged PR on the same branch; the others show the "Create PR"
   // link (s-sidebar with unpushed commits).
+  // PR actions: the demo account may bypass the rules, so every action shows.
+  getPrActionOptions: async () => ({ methods: ['squash', 'merge'], deleteBranchOnMerge: false, autoMergeAllowed: true, canMergeAsAdmin: true, canEnableAutoMerge: true, canDisableAutoMerge: true, canUpdateBranch: true, canDeleteBranch: true, stackedPrs: 0 }),
+  mergePr: async () => ({ branchDeleted: true }),
+  deletePrBranch: async () => ({ branchDeleted: true }),
+  setPrAutoMerge: async () => {},
+  setPrDraft: async () => {},
+  setPrOpen: async () => {},
+  updatePrBranch: async () => ({ pulled: true }),
   getPrs: async (id: string) => id === 's-oauth'
     ? [
       { number: 42, url: 'https://github.com/example/api-service/pull/42', state: 'OPEN', title: 'Fix OAuth token refresh', reviewDecision: 'REVIEW_REQUIRED', checks: { total: 3, passed: 2, failed: 1, pending: 0 }, failingChecks: ['e2e'], failingRuns: [{ repo: 'example/api-service', runId: '9120', workflow: 'CI', jobs: [{ id: '30111', name: 'e2e', seconds: 252 }] }], requestedReviewers: ['maya'], mergeState: 'blocked', headSha: 'b2c3d4e', headRefName: 'claude/fix-oauth-refresh', baseRefName: 'main' },

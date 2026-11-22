@@ -98,9 +98,20 @@ Its colour says what matters most right now:
 
 A small green square at the end of the button means the popup has something for you to do now: commits to push, a PR to open, a failed push or check, changes requested, conflicts or a branch behind its base, or a PR that GitHub says is ready to merge (unless auto-merge will merge it). The icon pulses while there is PR activity you haven't looked at, and dims when the last fetch from GitHub failed, so it may be out of date. If a merge or rebase stopped part way, its word (for example **rebasing 1/2**) shows in amber beside the branch name. Hovering the button says all of it in words.
 
-Click it for the popup. At the top are the pull request's number, title and state, with ↗ to open it on GitHub, and under them the project, the branch and the branch it merges into.
+Click it for the popup. At the top are the pull request's number, title and state, with **⋯** for its other actions and ↗ to open it on GitHub, and under them the project, the branch and the branch it merges into.
 
-**Next** says the one thing to do now, why, and offers it as the popup's one main button: **Push N commits**, **Create PR with agent** (or **Create PR manually…**), **Fix with agent**, **Address with agent**, **Retry push**, or **Merge on GitHub** once GitHub says nothing stops the merge. It's green when there is something to do and blue while you can only wait, such as for checks or a review. Grove doesn't merge PRs itself: the merge happens on GitHub.
+**Next** says the one thing to do now, why, and offers it as the popup's one main button: **Push N commits**, **Create PR with agent** (or **Create PR manually…**), **Fix with agent**, **Address with agent**, **Retry push**, or one of the PR actions below. It's green when there is something to do and blue while you can only wait, such as for checks or a review.
+
+The PR actions run on GitHub with your `gh` sign-in, and the popup only offers what GitHub says your account may do there:
+
+- **Ready to merge**: **Squash and merge**, **Merge** or **Rebase and merge**. The arrow beside it picks the method, greying out any the repository has turned off, and the popup remembers your choice for the project. **Delete the branch after merging** deletes it on GitHub; the thread keeps its own copy. It's ticked and locked when the repository deletes merged branches itself, and greyed when another open PR is based on the branch. The popup asks before it merges, and merges only the commit shown: if anyone pushes meanwhile, GitHub refuses and nothing is merged.
+- **Draft PR**: **Mark ready for review**.
+- **Waiting on checks, a review or a rule**: **Turn on auto-merge**, which merges it once nothing stops it, with the method the arrow picks. Once it's on, **Turn off**. If your account may bypass the base branch's rules (an admin, or on a ruleset's bypass list), **Merge anyway…** merges it now. It asks first, in red, listing what it skips, and GitHub records the bypass.
+- **Behind the base branch**: **Update branch** brings in the base's latest commits on GitHub, by a merge (the default) or, from the arrow, a rebase. Then the thread's own copy is brought up to date too, unless the agent is in a turn: then it says so, and you pull it later.
+- **Merged**: **Delete thread…** (it asks first, and says if anything isn't saved) and **Delete branch**, if the branch is still on GitHub.
+- **⋯** has the rest: **Mark as draft**, **Turn on auto-merge** or **Turn off auto-merge**, **Update branch**, **Close PR** (without merging; you can reopen it), **Reopen PR** and **Delete branch on GitHub**.
+
+If GitHub refuses an action, the popup says why.
 
 Under it, a row per step, each with a dot and what it stands at:
 

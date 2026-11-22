@@ -77,6 +77,9 @@ let savedManifest: Record<string, unknown>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps what a test told a mock to do (a rename that fails
+  // with EBUSY, say), which in a shuffled run reaches the tests after it.
+  for (const fn of Object.values(mockFs)) fn.mockReset();
   manager = new WorktreeManager();
   savedManifest = {};
   vi.mocked(worktreeBranches).mockResolvedValue(new Map());
