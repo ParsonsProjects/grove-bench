@@ -11,6 +11,7 @@ const SID = 'linked-bar-session';
 const groveBench = () => (window as any).groveBench as {
   getLinkedStatus: Mock<GroveBenchAPI['getLinkedStatus']>;
   openSessionFolder: Mock<GroveBenchAPI['openSessionFolder']>;
+  unlinkProject: Mock<GroveBenchAPI['unlinkProject']>;
 };
 
 const status = (extra: Partial<LinkedProjectStatus> = {}): LinkedProjectStatus => ({
@@ -70,5 +71,37 @@ describe('StatusBarLinked', () => {
     render(StatusBarLinked, { sessionId: SID });
     await waitFor(() => expect(screen.queryByTestId('linked-project')).toBeNull());
     expect(groveBench().getLinkedStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe('StatusBarLinked unlinking', () => {
+  it("checks again, warns about uncommitted files and unmerged commits, then unlinks", async () => {
+    groveBench().getLinkedStatus.mockResolvedValue([status()]);
+    groveBench().unlinkProject.mockClear();
+    render(StatusBarLinked, { sessionId: SID });
+    await fireEvent.click(await screen.findByTestId('linked-project'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink…' }));
+
+    expect(await screen.findByTestId('unlink-uncommitted')).toHaveTextContent('3 files have uncommitted changes there that will be lost.');
+    await fireEvent.click(screen.getByLabelText('Also delete the branch in billing, if this thread made it'));
+    expect(screen.getByText(/4 commits on fix-login/)).toBeInTheDocument();
+
+    groveBench().getLinkedStatus.mockResolvedValue([]);
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
+    await waitFor(() => expect(groveBench().unlinkProject).toHaveBeenCalledWith(SID, '/code/billing', true));
+    await waitFor(() => expect(screen.queryByTestId('linked-project')).toBeNull());
+    expect(store.sessions[0].linkedRepos).toBeUndefined();
+  });
+
+  it('keeps the link and says why when main refuses', async () => {
+    groveBench().getLinkedStatus.mockResolvedValue([status()]);
+    groveBench().unlinkProject.mockRejectedValueOnce(new Error('Unlink the project once the agent finishes this turn.'));
+    render(StatusBarLinked, { sessionId: SID });
+    await fireEvent.click(await screen.findByTestId('linked-project'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink…' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Unlink' })).toBeEnabled());
+    await fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
+    expect(await screen.findByText('Unlink the project once the agent finishes this turn.')).toBeInTheDocument();
+    expect(store.sessions[0].linkedRepos).toEqual(['/code/billing']);
   });
 });

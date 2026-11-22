@@ -1023,6 +1023,33 @@ export class WorktreeManager {
     return left.length;
   }
 
+  /**
+   * Unlink a project from thread `id` part way through: its worktree is
+   * removed as removeLinks does, and its branch deleted when asked (only
+   * when Grove made it, unless merged). Throws, keeping the link, when the
+   * worktree can't be removed now (a file held open). Returns what was
+   * unlinked.
+   */
+  async unlinkProject(id: string, repoPath: string, deleteBranch: boolean): Promise<LinkedCheckout> {
+    const link = (await this.loadManifest())[id]?.linked?.find((l) => !l.pendingRemoval && samePath(l.repoPath, repoPath));
+    if (!link) throw new Error(`This thread doesn't work in ${path.basename(repoPath)}.`);
+    await this.removeLink(id, link, deleteBranch);
+    await this.withManifest((manifest) => {
+      const entry = manifest[id];
+      if (!entry?.linked) return;
+      const kept = entry.linked.filter((l) => !samePath(l.path, link.path));
+      if (kept.length > 0) entry.linked = kept;
+      else delete entry.linked;
+    });
+    const live = this.worktrees.get(id);
+    if (live?.linked) {
+      const kept = live.linked.filter((l) => !samePath(l.path, link.path));
+      if (kept.length > 0) live.linked = kept;
+      else delete live.linked;
+    }
+    return { repoPath: link.repoPath, path: link.path, branch: link.branch };
+  }
+
   /** Remove one linked worktree (removeLinks). False when its folder or
    *  git's record of it is still there. */
   private async removeLink(id: string, link: Readonly<ManifestLink>, deleteBranch: boolean): Promise<boolean> {

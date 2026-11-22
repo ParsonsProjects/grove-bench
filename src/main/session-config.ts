@@ -167,6 +167,27 @@ export interface LinkedProjectNote {
   instructions: string[];
 }
 
+/**
+ * What the agent is told, ahead of its next message, when a project is
+ * linked or unlinked part way through the thread
+ * (docs/linked-projects-plan.md). The system prompt says it too from the
+ * restart on, but an ACP agent gets Grove's instructions only with a new
+ * session, and a resumed one carries its first.
+ */
+export function linkChangeNote(change: { linked: LinkedProjectNote } | { unlinked: { name: string; path: string } }): string {
+  if ('unlinked' in change) {
+    const { name, path: wt } = change.unlinked;
+    return `Note from Grove Bench: this thread no longer works in ${name}. Its worktree at ${wt} was removed, so don't read or edit files there.\n`;
+  }
+  const l = change.linked;
+  return [
+    `Note from Grove Bench: this thread now also works in ${l.name}, through a git worktree made for it at ${l.path}, on the same branch name as this project.`,
+    `Make every change to ${l.name} in that worktree, never in the project's own folder (${l.repoPath}). Use absolute paths inside it, and run git for it with \`git -C "${l.path}"\`.`,
+    ...l.instructions.map((file) => `Before working in ${l.name}, read ${path.join(l.path, file)}: it says how to work in that project.`),
+    '',
+  ].join('\n');
+}
+
 /** The part of the prompt about the thread's linked projects: where each
  *  worktree is, that the project's own folder isn't to be edited, and which
  *  instruction files to read there. */

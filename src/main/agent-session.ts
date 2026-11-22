@@ -1,4 +1,3 @@
-import path from 'node:path';
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
 import type { AgentSystemInfo, SessionInfo, SessionStatus, AgentEvent, ThreadUsage, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls, ThreadTurnState, EventHistoryPage, LinkedCheckout } from '../shared/types.js';
@@ -53,7 +52,7 @@ import {
   readSafeWarning, readSafeSandbox, hasSandboxWarning, startingPermissionMode,
   initialControls, normalizeModelId, appendedSystemPrompt,
 } from './session-config.js';
-import { agentFolders, linkInstructionFiles } from './linked-projects.js';
+import { agentFolders, linkedProjectNotes } from './linked-projects.js';
 
 // SDK teardown rejections (a query closed with control responses in flight)
 // are filtered in crash-handling.ts, which owns the process-wide handler.
@@ -336,18 +335,15 @@ class AgentSessionManager {
     );
     // Archive expired thread notes first, so the memory index never lists them.
     memoryCompact.expireSessionNotes(repoPath);
-    // Path rules, project memory, caveman mode and the user's own addition.
+    // Path rules, linked projects, project memory, caveman mode and the
+    // user's own addition.
+    const userAppendPrompt = opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null);
     const effectiveAppendPrompt = appendedSystemPrompt({
       cwd,
       repoPath,
-      userAppend: opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null),
+      userAppend: userAppendPrompt,
       cavemanMode: appSettings.cavemanMode,
-      linked: (opts.linked ?? []).map((l) => ({
-        name: path.basename(l.repoPath),
-        path: l.path,
-        repoPath: l.repoPath,
-        instructions: linkInstructionFiles(l.path, adapter.capabilities.additionalDirectoryInstructions === true),
-      })),
+      linked: linkedProjectNotes(opts.linked ?? [], adapter.capabilities.additionalDirectoryInstructions === true),
     });
 
     // Ensure memory directory exists for this repo
@@ -390,6 +386,7 @@ class AgentSessionManager {
       lastResult: null,
       permissionMode: effectivePermissionMode,
       appendSystemPrompt: effectiveAppendPrompt,
+      userAppendPrompt,
       customSystemPrompt: opts.customSystemPrompt ?? null,
       allowedTools: opts.allowedTools ? new Set(opts.allowedTools) : null,
       outputFormat: opts.outputFormat ?? null,
@@ -1378,8 +1375,11 @@ class AgentSessionManager {
         // Once per query: a second message before the reply doesn't repeat it,
         // but a query that failed to start and was replaced gets it again.
         const withNote = handoffNote !== null && session.handoffSentTo !== queryHandle;
+        // A project linked or unlinked since the last message. Not ahead of
+        // a slash command, which must lead: it waits for the next message.
+        const linkNote = !isSlashCommand(content) ? session.linkNote ?? null : null;
         const message: UserMessage = {
-          text: withNote ? `${handoffNote}\n${content}` : content,
+          text: `${withNote ? `${handoffNote}\n` : ''}${linkNote ?? ''}${content}`,
           // With the path of each saved copy when every one was saved (so the
           // lists line up), for an agent that can't take images.
           images: images?.map((img, i) => {
@@ -1397,6 +1397,7 @@ class AgentSessionManager {
         };
         if (withNote) session.handoffSentTo = queryHandle;
         queryHandle.sendMessage(message);
+        if (linkNote) session.linkNote = null;
         if (session.promptsBeforeInit?.handle === queryHandle) session.promptsBeforeInit.prompts.push(message);
         logger.debug(`[sendMessage] session=${id} sent successfully`);
         // Update last-active timestamp (fire-and-forget)
@@ -2006,6 +2007,31 @@ class AgentSessionManager {
    * query is closed and aborted (its event loop drops anything it still
    * sends), and also for a sleeping session, whose wake starts the new one.
    */
+  /**
+   * The thread's linked projects changed part way through
+   * (docs/linked-projects-plan.md): the prompt is built again with them, the
+   * agent is told ahead of its next message (`note`), and a running agent
+   * is restarted on the same conversation, as no agent takes new folders
+   * mid-session (runQuery reads the folders at each start). One asleep, or
+   * not running, gets them when it next starts. The caller refuses this
+   * mid-turn: the restart would end the turn.
+   */
+  async setLinked(id: string, linked: LinkedCheckout[], note: string): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session || session.destroying) return;
+    session.linked = linked;
+    session.appendSystemPrompt = appendedSystemPrompt({
+      cwd: session.worktreePath,
+      repoPath: session.repoPath,
+      userAppend: session.userAppendPrompt,
+      cavemanMode: settings.getSettings().cavemanMode,
+      linked: linkedProjectNotes(linked, session.adapter.capabilities.additionalDirectoryInstructions === true),
+    });
+    session.linkNote = `${session.linkNote ?? ''}${note}`;
+    if (session.status === 'stopped' || session.status === 'error') return;
+    await this.stopQuery(id);
+  }
+
   async stopQuery(id: string, beforeRestart?: () => Promise<void>): Promise<void> {
     const session = this.sessions.get(id);
     // Being deleted (still listed until it's gone): shutDown() stops it.

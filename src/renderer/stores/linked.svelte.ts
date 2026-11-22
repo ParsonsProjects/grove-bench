@@ -1,4 +1,5 @@
 import type { LinkedProjectStatus } from '../../shared/types.js';
+import { store } from './sessions.svelte.js';
 
 /** How often a watched thread's linked projects are read again, as PR
  *  status is (pr.svelte.ts). */
@@ -53,6 +54,56 @@ class LinkedStore {
   /** Drop a deleted thread's state. */
   forget(sessionId: string): void {
     delete this.bySession[sessionId];
+    if (this.linkDialogFor === sessionId) this.linkDialogFor = null;
+  }
+
+  // ── Linking and unlinking part way through ──
+
+  /** The thread the Work in Another Project dialog is open for
+   *  (LinkProjectDialog, mounted in App). */
+  linkDialogFor = $state<string | null>(null);
+
+  openLinkDialog(sessionId: string): void {
+    this.linkDialogFor = sessionId;
+  }
+
+  /** The git projects a thread could also work in: not its own, and not
+   *  one it works in already. */
+  linkableFor(sessionId: string): string[] {
+    const thread = store.sessions.find((s) => s.id === sessionId);
+    if (!thread) return [];
+    const linked = new Set(thread.linkedRepos ?? []);
+    return store.repos.filter((r) => r !== thread.repoPath && !linked.has(r) && !store.isFolderProject(r));
+  }
+
+  /** Whether Work in Another Project is offered for a thread: one with a
+   *  live agent to tell (main refuses the rest too), in its own worktree,
+   *  with a git project left to link. */
+  canLink(sessionId: string): boolean {
+    const thread = store.sessions.find((s) => s.id === sessionId);
+    if (!thread || thread.status === 'stopped' || thread.status === 'error') return false;
+    return !thread.direct && !thread.noGit && this.linkableFor(sessionId).length > 0;
+  }
+
+  /** Have the thread also work in `repoPath` (main makes the worktree and
+   *  restarts the agent). Returns main's warning, if any; throws its
+   *  refusal. */
+  async link(sessionId: string, repoPath: string): Promise<string | undefined> {
+    const { warning } = await window.groveBench.linkProject(sessionId, repoPath);
+    const thread = store.sessions.find((s) => s.id === sessionId);
+    store.setLinkedRepos(sessionId, [...(thread?.linkedRepos ?? []).filter((r) => r !== repoPath), repoPath]);
+    void this.refresh(sessionId);
+    return warning;
+  }
+
+  /** Stop the thread working in `repoPath`: its worktree goes. Throws
+   *  main's refusal, keeping the link. */
+  async unlink(sessionId: string, repoPath: string, deleteBranch: boolean): Promise<void> {
+    await window.groveBench.unlinkProject(sessionId, repoPath, deleteBranch);
+    const thread = store.sessions.find((s) => s.id === sessionId);
+    store.setLinkedRepos(sessionId, (thread?.linkedRepos ?? []).filter((r) => r !== repoPath));
+    this.bySession[sessionId] = this.get(sessionId).filter((l) => l.repoPath !== repoPath);
+    void this.refresh(sessionId);
   }
 }
 

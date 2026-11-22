@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { LinkedCheckout } from '../shared/types.js';
+import type { LinkedProjectNote } from './session-config.js';
 import { isPathInside } from './agent-utils.js';
 
 export interface AgentFolders {
@@ -61,4 +62,15 @@ export function linkInstructionFiles(worktree: string, loadsClaudeMd: boolean, e
   const agents = exists(path.join(worktree, 'AGENTS.md'));
   if (loadsClaudeMd) return !claude && agents ? ['AGENTS.md'] : [];
   return [...(claude ? ['CLAUDE.md'] : []), ...(agents ? ['AGENTS.md'] : [])];
+}
+
+/** The thread's linked projects as the agent is told about them
+ *  (appendedSystemPrompt, linkChangeNote). */
+export function linkedProjectNotes(links: readonly LinkedCheckout[], loadsClaudeMd: boolean): LinkedProjectNote[] {
+  return links.map((l) => ({
+    name: path.basename(l.repoPath),
+    path: l.path,
+    repoPath: l.repoPath,
+    instructions: linkInstructionFiles(l.path, loadsClaudeMd),
+  }));
 }

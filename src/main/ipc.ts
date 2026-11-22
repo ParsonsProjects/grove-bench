@@ -2,7 +2,10 @@ import { app, ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { isSkipped, runProcess } from './process-host.js';
 import { inBackground } from './background-work.js';
 import { IPC, isPermissionMode } from '../shared/types.js';
-import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, EventHistoryPage, ThreadUsage, OpenPrSummary, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, SkillReach, WorktreeInfo } from '../shared/types.js';
+import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, EventHistoryPage, ThreadUsage, OpenPrSummary, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, SkillReach, WorktreeInfo, LinkedCheckout } from '../shared/types.js';
+import { errorMessage } from '../shared/error-message.js';
+import { linkedProjectNotes } from './linked-projects.js';
+import { linkChangeNote } from './session-config.js';
 import { sessionManager } from './agent-session.js';
 import { todaySpend } from './session-limits.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
@@ -762,6 +765,78 @@ export function registerHandlers() {
   ipcMain.handle(IPC.SESSION_STOP_TASK, async (_event, id: string, taskId: string) => {
     logger.info(`Stopping background task: session=${id} task=${taskId}`);
     await sessionManager.stopTask(id, taskId);
+  });
+
+  // ─── Linking projects part way through (docs/linked-projects-plan.md) ───
+
+  /** The thread a link or unlink is for, refused when it can't take one now. */
+  async function linkableThread(sessionId: unknown, repoPath: unknown, verb: 'Link' | 'Unlink'): Promise<WorktreeInfo> {
+    if (typeof sessionId !== 'string' || typeof repoPath !== 'string' || !repoPath.trim()) throw new Error('No project given');
+    // Read from the manifest too, so a thread that isn't open still has its info.
+    const worktree = await worktreeManager.getWorktreeOrManifest(sessionId);
+    if (!worktree) throw new Error('Thread not found');
+    if (worktree.direct || worktree.noGit) {
+      throw new Error('Working in another project needs this thread in its own worktree, and this one works in the project folder.');
+    }
+    // Only an open thread can be told about the change ahead of its next
+    // message: an agent that resumes later wouldn't hear of it.
+    const live = sessionManager.getSession(sessionId);
+    if (!live || live.status === 'stopped' || live.status === 'error') throw new Error(`Open the thread first, so its agent is told. Then ${verb.toLowerCase()} the project.`);
+    // Its agent restarts to take the change, which would end the turn.
+    if (sessionManager.isMidTurn(sessionId)) throw new Error(`${verb} the project once the agent finishes this turn.`);
+    return worktree;
+  }
+
+  ipcMain.handle(IPC.SESSION_LINK_PROJECT, async (_event, sessionId: unknown, repoPath: unknown): Promise<{ link: LinkedCheckout; warning?: string }> => {
+    const worktree = await linkableThread(sessionId, repoPath, 'Link');
+    const id = sessionId as string;
+    // Said as it is, not as its branch being checked out in its own worktree.
+    const key = (p: string) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+    if (worktree.linked?.some((l) => key(l.repoPath) === key(repoPath as string))) {
+      throw new Error(`This thread already works in ${path.basename(repoPath as string)}.`);
+    }
+    // The same checks as when a thread starts with it, on its branch now.
+    const [plan] = await planLinks(worktree.repoPath, [repoPath], worktree.branch);
+    if (!plan) throw new Error("A thread can't link its own project.");
+    const link = await worktreeManager.createLink(id, { repoPath: plan.repoPath, branchName: worktree.branch, baseBranch: plan.baseBranch, useExisting: plan.useExisting });
+    const project = path.basename(plan.repoPath);
+    let warning: string | undefined;
+    try {
+      const config = await worktreeManager.getRepoConfig(plan.repoPath);
+      if (config.copyFiles.length > 0) await worktreeManager.copyProjectFiles(plan.repoPath, link.path, config.copyFiles);
+    } catch (e) {
+      logger.warn(`Failed to copy untracked files to ${link.path}:`, e);
+    }
+    if (settings.getSettings().autoInstallDeps) {
+      let manager: PackageManager = 'npm';
+      try {
+        await fs.access(path.join(link.path, 'package.json'));
+        manager = await detectPackageManager(link.path);
+        await installDependencies(link.path, manager, new AbortController().signal);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+          logger.warn(`${manager} install failed in ${link.path}:`, e);
+          warning = `${manager} install failed in ${project}, so its worktree has no dependencies installed: ${errorMessage(e)}`;
+        } else if (manager !== 'npm') {
+          warning = `${project} uses ${manager}, which isn't installed or isn't on PATH, so its worktree's dependencies weren't installed.`;
+        }
+      }
+    }
+    const links = worktreeManager.getWorktree(id)?.linked ?? [];
+    const adapter = sessionManager.getSessionAdapter(id);
+    const [note] = linkedProjectNotes([link], adapter?.capabilities.additionalDirectoryInstructions === true);
+    await sessionManager.setLinked(id, links, linkChangeNote({ linked: note }));
+    logger.info(`Linked ${plan.repoPath} to thread ${id} at ${link.path}`);
+    return { link, ...(warning ? { warning } : {}) };
+  });
+
+  ipcMain.handle(IPC.SESSION_UNLINK_PROJECT, async (_event, sessionId: unknown, repoPath: unknown, deleteBranch: unknown) => {
+    await linkableThread(sessionId, repoPath, 'Unlink');
+    const id = sessionId as string;
+    const unlinked = await worktreeManager.unlinkProject(id, repoPath as string, deleteBranch === true);
+    const links = worktreeManager.getWorktree(id)?.linked ?? [];
+    await sessionManager.setLinked(id, links, linkChangeNote({ unlinked: { name: path.basename(unlinked.repoPath), path: unlinked.path } }));
+    logger.info(`Unlinked ${unlinked.repoPath} from thread ${id}`);
   });
 
   ipcMain.handle(IPC.SESSION_DESTROY, async (_event, id: string, deleteBranch: boolean = false) => {

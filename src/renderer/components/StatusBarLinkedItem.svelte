@@ -13,10 +13,52 @@
   import ExternalLink from '@lucide/svelte/icons/external-link';
   import Link2 from '@lucide/svelte/icons/link-2';
   import StatusBarPopover from './StatusBarPopover.svelte';
+  import * as Dialog from '$lib/components/ui/dialog/index.js';
+  import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+  import { linkedStore } from '../stores/linked.svelte.js';
+  import { messageStore } from '../stores/messages.svelte.js';
+  import { stripIpcErrorPrefix } from '$lib/mcp-errors.js';
+  import { errorMessage } from '../../shared/error-message.js';
 
   let { sessionId, status: s }: { sessionId: string; status: LinkedProjectStatus } = $props();
 
   let open = $state(false);
+
+  // ── Unlink (docs/linked-projects-plan.md) ──
+  let confirmUnlink = $state(false);
+  /** Read again as the dialog opens, so its warnings are current. */
+  let checking = $state(false);
+  let deleteBranch = $state(false);
+  let unlinking = $state(false);
+  let unlinkError = $state('');
+  let isRunning = $derived(messageStore.getIsRunning(sessionId));
+
+  async function askUnlink() {
+    open = false;
+    deleteBranch = false;
+    unlinkError = '';
+    confirmUnlink = true;
+    checking = true;
+    try {
+      await linkedStore.refresh(sessionId);
+    } finally {
+      checking = false;
+    }
+  }
+
+  async function unlink() {
+    if (unlinking || isRunning) return;
+    unlinking = true;
+    unlinkError = '';
+    try {
+      await linkedStore.unlink(sessionId, s.repoPath, deleteBranch);
+      confirmUnlink = false;
+    } catch (e) {
+      unlinkError = stripIpcErrorPrefix(errorMessage(e));
+    } finally {
+      unlinking = false;
+    }
+  }
   let name = $derived(store.repoDisplayName(s.repoPath));
 
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -117,6 +159,15 @@
 
   <div class="flex items-center mt-2 pt-2 border-t border-border">
     <Button
+      variant="quiet-destructive"
+      size="xs"
+      onclick={askUnlink}
+      title="Stop this thread working in {name}: its worktree of {name} is removed"
+    >
+      Unlink…
+    </Button>
+
+    <Button
       variant="quiet"
       size="xs"
       class="ml-auto"
@@ -128,3 +179,51 @@
     </Button>
   </div>
 </StatusBarPopover>
+
+{#if confirmUnlink}
+  <Dialog.Root open={true} onOpenChange={(o) => { if (!o && !unlinking) confirmUnlink = false; }}>
+    <Dialog.Content class="max-w-sm">
+      <Dialog.Header>
+        <Dialog.Title>Stop working in {name}?</Dialog.Title>
+        <Dialog.Description>
+          This removes the thread's worktree of {name}. The project's own folder isn't touched. The agent restarts on
+          this thread to drop the folder, and keeps the conversation.
+        </Dialog.Description>
+      </Dialog.Header>
+      {#if !checking}
+        {#if !s.missing && s.uncommitted === null}
+          <p class="text-xs text-amber-500 mt-1" role="alert">
+            Couldn't check the worktree for uncommitted changes. Any it has will be lost.
+          </p>
+        {:else if s.uncommitted}
+          <p class="text-xs text-amber-500 mt-1" role="alert" data-testid="unlink-uncommitted">
+            {s.uncommitted} {s.uncommitted === 1 ? 'file has' : 'files have'} uncommitted changes there that will be lost.
+          </p>
+        {/if}
+      {/if}
+      <label class="flex items-center gap-2 text-sm text-muted-foreground mt-2 cursor-pointer">
+        <Checkbox bind:checked={deleteBranch} disabled={unlinking} />
+        Also delete the branch in {name}, if this thread made it
+      </label>
+      {#if deleteBranch && !checking && s.unmerged && s.base}
+        <p class="text-xs text-amber-500 mt-1" role="alert">
+          {s.unmerged} {s.unmerged === 1 ? 'commit' : 'commits'} on {s.branch ?? 'its branch'}
+          {s.unmerged === 1 ? "isn't" : "aren't"} on {s.base} yet. Unless you've pushed {s.unmerged === 1 ? 'it' : 'them'},
+          deleting the branch can lose {s.unmerged === 1 ? 'it' : 'them'}.
+        </p>
+      {/if}
+      {#if isRunning}
+        <p class="text-xs text-amber-500 mt-1" role="alert">Unlink it once the agent finishes this turn.</p>
+      {/if}
+      {#if unlinkError}
+        <p class="text-xs text-destructive mt-1" role="alert">{unlinkError}</p>
+      {/if}
+      <Dialog.Footer>
+        <Button variant="secondary" onclick={() => (confirmUnlink = false)} disabled={unlinking}>Cancel</Button>
+        <Button variant="destructive" onclick={unlink} disabled={checking || unlinking || isRunning}>
+          {unlinking ? 'Unlinking…' : checking ? 'Checking…' : 'Unlink'}
+        </Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
+{/if}

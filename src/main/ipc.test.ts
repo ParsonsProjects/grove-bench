@@ -22,14 +22,14 @@ const m = vi.hoisted(() => {
       'listMcpServers', 'getMcpContextCost', 'reconnectMcpServer', 'setMcpServerEnabled', 'authenticateMcpServer', 'reconnectDownMcpServers',
       'getSessionAdapter', 'getWorktreePath', 'analyzeSkillSuggestionsForRepo', 'respondToPermission',
       'respondToElicitation', 'rewindFiles', 'bringBackFiles', 'getCheckpointDiff', 'listCheckpoints', 'getDiffHistory',
-      'getCheckpointFiles', 'getCheckpointFileDiff', 'getCheckpointFileLines', 'threadUsage', 'getSystemInfo',
+      'getCheckpointFiles', 'getCheckpointFileDiff', 'getCheckpointFileLines', 'threadUsage', 'getSystemInfo', 'setLinked',
     ),
     worktreeManager: fns(
       'validateRepo', 'cleanupOrphans', 'getWorktreeOrManifest', 'registerDirect', 'create', 'getRepoConfig',
       'copyUntrackedFiles', 'getProviderSessionId', 'getModel', 'getAdapterType', 'getThreadLimits', 'remove',
       'saveDisplayName', 'getDisplayNameState', 'saveAutoDisplayName', 'renameBranch', 'switchBranch',
       'syncBranch', 'list', 'register', 'listRepos', 'getWorktree', 'whenRegistered', 'assertRemovable', 'checkoutSharers',
-      'getGoal', 'getGoals', 'saveGoal', 'setGoalHidden', 'threadsLinking', 'createLink', 'copyProjectFiles',
+      'getGoal', 'getGoals', 'saveGoal', 'setGoalHidden', 'threadsLinking', 'createLink', 'copyProjectFiles', 'unlinkProject',
     ),
     terminalManager: fns('killAllForSession', 'spawnPty', 'write', 'resize', 'killPty', 'isAlive', 'openTicket', 'holdsTicket'),
     previewManager: fns('close', 'closeAgentPage', 'navigate', 'command', 'setViewport', 'snapshot', 'agentFrame', 'getStates', 'clearSignIns', 'forgetProject'),
@@ -250,6 +250,67 @@ describe('repos', () => {
     await invoke(IPC.REPO_REMOVE, '/repo');
     expect(m.previewManager.forgetProject).toHaveBeenCalledWith('/repo');
     expect(m.appState.forgetProject).toHaveBeenCalledWith('/repo');
+  });
+});
+
+// ─── Linking projects part way through ───
+
+describe('SESSION_LINK_PROJECT and SESSION_UNLINK_PROJECT', () => {
+  const live = { id: 's1', status: 'running' };
+  beforeEach(() => {
+    m.appState.listProjects.mockReturnValue(['/repo', '/b']);
+    m.worktreeManager.listRepos.mockResolvedValue([]);
+    m.worktreeManager.getWorktreeOrManifest.mockResolvedValue(wtInfo());
+    m.sessionManager.getSession.mockReturnValue(live);
+    m.sessionManager.isMidTurn.mockReturnValue(false);
+    m.sessionManager.getSessionAdapter.mockReturnValue({ capabilities: { additionalDirectoryInstructions: true } });
+    m.worktreeManager.createLink.mockResolvedValue({ repoPath: '/b', path: '/wt/b/s1', branch: 'feat' });
+    m.worktreeManager.getWorktree.mockImplementation((id: string) => (id === 's1' ? { ...wtInfo(), linked: [{ repoPath: '/b', path: '/wt/b/s1', branch: 'feat' }] } : undefined));
+    vi.mocked(git.branchExistsAnywhere).mockResolvedValue(false);
+    vi.mocked(git.getDefaultBranch).mockResolvedValue('main');
+  });
+
+  it("links a project on the thread's branch, then tells and restarts the agent", async () => {
+    const result = await invoke(IPC.SESSION_LINK_PROJECT, 's1', '/b');
+
+    expect(result).toEqual({ link: { repoPath: '/b', path: '/wt/b/s1', branch: 'feat' } });
+    expect(m.worktreeManager.createLink).toHaveBeenCalledWith('s1', { repoPath: '/b', branchName: 'feat', baseBranch: 'main', useExisting: false });
+    const [id, links, note] = m.sessionManager.setLinked.mock.calls[0];
+    expect(id).toBe('s1');
+    expect(links).toEqual([{ repoPath: '/b', path: '/wt/b/s1', branch: 'feat' }]);
+    expect(note).toContain('this thread now also works in b, through a git worktree made for it at /wt/b/s1');
+  });
+
+  it('refuses mid-turn, for a thread not open, in the project folder, or for its own project', async () => {
+    m.sessionManager.isMidTurn.mockReturnValueOnce(true);
+    await expect(invoke(IPC.SESSION_LINK_PROJECT, 's1', '/b')).rejects.toThrow('once the agent finishes this turn');
+    m.sessionManager.getSession.mockReturnValueOnce({ id: 's1', status: 'stopped' });
+    await expect(invoke(IPC.SESSION_LINK_PROJECT, 's1', '/b')).rejects.toThrow('Open the thread first');
+    m.worktreeManager.getWorktreeOrManifest.mockResolvedValueOnce({ ...wtInfo(), direct: true });
+    await expect(invoke(IPC.SESSION_LINK_PROJECT, 's1', '/b')).rejects.toThrow('needs this thread in its own worktree');
+    await expect(invoke(IPC.SESSION_LINK_PROJECT, 's1', '/repo')).rejects.toThrow("can't link its own project");
+    m.worktreeManager.getWorktreeOrManifest.mockResolvedValueOnce({ ...wtInfo(), linked: [{ repoPath: '/b', path: '/wt/b/s1', branch: 'feat' }] });
+    await expect(invoke(IPC.SESSION_LINK_PROJECT, 's1', '/b')).rejects.toThrow('This thread already works in b.');
+    expect(m.worktreeManager.createLink).not.toHaveBeenCalled();
+    expect(m.sessionManager.setLinked).not.toHaveBeenCalled();
+  });
+
+  it('unlinks a project, deleting its branch when asked, then tells and restarts the agent', async () => {
+    m.worktreeManager.unlinkProject.mockResolvedValue({ repoPath: '/b', path: '/wt/b/s1', branch: 'feat' });
+    m.worktreeManager.getWorktree.mockImplementation((id: string) => (id === 's1' ? wtInfo() : undefined));
+
+    await invoke(IPC.SESSION_UNLINK_PROJECT, 's1', '/b', true);
+
+    expect(m.worktreeManager.unlinkProject).toHaveBeenCalledWith('s1', '/b', true);
+    const [, links, note] = m.sessionManager.setLinked.mock.calls[0];
+    expect(links).toEqual([]);
+    expect(note).toContain('this thread no longer works in b. Its worktree at /wt/b/s1 was removed');
+  });
+
+  it('keeps the link, and the agent as it was, when the worktree cannot be removed', async () => {
+    m.worktreeManager.unlinkProject.mockRejectedValue(new Error('EBUSY'));
+    await expect(invoke(IPC.SESSION_UNLINK_PROJECT, 's1', '/b', false)).rejects.toThrow('EBUSY');
+    expect(m.sessionManager.setLinked).not.toHaveBeenCalled();
   });
 });
 

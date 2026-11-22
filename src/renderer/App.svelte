@@ -43,6 +43,7 @@
   import { panelStore } from './stores/panels.svelte.js';
   import { previewStore } from './stores/preview.svelte.js';
   import { backgroundAgentStore } from './stores/background-agent.svelte.js';
+  import { linkedStore } from './stores/linked.svelte.js';
   import type { AppErrorReport } from '../shared/types.js';
   import { isTempBranch } from '../shared/temp-branch.js';
   import { draftStore } from './stores/draft.svelte.js';
@@ -56,6 +57,7 @@
   // Loaded the first time it opens (Ctrl+R or the search button).
   const loadSessionFinder = lazyComponent(() => import('./components/SessionFinder.svelte'));
   const loadBackgroundAgentDialog = lazyComponent(() => import('./components/BackgroundAgentDialog.svelte'));
+  const loadLinkProjectDialog = lazyComponent(() => import('./components/LinkProjectDialog.svelte'));
   const loadSkillsPanel = lazyComponent(() => import('./components/SkillsPanel.svelte'));
   // The Skills drawer stays mounted once opened, as Settings and Memory do.
   let skillsPanelOpened = $state(false);
@@ -655,6 +657,14 @@
 {#if backgroundAgentStore.ask}
   {#await loadBackgroundAgentDialog() then BackgroundAgentDialog}
     <BackgroundAgentDialog />
+  {/await}
+{/if}
+
+<!-- Work in Another Project, from a thread row's menu or the branch popup. -->
+{#if linkedStore.linkDialogFor}
+  {@const linkFor = linkedStore.linkDialogFor}
+  {#await loadLinkProjectDialog() then LinkProjectDialog}
+    <LinkProjectDialog sessionId={linkFor} />
   {/await}
 {/if}
 

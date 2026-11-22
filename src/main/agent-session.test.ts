@@ -1219,6 +1219,45 @@ describe('AgentSessionManager folders outside the project', () => {
   });
 });
 
+describe('AgentSessionManager linking a project part way through', () => {
+  const baseSettings = () => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], workingDirectories: [], cavemanMode: 'off' });
+  afterEach(() => {
+    settingsMock.getSettings.mockImplementation(baseSettings);
+  });
+
+  it('restarts the agent with the new folder and prompt, and tells it once, ahead of the next message', async () => {
+    await sessionManager.createSession({ id: 'test-link-later', branch: 'feat', cwd: '/wt/a1', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'mock-session-id', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    const starts = mockAdapter.startCallCount;
+    expect(mockAdapter.lastConfig!.appendSystemPrompt).not.toContain('OTHER PROJECTS');
+
+    await sessionManager.setLinked('test-link-later', [{ repoPath: '/code/b', path: '/wt/b1', branch: 'feat' }], 'Note from Grove Bench: b is linked.\n');
+
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(starts + 1));
+    const config = mockAdapter.lastConfig!;
+    expect(config.additionalDirectories).toEqual([path.resolve('/wt/b1')]);
+    expect(config.protectedEditRoots).toEqual([path.resolve('/code/b')]);
+    // The same conversation goes on.
+    expect(config.resumeSessionId).toBe('mock-session-id');
+    expect(config.appendSystemPrompt).toContain("- b: /wt/b1 (the project's own folder, /code/b, is not yours to edit)");
+
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'mock-session-id', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    const session = sessionManager.getSession('test-link-later')!;
+    // A slash command must lead its message, so the note waits.
+    await sessionManager.sendMessage('test-link-later', '/compact');
+    expect(session.queryHandle!.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ text: '/compact' }));
+    await sessionManager.sendMessage('test-link-later', 'Now fix billing');
+    expect(session.queryHandle!.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ text: 'Note from Grove Bench: b is linked.\nNow fix billing' }));
+    await sessionManager.sendMessage('test-link-later', 'And the tests');
+    expect(session.queryHandle!.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ text: 'And the tests' }));
+
+    await sessionManager.destroySession('test-link-later');
+  });
+});
+
 describe('AgentSessionManager prompt suggestions', () => {
   // As the settings mock at the top of this file returns them.
   const baseSettings = () => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], workingDirectories: [], cavemanMode: 'off' });

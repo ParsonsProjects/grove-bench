@@ -21,6 +21,7 @@
   import FolderIcon from '@lucide/svelte/icons/folder';
   import TerminalIcon from '@lucide/svelte/icons/terminal';
   import Link2Icon from '@lucide/svelte/icons/link-2';
+  import { linkedStore } from '../stores/linked.svelte.js';
   import CheckIcon from '@lucide/svelte/icons/check';
   import XIcon from '@lucide/svelte/icons/x';
   import MinusIcon from '@lucide/svelte/icons/minus';
@@ -214,7 +215,7 @@
 
   interface MenuItem {
     label: string;
-    icon: 'rename' | 'folder' | 'export' | 'destroy' | 'add' | 'close' | 'ungroup' | 'todo' | 'unread' | 'read';
+    icon: 'rename' | 'folder' | 'export' | 'destroy' | 'add' | 'close' | 'ungroup' | 'todo' | 'unread' | 'read' | 'link';
     action: () => void;
     variant?: 'destructive';
     separator?: boolean;
@@ -230,6 +231,10 @@
       { label: 'Open Folder', icon: 'folder', action: () => void window.groveBench.openSessionFolder(sessionId) },
       { label: 'Export Thread…', icon: 'export', action: () => void exportThread(sessionId) },
     ];
+    // Another project to work in, through a worktree of its own.
+    if (linkedStore.canLink(sessionId)) {
+      items.push({ label: 'Work in Another Project…', icon: 'link', action: () => linkedStore.openLinkDialog(sessionId) });
+    }
     // Close Conversation stops a live session (it was called Stop, then Mark
     // Completed) but keeps it resumable from Ctrl+R; not shown for
     // already-stopped ones. For an open tab still waiting to reconnect it

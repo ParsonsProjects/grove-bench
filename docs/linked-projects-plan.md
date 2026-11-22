@@ -1,6 +1,6 @@
 # Linked Projects: One Thread Working in a Second Project
 
-> **Status: Phases 0, 1 and 2 built; 3 not started.** The open
+> **Status: Phases 0 to 3 built.** The open
 > questions are settled (see "Decisions"). Where the build differs from
 > this plan, "What was built" says so. This is a smaller slice of Goal 2
 > in `docs/projects-plan.md` ("one conversation, several repositories"). It
@@ -336,7 +336,7 @@ fills it from the setting. It is useful by itself and is the base for links.
 
 ## What was built
 
-Phases 0, 1 and 2, with these differences from the plan above:
+All four phases, with these differences from the plan above:
 
 - **Direct threads can't link** (see "Branch").
 - **The edit check** is a deny rule in Claude Code's settings
@@ -357,6 +357,21 @@ Phases 0, 1 and 2, with these differences from the plan above:
   worktree isn't reported. `ReviewDiffPanel` takes `reviewKey` (viewed
   marks and comments, `linkedReviewKey`) and `linkedRepo` (opens files
   there; no Markdown preview and no last-turn edit marks for those files).
+- **Linking part way through (phase 3)** is refused mid-turn rather than
+  queued, and needs an open thread with a live agent: one that resumes
+  later wouldn't be told. `SESSION_LINK_PROJECT` and
+  `SESSION_UNLINK_PROJECT` (`ipc.ts`) make or remove the worktree, then
+  `setLinked` (`agent-session.ts`) builds the prompt again from the user's
+  own addition (`userAppendPrompt`), queues `linkChangeNote` for the next
+  message (not ahead of a slash command) and restarts the agent with
+  `stopQuery`. Unlinking keeps the link when the worktree can't be removed.
+  Entry points: Work in Another Project… in the thread row's menu and the
+  branch popup (`LinkProjectDialog`), Unlink… in the linked project's
+  popup.
+- **An ACP agent that can't reopen threads isn't refused.** Whether it can
+  is only known once it has started (its `initialize` answer), and every
+  ACP adapter reports `resume`. The restart starts it afresh and the thread
+  says so, as `openSession` already does.
 - **Code:** `createLink`, `removeLinks`, `cleanupOrphanLinks` and the
   linked rename in `worktree-manager.ts`; `planLinks` and
   `GIT_LINKED_STATUS` in `ipc.ts`; `linked-projects.ts` (folders, deny

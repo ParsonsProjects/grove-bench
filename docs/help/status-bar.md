@@ -126,7 +126,7 @@ Under it, a row per step, each with a dot and what it stands at:
 
 A row offers its own action, in grey, only when it isn't the next step, so nothing is offered twice: with commits to push next, the Checks row still has **Fix with agent**. Clicking a chip clears it, and so does closing the popup. When an auto turn gives up and needs you, a note says so under the steps until you dismiss it. Other PRs in this thread are folded at the bottom: open them to see each one, with **watch** to follow it instead.
 
-If a push fails, from here or from the Changes tab, the error shows in the popup: copy it, or **Dismiss** it, while **Next** offers **Retry push**. It also goes away by itself once nothing is left to push. **Switch branch…** at the bottom opens the branch picker in place of the popup. A merge or rebase stopped part way has a line at the top that opens the Changes tab, where you finish or abort it.
+If a push fails, from here or from the Changes tab, the error shows in the popup: copy it, or **Dismiss** it, while **Next** offers **Retry push**. It also goes away by itself once nothing is left to push. **Switch branch…** at the bottom opens the branch picker in place of the popup, and **Work in another project…** beside it links another project (see [Linked projects](#linked-projects)). A merge or rebase stopped part way has a line at the top that opens the Changes tab, where you finish or abort it.
 
 ### Switching branch
 
@@ -141,7 +141,9 @@ Type to filter local and remote branches, then click one or press `Enter`. If th
 
 ### Linked projects
 
-A thread that also works in other projects (**Also works in** on the draft) has one more button for each, after **Branch**: the project's name, the branch its copy has checked out, `±` and the number of uncommitted files, `↑` and `↓` for commits to push and to pull, and the pull request's number when there is one. Its popup says the same in words, adds how many commits aren't on the project's default branch yet, and has **Open folder** for the copy. It only shows: commit, push and open pull requests there yourself, or ask the agent. It's read when the thread is shown, then every minute, after each turn and when the window comes back into focus. If the copy's folder is gone, the button says so, and Grove Bench drops it the next time it starts.
+A thread that also works in other projects (**Also works in** on the draft) has one more button for each, after **Branch**: the project's name, the branch its copy has checked out, `±` and the number of uncommitted files, `↑` and `↓` for commits to push and to pull, and the pull request's number when there is one. Its popup says the same in words, adds how many commits aren't on the project's default branch yet, and has **Open folder** for the copy. It only shows: commit, push and open pull requests there yourself, or ask the agent. **Unlink…** removes the thread's copy of that project, and its branch too if you tick that and the thread made it. It warns first about uncommitted changes there and, with the branch, about commits not on the default branch yet. It's read when the thread is shown, then every minute, after each turn and when the window comes back into focus. If the copy's folder is gone, the button says so, and Grove Bench drops it the next time it starts.
+
+To link a project part way through a thread, use **Work in another project…** in the branch popup, or **Work in Another Project…** in the thread's menu in the sidebar. The thread's branch name is used there too: an existing branch of that name is continued if nothing has it checked out, otherwise it's made from that project's default branch. Linking and unlinking restart the agent on the same thread so it takes the change, so both wait until the agent finishes its turn, and background commands it left running may stop. The agent is told about the change with your next message. The thread has to be open: a closed thread can't be told.
 
 ## Speed
 

@@ -90,6 +90,12 @@ export interface ManagedSession {
   permissionMode: PermissionMode;
   /** Extra system prompt appended to the adapter's default prompt. */
   appendSystemPrompt: string | null;
+  /** The user's own part of it (the thread's, or the setting's), kept so
+   *  the prompt can be built again when the linked projects change. */
+  userAppendPrompt: string | null;
+  /** Said ahead of the next message, once: a project linked or unlinked
+   *  since the last one (linkChangeNote). */
+  linkNote?: string | null;
   /** Fully custom system prompt — overrides the adapter's default entirely. */
   customSystemPrompt: string | null;
   /** If set, only these tools are allowed — everything else is auto-denied. */

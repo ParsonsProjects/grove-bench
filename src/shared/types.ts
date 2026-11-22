@@ -1492,6 +1492,14 @@ export interface GroveBenchAPI {
    *  interrupting the session's current turn. */
   stopBackgroundTask(sessionId: string, taskId: string): Promise<void>;
   destroySession(id: string, deleteBranch?: boolean): Promise<void>;
+  /** Have the thread also work in `repoPath` from now on, through a new
+   *  worktree on its branch name (docs/linked-projects-plan.md). Refused
+   *  mid-turn: its agent restarts to take the folder. `warning`: something
+   *  that didn't work but didn't stop it, such as the dependency install. */
+  linkProject(sessionId: string, repoPath: string): Promise<{ link: LinkedCheckout; warning?: string }>;
+  /** Stop the thread working in a linked project: its worktree is removed,
+   *  and its branch too when asked and the thread made it. Refused mid-turn. */
+  unlinkProject(sessionId: string, repoPath: string, deleteBranch: boolean): Promise<void>;
   renameSession(sessionId: string, displayName: string): Promise<void>;
   /** Save the thread to a file the user picks (Markdown or JSON); the path, or null if cancelled. */
   exportThread(sessionId: string): Promise<string | null>;
@@ -2516,6 +2524,8 @@ export const IPC = {
   SESSION_WAKE: 'session:wake',
   SESSION_STOP_TASK: 'session:stopTask',
   SESSION_DESTROY: 'session:destroy',
+  SESSION_LINK_PROJECT: 'session:linkProject',
+  SESSION_UNLINK_PROJECT: 'session:unlinkProject',
   SESSION_RENAME: 'session:rename',
   SESSION_EXPORT: 'session:export',
   SESSION_AUTO_NAME: 'session:autoName',

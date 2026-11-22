@@ -236,6 +236,14 @@ class SessionStore {
    *  (draftStore.start): its branch, its agent and whether it has git.
    *  `status` applies only while the row still shows 'starting', so a status
    *  main sent meanwhile (an error, say) isn't overwritten. */
+  /** The projects a thread also works in changed (linked or unlinked). */
+  setLinkedRepos(id: string, repos: string[]): void {
+    const entry = this.sessions.find((s) => s.id === id);
+    if (!entry) return;
+    if (repos.length > 0) entry.linkedRepos = [...repos];
+    else delete entry.linkedRepos;
+  }
+
   confirmSession(id: string, info: { branch: string; agentType: string; noGit: boolean; status?: SessionStatus }) {
     this.sessions = this.sessions.map((s) => {
       if (s.id !== id) return s;

@@ -75,6 +75,7 @@ Right-click a thread to access:
 - **Mark as Unread** or **Mark as Read**: show an open thread as unread until you next open it, or clear that
 - **Rename** — Give the thread a custom display name
 - **Open Folder** — Open the worktree directory in your file explorer
+- **Work in Another Project…**: have the thread also work in another of your git projects from now on, through a copy (worktree) of it made on the thread's branch name. Offered for a running thread that has its own copy, while there's a project left to link. See [Linked projects](status-bar.md#linked-projects)
 - **Export Thread…**: save the thread to a file. As Markdown it has the messages and a line for each tool call, without tool output, thinking or the contents of attached files; pick JSON in the save dialog for every event the thread saved
 - **Close Thread** — Shut down a live thread's agent and take it off the Threads list, but keep the thread, so you can pick it up again later
 - **New Group…**, **Add to**, **Move to**, **Remove from**: put the thread in a group, or take it out (see Groups above)

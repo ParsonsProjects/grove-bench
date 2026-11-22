@@ -633,6 +633,8 @@ const api: Record<string, unknown> = {
     ]
     : [],
   getLinkedStatus: async () => [],
+  linkProject: async (_sessionId: string, repoPath: string) => ({ link: { repoPath, path: repoPath, branch: 'main' } }),
+  unlinkProject: async () => {},
   getGitSyncStatus: async (id: string) => ({ upstream: id === 's-readme' ? null : 'origin', ahead: id === 's-sidebar' ? 3 : id === 's-oauth' ? 1 : 0, behind: id === 's-oauth' ? 2 : 0 }),
   listCheckpoints: async () => [],
   getCheckpointDiff: async () => [

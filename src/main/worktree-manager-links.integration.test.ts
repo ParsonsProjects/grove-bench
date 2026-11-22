@@ -166,6 +166,41 @@ describe('WorktreeManager.remove with a linked project', () => {
   });
 });
 
+describe('WorktreeManager.unlinkProject', () => {
+  it('removes the linked worktree and its branch when asked, and keeps the thread', async () => {
+    const manager = new WorktreeManager();
+    const { thread, linked } = await linkedThread(manager);
+
+    expect(await manager.unlinkProject(ID, repoB, true)).toEqual(linked);
+
+    expect(fs.existsSync(linked.path)).toBe(false);
+    expect(worktreesOf(repoB)).not.toContain(ID);
+    expect(git(repoB, 'branch', '--list', 'feat')).toBe('');
+    expect(readManifest()[ID]).not.toHaveProperty('linked');
+    expect(manager.getWorktree(ID)?.linked).toBeUndefined();
+    // The thread's own worktree stays.
+    expect(fs.existsSync(thread.path)).toBe(true);
+  });
+
+  it("keeps the branch unless asked, and refuses a project the thread doesn't link", async () => {
+    const manager = new WorktreeManager();
+    const { linked } = await linkedThread(manager);
+    git(linked.path, 'commit', '-q', '--allow-empty', '-m', 'work in b');
+
+    await manager.unlinkProject(ID, repoB, false);
+    expect(git(repoB, 'log', '-1', '--format=%s', 'feat')).toBe('work in b');
+    await expect(manager.unlinkProject(ID, repoB, false)).rejects.toThrow("doesn't work in b");
+  });
+
+  it('can link the same project again afterwards', async () => {
+    const manager = new WorktreeManager();
+    await linkedThread(manager);
+    await manager.unlinkProject(ID, repoB, false);
+    const again = await manager.createLink(ID, { repoPath: repoB, branchName: 'feat', useExisting: true });
+    expect(git(again.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('feat');
+  });
+});
+
 describe('a linked worktree that cannot be removed at once', () => {
   it('keeps the thread hidden until the sweep finishes it, branch and all', async () => {
     const manager = new WorktreeManager();

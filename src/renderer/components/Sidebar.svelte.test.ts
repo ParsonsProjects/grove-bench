@@ -5,6 +5,7 @@ import { tick } from 'svelte';
 
 import Sidebar from './Sidebar.svelte';
 import { store } from '../stores/sessions.svelte.js';
+import { linkedStore } from '../stores/linked.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
 import { goalStore } from '../stores/goals.svelte.js';
@@ -213,6 +214,23 @@ describe('Sidebar session rows', () => {
     const focusRule = 'group-has-[:focus-visible]/session';
     expect(screen.getByTitle(/^Close thread/)).toHaveClass(`${focusRule}:opacity-100`);
     expect(screen.getByTitle(/^Created /)).toHaveClass(`${focusRule}:invisible`);
+  });
+
+  it('offers Work in Another Project for a live worktree thread while there is a git project to link', async () => {
+    store.repos = ['/repo-a', '/repo-b'];
+    store.sessions = [
+      { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp' },
+      { id: 'd1', branch: 'main', repoPath: '/repo-a', status: 'running', displayName: 'In the folder', direct: true },
+    ] as any;
+    render(Sidebar);
+    await fireEvent.contextMenu(screen.getByText('Sidebar revamp'));
+    await fireEvent.click(screen.getByText('Work in Another Project…'));
+    expect(linkedStore.linkDialogFor).toBe('s1');
+    linkedStore.linkDialogFor = null;
+
+    await fireEvent.contextMenu(screen.getByText('In the folder'));
+    expect(screen.queryByText('Work in Another Project…')).toBeNull();
+    store.repos = [];
   });
 
   it('has no menu item that starts a second agent in the same worktree', async () => {
