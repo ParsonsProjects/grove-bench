@@ -42,6 +42,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   defaultActivityView: 'summary',
   spellcheck: true,
   steerOnEnter: false,
+  closeWindow: 'quit',
   notifyOnTurnComplete: true,
   notifyOnPermission: true,
   notifyOnPrAlert: true,
@@ -85,6 +86,31 @@ describe('Claude accounts', () => {
     expect(settingsStore.draft.claudeAccounts).toEqual([{ id: 'client-a', name: 'Client A', configDir: 'D:\\claude' }]);
     settingsStore.removeClaudeAccount('claude-account-client-a');
     expect(settingsStore.draft.claudeAccounts).toEqual([]);
+  });
+});
+
+describe('settings main changed', () => {
+  it("shows them without saving, and keeps other edits that aren't saved yet", () => {
+    settingsStore.draft = { ...settingsStore.draft, theme: 'dark' };
+    settingsStore.applyChanged({ closeWindow: 'tray' });
+    expect(settingsStore.current.closeWindow).toBe('tray');
+    expect(settingsStore.draft.closeWindow).toBe('tray');
+    expect(settingsStore.draft.theme).toBe('dark');
+    expect(mockGroveBench.saveSettings).not.toHaveBeenCalled();
+  });
+
+  it('listens for them once loaded', async () => {
+    // Whichever test loaded first subscribed; this one subscribes afresh.
+    (settingsStore as unknown as { unsubscribeChanges: null }).unsubscribeChanges = null;
+    mockGroveBench.getSettings.mockResolvedValue({ ...DEFAULT_SETTINGS });
+    let send: ((patch: Partial<GroveBenchSettings>) => void) | undefined;
+    mockGroveBench.onSettingsChanged.mockImplementation((cb: (patch: Partial<GroveBenchSettings>) => void) => {
+      send = cb;
+      return () => {};
+    });
+    await settingsStore.load();
+    send?.({ closeWindow: 'tray' });
+    expect(settingsStore.current.closeWindow).toBe('tray');
   });
 });
 

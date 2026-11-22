@@ -17,7 +17,7 @@ const m = vi.hoisted(() => {
     sessionManager: fns(
       'getSessionsByRepo', 'createSession', 'getSession', 'reattachWindow', 'trackPendingSetup', 'hasPendingSetup', 'setupSettled', 'interruptQuery',
       'closeSession', 'sleepSession', 'wakeSession', 'stopTask', 'destroySession', 'listSessions', 'renameSession',
-      'setBranch', 'isMidTurn', 'turnState', 'getEventHistory', 'getEventHistoryPage', 'getEventHistoryCount', 'searchEventHistory',
+      'setBranch', 'isMidTurn', 'isLive', 'dismissCutOff', 'turnState', 'getEventHistory', 'getEventHistoryPage', 'getEventHistoryCount', 'searchEventHistory',
       'beginSearch', 'clearEventHistory', 'sendMessage', 'setMode', 'setModel', 'getControls', 'getUsage', 'setControl',
       'listMcpServers', 'getMcpContextCost', 'reconnectMcpServer', 'setMcpServerEnabled', 'authenticateMcpServer', 'reconnectDownMcpServers',
       'getSessionAdapter', 'getWorktreePath', 'analyzeSkillSuggestionsForRepo', 'respondToPermission',
@@ -1306,6 +1306,21 @@ describe('AGENT_SYSTEM_INFO', () => {
 });
 
 describe('agent I/O', () => {
+  it("passes on Continue's mark only when it's exactly true, and dismisses a cut-off turn", async () => {
+    m.sessionManager.sendMessage.mockResolvedValue(true);
+    invoke(IPC.AGENT_SEND, 's1', 'carry on', undefined, undefined, { continued: true });
+    invoke(IPC.AGENT_SEND, 's1', 'hello', undefined, undefined, { continued: 'yes' });
+    invoke(IPC.AGENT_SEND, 's1', 'hi');
+    expect(m.sessionManager.sendMessage.mock.calls.map((c: unknown[]) => c[4])).toEqual([
+      { continued: true }, { continued: false }, { continued: false },
+    ]);
+
+    m.sessionManager.dismissCutOff.mockResolvedValue(true);
+    expect(await invoke(IPC.SESSION_DISMISS_CUT_OFF, 's1')).toBe(true);
+    expect(await invoke(IPC.SESSION_DISMISS_CUT_OFF, 42)).toBe(false);
+    expect(m.sessionManager.dismissCutOff).toHaveBeenCalledTimes(1);
+  });
+
   it('tells the tab when a message could not be delivered', async () => {
     m.sessionManager.sendMessage.mockResolvedValue(false);
     invoke(IPC.AGENT_SEND, 's1', 'hello');
@@ -1445,6 +1460,18 @@ describe('history', () => {
 
     expect(await first).toEqual([]);
     expect(await second).toEqual([{ eventIndex: 0, sessionId: 's1' }]);
+  });
+
+  it("previews say when a thread's last turn was cut off, counting one left unfinished only with no agent running", async () => {
+    const quit = [{ type: 'user_message', text: 'Run the tests' }, { type: 'turn_cut_off', reason: 'update', at: 5 }, { type: 'process_exit' }];
+    const crashed = [{ type: 'user_message', text: 'Run the tests' }, { type: 'assistant_text', text: 'Running them' }];
+    m.sessionManager.getEventHistory.mockImplementation((id: string) => (id === 'quit' ? quit : crashed));
+    m.sessionManager.isLive.mockImplementation((id: string) => id === 'live');
+    const previews = await (invoke(IPC.SESSION_PREVIEWS, ['quit', 'crashed', 'live']) as Promise<Record<string, SessionPreview>>);
+    expect(previews.quit.cutOff).toEqual({ reason: 'update', at: 5 });
+    expect(previews.crashed.cutOff).toEqual({ reason: 'unknown' });
+    // Its turn is still running.
+    expect(previews.live.cutOff).toBeUndefined();
   });
 
   it('previews skip a conversation whose history cannot be read', async () => {
@@ -2134,6 +2161,16 @@ describe('renderer input checks', () => {
     expect(line).not.toMatch(/[\r\n]/);
     expect(line.length).toBeLessThanOrEqual('[idle] '.length + IDLE_LOG_MAX_CHARS);
     expect(m.logger.debug).toHaveBeenCalledTimes(2);
+  });
+
+  it("tells the tray how many threads need attention, even with the badge off", async () => {
+    const { closeToTray } = await import('./close-to-tray.js');
+    const noted = vi.spyOn(closeToTray, 'noteAttention');
+    invoke(IPC.WIN_SET_ATTENTION_BADGE, 0, null, 3);
+    invoke(IPC.WIN_SET_ATTENTION_BADGE, 2, 'data:x');
+    expect(noted.mock.calls).toEqual([[3], [2]]);
+    expect(vi.mocked(applyAttentionBadge).mock.calls[0][1]).toBe(0);
+    noted.mockRestore();
   });
 
   it('attention badge counts are whole, non-negative numbers', () => {

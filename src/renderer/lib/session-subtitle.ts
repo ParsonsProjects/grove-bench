@@ -84,6 +84,9 @@ export interface SubtitleInput {
   lastText: string | null;
   /** First user prompt (loaded messages or main-process preview). */
   firstPrompt: string | null;
+  /** Its last turn was cut off when Grove Bench stopped, and waits for
+   *  Continue or Dismiss (shared/cut-off.ts). */
+  cutOff?: boolean;
 }
 
 /**
@@ -101,6 +104,8 @@ export function sessionSubtitle(input: SubtitleInput): SessionSubtitle | null {
       tone: 'waiting',
     };
   }
+
+  if (input.cutOff && !input.isRunning) return { text: 'Cut off when Grove Bench closed', tone: 'waiting' };
 
   if (input.isRunning) {
     const { activity, toolName, toolSummary } = input.activity;

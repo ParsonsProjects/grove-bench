@@ -9,6 +9,7 @@ import { linkChangeNote } from './session-config.js';
 import { sessionManager } from './agent-session.js';
 import { todaySpend } from './session-limits.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
+import { openCutOff } from '../shared/cut-off.js';
 import { decideAutoName } from './session-auto-name.js';
 import { cleanUserGoal, generateGoal, goalInputFromEvents, type GoalInput } from './session-goal.js';
 import { launchEditor } from './editor-launch.js';
@@ -60,6 +61,7 @@ import { perfLogPath } from './perf-log.js';
 import { detectPackageManager, installDependencies, type PackageManager } from './deps-install.js';
 import { commandLine, hasSubmodules, initSubmodules, readSubmoduleConfig, submoduleArgs, submoduleEnv } from './worktree-submodules.js';
 import { applyAttentionBadge } from './attention-badge.js';
+import { closeToTray } from './close-to-tray.js';
 import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
@@ -1288,7 +1290,9 @@ export function registerHandlers() {
     content: string,
     images?: import('../shared/types.js').ImageAttachment[],
     files?: import('../shared/types.js').FileAttachment[],
+    opts?: unknown,
   ) => {
+    const continued = typeof opts === 'object' && opts !== null && (opts as { continued?: unknown }).continued === true;
     // Tell the user the prompt was not delivered, then unlock the renderer
     // so it doesn't stay stuck in "Writing message".
     const notDelivered = (message: string) => {
@@ -1297,7 +1301,7 @@ export function registerHandlers() {
       event.sender.send(channel, { type: 'error', message });
       event.sender.send(channel, { type: 'process_exit' });
     };
-    sessionManager.sendMessage(sessionId, content, images, files).then(
+    sessionManager.sendMessage(sessionId, content, images, files, { continued }).then(
       (ok) => {
         if (ok === 'nothing-to-send') notDelivered('Message not sent: its attachments were left out and nothing was typed.');
         // Session is dead or never connected
@@ -1617,6 +1621,10 @@ export function registerHandlers() {
     }
   });
 
+  ipcMain.handle(IPC.SESSION_DISMISS_CUT_OFF, (_event, sessionId: unknown) => (
+    typeof sessionId === 'string' ? sessionManager.dismissCutOff(sessionId) : false
+  ));
+
   ipcMain.handle(IPC.SESSION_PREVIEWS, async (_event, sessionIds: string[]) => {
     const previews: Record<string, import('../shared/types.js').SessionPreview> = {};
     // A stopped conversation's preview parses its whole event log, and the
@@ -1625,7 +1633,11 @@ export function registerHandlers() {
     let sliceStart = performance.now();
     for (const id of sessionIds ?? []) {
       try {
-        previews[id] = extractSessionPreview(prelaunchPrefixedEvents(id));
+        const events = prelaunchPrefixedEvents(id);
+        const preview = extractSessionPreview(events);
+        // With no agent running, a turn left unfinished was cut off too.
+        const cutOff = openCutOff(events, !sessionManager.isLive(id));
+        previews[id] = cutOff ? { ...preview, cutOff: { reason: cutOff.reason, ...(cutOff.at !== undefined ? { at: cutOff.at } : {}) } } : preview;
       } catch (e) {
         logger.warn(`[session-previews] preview failed for ${id}:`, e);
       }
@@ -2607,6 +2619,7 @@ export function registerHandlers() {
     const saved = settings.getSettings();
     settings.applyImmediateEffects(win, saved);
     applyUpdateSettings(saved);
+    closeToTray.apply(saved.closeWindow);
   });
 
   // ─── App State ───
@@ -2733,11 +2746,14 @@ export function registerHandlers() {
 
   // ─── Taskbar attention badge ───
 
-  ipcMain.on(IPC.WIN_SET_ATTENTION_BADGE, (event, count: unknown, dataUrl: unknown) => {
+  ipcMain.on(IPC.WIN_SET_ATTENTION_BADGE, (event, count: unknown, dataUrl: unknown, attention: unknown) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) return;
-    const n = typeof count === 'number' && Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+    const whole = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0);
+    const n = whole(count);
     applyAttentionBadge(win, n, typeof dataUrl === 'string' ? dataUrl : null);
+    // The tray's menu counts them even with the badge turned off.
+    closeToTray.noteAttention(attention === undefined ? n : whole(attention));
   });
 
   // ─── Spell check ───

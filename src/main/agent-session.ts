@@ -1,9 +1,10 @@
 import path from 'node:path';
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { AgentSystemInfo, SessionInfo, SessionStatus, AgentEvent, ThreadUsage, UsageSummary, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls, ThreadTurnState, EventHistoryPage, LinkedCheckout } from '../shared/types.js';
+import type { AgentSystemInfo, SessionInfo, SessionStatus, AgentEvent, ThreadUsage, UsageSummary, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls, ThreadTurnState, EventHistoryPage, LinkedCheckout, CutOffReason } from '../shared/types.js';
 import { CONTROL_IDS, MCP_SIGN_IN_TIMEOUT_MS, isMcpServerDown, isPermissionMode, subagentParent } from '../shared/types.js';
 import { userEventText } from '../shared/prompt-text.js';
+import { openCutOff } from '../shared/cut-off.js';
 import { errorMessage } from '../shared/error-message.js';
 import { applyRateLimit } from '../shared/usage.js';
 import { loadUsageSnapshot, saveUsageSnapshot } from './app-state.js';
@@ -431,6 +432,14 @@ class AgentSessionManager {
     for (const event of opts.adoptSetupEvents?.() ?? []) this.events.append(session, event);
 
     const emit = this.createEmitter(session);
+
+    // The last run left a turn unfinished with nothing saying why (a crash,
+    // or the process killed): it ended then. Logged as cut off, so the thread
+    // offers to continue it, and as ended, so nothing waits on it.
+    if (openCutOff(session.eventHistory, true)?.inferred) {
+      emit({ type: 'turn_cut_off', reason: 'unknown' });
+      emit({ type: 'process_exit' });
+    }
 
     // Tell the renderer which mode the conversation starts in. It shows
     // 'default' until a mode_sync arrives, and adapters don't report the
@@ -1346,11 +1355,14 @@ class AgentSessionManager {
   /** Send a prompt. True once the agent has it; false when the session is
    *  gone or never connected; 'nothing-to-send' when every attachment was
    *  left out and nothing was typed. */
+  /** `opts.continued`: Continue on a cut-off turn sent it (cut-off.ts); the
+   *  thread marks it so. */
   async sendMessage(
     id: string,
     content: string,
     images?: import('../shared/types.js').ImageAttachment[],
     files?: import('../shared/types.js').FileAttachment[],
+    opts: { continued?: boolean } = {},
   ): Promise<boolean | 'nothing-to-send'> {
     // When it was sent, for the thread to show. Taken before the waits below
     // (setup, a wake), which can take minutes.
@@ -1423,6 +1435,7 @@ class AgentSessionManager {
     const audioInHistory = savedFiles.length > 0 ? audioSentInline(session.eventHistory) : 0;
     const userEvent: Extract<AgentEvent, { type: 'user_message' }> = {
       type: 'user_message', text: content, uuid, at: sentAt,
+      ...(opts.continued && { continued: true as const }),
       ...(storedImages.length > 0 && { images: storedImages }),
       ...(savedFiles.length > 0 && { files: savedFiles.map((f) => f.stored) }),
     };
@@ -1430,6 +1443,9 @@ class AgentSessionManager {
     // prompt reaches the agent only after the checkpoint (see turnInFlight).
     const unsent = session.unsentPrompts ??= new Set();
     unsent.add(uuid);
+    // Reached the agent: else the history gets the end of the turn it never
+    // started (finally below).
+    let delivered = false;
     try {
       session.emit?.(userEvent);
 
@@ -1499,6 +1515,7 @@ class AgentSessionManager {
         logger.debug(`[sendMessage] session=${id} sent successfully`);
         // Update last-active timestamp (fire-and-forget)
         worktreeManager.updateLastActive(id).catch(() => {});
+        delivered = true;
         return true;
       } catch (e) {
         console.error(`[sendMessage] session=${id} send FAILED:`, e);
@@ -1510,6 +1527,11 @@ class AgentSessionManager {
     } finally {
       // Gone to the agent (turnHandle has it now), or given up on.
       unsent.delete(uuid);
+      // Given up on, with nothing else under way: the history says its turn
+      // ended, as the window was told (ipc's notDelivered), so the next start
+      // doesn't take it for a turn a crash cut off (cut-off.ts). A close
+      // writes its own (shutDown).
+      if (!delivered && !session.destroying && !turnInFlight(session)) session.emit?.({ type: 'process_exit' });
     }
   }
 
@@ -2375,7 +2397,9 @@ class AgentSessionManager {
    * it from the provider's transcript, as after an app restart. Checkpoint
    * refs and the worktree are kept.
    */
-  closeSession(id: string): Promise<void> {
+  /** `cutOff`: Grove Bench is quitting, and why: a turn under way is logged
+   *  as cut off (cut-off.ts), so the next start offers to continue it. */
+  closeSession(id: string, cutOff?: CutOffReason): Promise<void> {
     // Closed before it was up: say so, rather than leave the run waiting.
     perfSteps.fail(id, 'closed');
     const inFlight = this.closing.get(id);
@@ -2385,7 +2409,7 @@ class AgentSessionManager {
       // Still being set up (new worktree, dependency install, resume): close
       // it once it exists, or setup would start an agent after the close.
       const setup = this.pendingSetups.get(id);
-      return setup ? setup.then(() => this.closeSession(id)) : Promise.resolve();
+      return setup ? setup.then(() => this.closeSession(id, cutOff)) : Promise.resolve();
     }
 
     // Out of the map at once so a reopen can't reattach to the dying agent;
@@ -2393,7 +2417,7 @@ class AgentSessionManager {
     this.sessions.delete(id);
     const closed = (async () => {
       try {
-        await this.shutDown(session, 'Conversation closed');
+        await this.shutDown(session, 'Conversation closed', cutOff);
       } catch (err) {
         logger.warn(`Closing session ${id} failed:`, err);
       } finally {
@@ -2462,7 +2486,7 @@ class AgentSessionManager {
    * under it (background tasks, dev servers, MCP servers), close its query
    * and deny pending permissions.
    */
-  private async shutDown(session: ManagedSession, reason: string): Promise<void> {
+  private async shutDown(session: ManagedSession, reason: string, cutOff?: CutOffReason): Promise<void> {
     const { id } = session;
 
     // Must be set before the agent is killed or its query closed: either ends
@@ -2512,7 +2536,11 @@ class AgentSessionManager {
     // now, with the agent dead: a turn can end or start during the kill (the
     // run's tail leaves the turn as it is for this). Before the caller
     // flushes the log.
-    if (turnInFlight(session)) session.emit?.({ type: 'process_exit' });
+    if (turnInFlight(session)) {
+      // Grove Bench quitting cut it off: the next start offers to continue it.
+      if (cutOff) session.emit?.({ type: 'turn_cut_off', reason: cutOff, at: Date.now() });
+      session.emit?.({ type: 'process_exit' });
+    }
     // That ends the turn. Sends still on their way give up (see sendMessage).
     session.turnHandle = null;
     session.unsentPrompts?.clear();
@@ -2530,9 +2558,22 @@ class AgentSessionManager {
   /** App quit: stop every live agent the way closing its conversation does.
    *  Worktrees, branches and checkpoints stay, so the conversations reopen
    *  on the next launch. */
-  async closeAll(): Promise<void> {
-    for (const id of [...this.sessions.keys()]) void this.closeSession(id);
+  /** Close every thread, as Grove Bench quits: `cutOff` says why, for the
+   *  turns this cuts off. */
+  async closeAll(cutOff: CutOffReason = 'quit'): Promise<void> {
+    for (const id of [...this.sessions.keys()]) void this.closeSession(id, cutOff);
     await this.waitForCloses();
+  }
+
+  /** Dismiss the turn this thread had cut off (cut-off.ts): logged, so it
+   *  stays dismissed. Waits for a thread still starting up. False when there
+   *  is no thread, or nothing to dismiss. */
+  async dismissCutOff(id: string): Promise<boolean> {
+    if (!this.sessions.has(id)) await this.pendingSetups.get(id);
+    const session = this.sessions.get(id);
+    if (!session?.emit || !openCutOff(session.eventHistory)) return false;
+    session.emit({ type: 'turn_cut_off_dismissed' });
+    return true;
   }
 
   /** Resolves once every conversation being closed has finished shutting down. */
@@ -3067,9 +3108,24 @@ class AgentSessionManager {
     return this.sessions.size;
   }
 
+  /** Whether the thread has its agent up (or sleeping), or is still
+   *  closing: its history's last turn may still be running, or is about to
+   *  get its end (shutDown writes it after the thread leaves `sessions`). */
+  isLive(id: string): boolean {
+    return this.sessions.has(id) || this.closing.has(id);
+  }
+
   /** Conversations still shutting down after closeSession(). */
   get closingCount(): number {
     return this.closing.size;
+  }
+
+  /** Threads in a turn now (turnInFlight): what closing the window would
+   *  stop, and what the tray menu counts. */
+  get workingCount(): number {
+    let n = 0;
+    for (const session of this.sessions.values()) if (turnInFlight(session)) n++;
+    return n;
   }
 }
 

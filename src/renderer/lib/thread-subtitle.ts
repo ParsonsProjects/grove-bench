@@ -1,3 +1,4 @@
+import { threadCutOff } from './cut-off.js';
 import type { SessionStatus } from '../../shared/types.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
@@ -29,7 +30,8 @@ export function threadSubtitle(session: { id: string; status: SessionStatus }): 
   const lastText = quiet ? ((loaded ? lastTextSnippet(msgs) : null) ?? (preview?.lastText || null)) : null;
   const firstPrompt = quiet && !lastText ? ((loaded ? firstPromptSnippet(msgs) : null) ?? (preview?.firstPrompt || null)) : null;
   const pendingToolView = pendingTool ? pendingPermissionView(msgs) : undefined;
-  return sessionSubtitle({ isRunning, activity: messageStore.getActivity(session.id), pendingTool, pendingToolView, backgroundAgents, lastText, firstPrompt });
+  const cutOff = !isRunning && threadCutOff(session.id) !== null;
+  return sessionSubtitle({ isRunning, activity: messageStore.getActivity(session.id), pendingTool, pendingToolView, cutOff, backgroundAgents, lastText, firstPrompt });
 }
 
 /** The subtitle's colour: blue while working, amber while it waits on you. */

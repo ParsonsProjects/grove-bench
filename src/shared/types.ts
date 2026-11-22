@@ -390,8 +390,9 @@ export type AgentEvent =
   | { type: 'activity'; activity: 'thinking' | 'tool_starting' | 'generating' | 'idle' ; toolName?: string }
   /** `at`: when it was sent (epoch ms). Older history has none. `steer`: sent
    *  into a running turn and logged where the agent read it; it has no
-   *  checkpoint of its own, so there is no rewinding to it. */
-  | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[]; files?: StoredFile[]; at?: number; steer?: true }
+   *  checkpoint of its own, so there is no rewinding to it. `continued`: sent
+   *  by Continue on a turn that was cut off (cut-off.ts). */
+  | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[]; files?: StoredFile[]; at?: number; steer?: true; continued?: true }
   /** Steers the agent never read, given back to be queued: Stop came first
    *  (`stopped`), or the agent let them go. Live only (TRANSIENT_EVENT_TYPES). */
   | { type: 'steer_returned'; steers: { uuid: string; text: string }[]; stopped?: true }
@@ -403,6 +404,13 @@ export type AgentEvent =
    *  the provider refused the credentials outright (a bad or revoked key). */
   | { type: 'error'; message: string; auth?: boolean; keyRejected?: boolean }
   | { type: 'process_exit'; exitCode?: number }
+  /** The turn under way ended because Grove Bench stopped (cut-off.ts):
+   *  written just before that turn's process_exit, by a quit (its `reason`),
+   *  or at the next start for one a crash left unfinished ('unknown'). The
+   *  thread offers to continue it until a prompt is sent or it's dismissed
+   *  (turn_cut_off_dismissed). `at`: when, if known (epoch ms). */
+  | { type: 'turn_cut_off'; reason: CutOffReason; at?: number }
+  | { type: 'turn_cut_off_dismissed' }
   // Rate limiting
   /** `extraUsage`: the plan's own limit is reached but requests go on,
    *  billed as extra usage (overage). Present only when true. */
@@ -560,6 +568,15 @@ export interface SessionPreview {
   firstPrompt: string;
   /** Most recent user/assistant text, whitespace-collapsed. */
   lastText: string;
+  /** Its last turn was cut off and nothing has answered that yet (cut-off.ts). */
+  cutOff?: CutOff;
+}
+
+/** A turn cut off when Grove Bench stopped, still waiting for Continue or
+ *  Dismiss: why, and when if known (cut-off.ts). */
+export interface CutOff {
+  reason: CutOffReason;
+  at?: number;
 }
 
 // ─── PTY / Terminal ───
@@ -1637,7 +1654,11 @@ export interface GroveBenchAPI {
   getCheckoutSharers(sessionId: string): Promise<string[]>;
 
   // Agent I/O (replaces terminal I/O)
-  sendMessage(sessionId: string, content: string, images?: ImageAttachment[], files?: FileAttachment[]): void;
+  /** `opts.continued`: Continue on a cut-off turn sends it (cut-off.ts). */
+  sendMessage(sessionId: string, content: string, images?: ImageAttachment[], files?: FileAttachment[], opts?: { continued?: boolean }): void;
+  /** Dismiss the turn a thread had cut off (cut-off.ts). False when there was
+   *  nothing to dismiss, or no thread. */
+  dismissCutOff(sessionId: string): Promise<boolean>;
   /** Send a message into the turn that is running now, for the agent to
    *  read after its current tool calls (agents with capabilities.steering).
    *  'not-running' or 'unsupported' when it didn't go: queue it instead.
@@ -1965,6 +1986,9 @@ export interface GroveBenchAPI {
   // Settings
   getSettings(): Promise<GroveBenchSettings>;
   saveSettings(settings: GroveBenchSettings): Promise<void>;
+  /** Settings main changed itself, such as closeWindow from the first-close
+   *  offer. Returns an unsubscribe. */
+  onSettingsChanged(callback: (patch: Partial<GroveBenchSettings>) => void): () => void;
 
   // App state persistence
   getOpenTabs(): Promise<string[]>;
@@ -2031,8 +2055,9 @@ export interface GroveBenchAPI {
   // Taskbar attention badge
   /** Overlay `count` on the taskbar icon (Windows overlay icon, macOS dock
    *  badge, Linux badge count). `dataUrl` is a renderer-drawn PNG used for the
-   *  Windows overlay; 0 clears the badge. */
-  setAttentionBadge(count: number, dataUrl: string | null): void;
+   *  Windows overlay; 0 clears the badge. `attention`: how many threads need
+   *  the user, whether the badge shows or not, for the tray's menu. */
+  setAttentionBadge(count: number, dataUrl: string | null, attention?: number): void;
 
   // OS notifications
   notify(req: OsNotificationRequest): void;
@@ -2166,6 +2191,15 @@ export interface ClaudeAccountSetting {
   /** The account's Claude Code folder. Empty for `~/.claude-<id>`. */
   configDir: string;
 }
+
+/** Why a turn was cut off (turn_cut_off): Grove Bench was quit, it closed
+ *  to install an update, Windows ended the session, or nobody knows (a crash,
+ *  or the process killed: found at the next start). */
+export type CutOffReason = 'quit' | 'update' | 'windows' | 'unknown';
+
+/** What closing the window does (settings.closeWindow). */
+export type CloseWindowAction = 'quit' | 'tray';
+export const CLOSE_WINDOW_ACTIONS: readonly CloseWindowAction[] = ['quit', 'tray'];
 
 /** How a new worktree's submodules are checked out (settings.submoduleSetup). */
 export type SubmoduleSetup = 'all' | 'top' | 'off';
@@ -2310,6 +2344,9 @@ export interface GroveBenchSettings {
    *  and Alt+Enter queues it; false (the default) the other way round.
    *  Agents that can't steer always queue. */
   steerOnEnter: boolean;
+  /** What closing the window does: quit (the default), or hide it and keep
+   *  running in the tray, threads still working (close-to-tray.ts). */
+  closeWindow: CloseWindowAction;
 
   // Notifications (OS-level; shown only while the window is unfocused)
   /** Notify when an agent finishes a turn. Default true. */
@@ -2675,6 +2712,7 @@ export const IPC = {
   APP_RESTORE_COMPLETE: 'app:restoreComplete',
   AGENT_EVENT: 'agent:event',          // agent:event:{sessionId}
   AGENT_SEND: 'agent:send',
+  SESSION_DISMISS_CUT_OFF: 'session:dismissCutOff',
   AGENT_STEER: 'agent:steer',
   ATTACHMENT_OPEN: 'attachment:open',
   ATTACHMENT_READ: 'attachment:read',
@@ -2776,6 +2814,8 @@ export const IPC = {
   WIN_CLOSE: 'win:close',
   WIN_IS_MAXIMIZED: 'win:isMaximized',
   SETTINGS_GET: 'settings:get',
+  /** Main changed a setting itself (the first-close offer): the patch. */
+  SETTINGS_CHANGED: 'settings:changed',
   SETTINGS_SAVE: 'settings:save',
   APP_STATE_GET_OPEN_TABS: 'appState:getOpenTabs',
   APP_STATE_SET_OPEN_TABS: 'appState:setOpenTabs',

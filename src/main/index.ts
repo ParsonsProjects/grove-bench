@@ -4,13 +4,14 @@ import { registerHandlers, appEvents } from './ipc.js';
 import { sessionManager } from './agent-session.js';
 import { worktreeManager } from './worktree-manager.js';
 import { keepOnScreen, loadWindowState, trackWindowState } from './window-state.js';
-import { flushPendingSaves } from './app-state.js';
+import { flushPendingSaves, loadTrayIntroduced, saveTrayIntroduced } from './app-state.js';
+import { closeToTray } from './close-to-tray.js';
 import * as settings from './settings.js';
 import { catalogs } from './catalogs.js';
 import { logger } from './logger.js';
 import { terminalManager } from './terminal.js';
 import { previewManager } from './preview.js';
-import { IPC } from '../shared/types.js';
+import { IPC, type CutOffReason } from '../shared/types.js';
 import { followDefaultAgent, initAdapters } from './adapters/index.js';
 import { initAutoUpdater } from './auto-updater.js';
 import { installProcessErrorHandlers } from './crash-handling.js';
@@ -78,6 +79,13 @@ let isQuitting = false;
 // Electron's crash dialog take every agent session down with it.
 installProcessErrorHandlers({ getWindow: () => mainWindow });
 
+/** The app's .ico, for the window and the tray. */
+function appIcon(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.ico')
+    : path.join(__dirname, '..', '..', 'src', 'main', 'icon.ico');
+}
+
 function createWindow() {
   const state = keepOnScreen(loadWindowState(), screen.getAllDisplays().map((d) => d.workArea));
 
@@ -89,9 +97,7 @@ function createWindow() {
     minWidth: 800,
     minHeight: 600,
     frame: false,
-    icon: app.isPackaged
-      ? path.join(process.resourcesPath, 'icon.ico')
-      : path.join(__dirname, '..', '..', 'src', 'main', 'icon.ico'),
+    icon: appIcon(),
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
       contextIsolation: true,
@@ -139,7 +145,17 @@ function createWindow() {
     mainWindow?.webContents.send(IPC.WINDOW_FOCUS);
   });
 
-  initAutoUpdater(mainWindow, { shutdown });
+  initAutoUpdater(mainWindow, { shutdown: () => shutdown('update') });
+
+  // Close to tray (close-to-tray.ts): hides the window instead of closing
+  // it when the setting says so, or first offers that.
+  mainWindow.on('close', (event) => closeToTray.onClose(event));
+  mainWindow.on('show', () => closeToTray.onShow());
+  // Windows is logging off or shutting down: it closes for real.
+  mainWindow.on('session-end', () => {
+    quitReason = 'windows';
+    closeToTray.markQuitting();
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -170,6 +186,18 @@ void app.whenReady().then(() => {
   handleAttachmentProtocol((id) => worktreeManager.getWorktree(id)?.path);
   void removeDeletedFolders();
   createWindow();
+  closeToTray.install({
+    getWindow: () => mainWindow,
+    iconPath: appIcon(),
+    closeAction: () => settings.getSettings().closeWindow,
+    setCloseAction: (closeWindow) => {
+      settings.saveSettings({ ...settings.getSettings(), closeWindow });
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.SETTINGS_CHANGED, { closeWindow });
+    },
+    working: () => sessionManager.workingCount,
+    introduced: loadTrayIntroduced,
+    setIntroduced: saveTrayIntroduced,
+  });
 
   // Background worktree sweep. The first run waits until the renderer has
   // finished restoring sessions (disk and CPU are busiest then), with a
@@ -269,12 +297,16 @@ function nothingRunning(): boolean {
 
 let shutdownDone: Promise<void> | null = null;
 
+/** Why Grove Bench is quitting, for the turns it cuts off (cut-off.ts):
+ *  Windows ending the session sets it before the quit. */
+let quitReason: CutOffReason = 'quit';
+
 /**
  * Graceful shutdown: stop every agent and shell. Worktrees, branches and
  * checkpoints are left alone; conversations reopen on the next launch.
  * Runs once: quitting and "Restart to update" both wait on it.
  */
-function shutdown(): Promise<void> {
+function shutdown(reason: CutOffReason = quitReason): Promise<void> {
   shutdownDone ??= (async () => {
     // Restart to update comes here before before-quit: no schedule may
     // start a thread while the others are closing.
@@ -285,12 +317,14 @@ function shutdown(): Promise<void> {
     }
     logger.info(`Closing ${sessionManager.count} sessions...`);
     // closeAll() also waits for conversations already closing.
-    await runQuitCleanup(() => Promise.all([terminalManager.killAll(), sessionManager.closeAll()]));
+    await runQuitCleanup(() => Promise.all([terminalManager.killAll(), sessionManager.closeAll(reason)]));
   })();
   return shutdownDone;
 }
 
 app.on('before-quit', (event) => {
+  // The window closes for real from here on, whatever closing it does.
+  closeToTray.markQuitting();
   // App-state changes (open tabs, groups, …) not in the file yet, waiting to
   // be saved or on their way in the background: written synchronously, since
   // a background save might not finish before the process exits.

@@ -2,7 +2,7 @@ import path from 'node:path';
 import { app, BrowserWindow, nativeTheme } from 'electron';
 import { NIGHT, PAPER } from '../shared/brand.js';
 import { z } from 'zod';
-import { SUBMODULE_SETUPS, type GroveBenchSettings } from '../shared/types.js';
+import { CLOSE_WINDOW_ACTIONS, SUBMODULE_SETUPS, type GroveBenchSettings } from '../shared/types.js';
 import { effectiveCompactTimeoutSeconds } from '../shared/compact-timeout.js';
 import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-state.js';
 import { readJsonFile, writeFileAtomicSync } from './json-file.js';
@@ -65,6 +65,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   defaultActivityView: 'summary',
   spellcheck: true,
   steerOnEnter: false,
+  closeWindow: 'quit',
 
   // Notifications
   notifyOnTurnComplete: true,
@@ -283,6 +284,7 @@ const settingsSchema = z.object({
   defaultActivityView: z.enum(['detailed', 'summary', 'focus']).catch(DEFAULT_SETTINGS.defaultActivityView),
   spellcheck: z.boolean().catch(DEFAULT_SETTINGS.spellcheck),
   steerOnEnter: z.boolean().catch(DEFAULT_SETTINGS.steerOnEnter),
+  closeWindow: z.enum(CLOSE_WINDOW_ACTIONS).catch(DEFAULT_SETTINGS.closeWindow),
 
   notifyOnTurnComplete: z.boolean().catch(DEFAULT_SETTINGS.notifyOnTurnComplete),
   notifyOnPermission: z.boolean().catch(DEFAULT_SETTINGS.notifyOnPermission),
