@@ -265,6 +265,10 @@ describe('App unread flag', () => {
       settingsStore.current = before;
       settingsStore.draft = draftBefore;
       mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(before)));
+      // The app's own load may still be on its way with the badge off: this
+      // one lands after it, so the next test (in a shuffled run) starts with
+      // the badge on again.
+      await settingsStore.load();
     }
   });
 
