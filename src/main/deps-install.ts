@@ -102,7 +102,7 @@ export async function installDependencies(cwd: string, manager: PackageManager, 
  * and exits 1 ("is not recognized"): the agent host reports that as ENOENT
  * (createSpawnRunner).
  */
-export function finished(proc: HostedProcess, command: string): Promise<void> {
+function finished(proc: HostedProcess, command: string): Promise<void> {
   let stderr = '';
   proc.stderr.on('data', (chunk: string) => { stderr += chunk; });
   return new Promise((resolve, reject) => {

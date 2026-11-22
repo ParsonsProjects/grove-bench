@@ -2184,7 +2184,8 @@ export interface GroveBenchSettings {
   autoInstallDeps: boolean;
   /** Check out a project's submodules in its new worktrees, which `git
    *  worktree add` leaves empty (worktree-submodules.ts): every level, the
-   *  top level only, or not at all. Default 'all'. */
+   *  top level only, or not at all. Default 'off': checkpoints and rewind
+   *  don't cover the files inside a submodule yet. */
   submoduleSetup: SubmoduleSetup;
   /** Folder new worktrees go in, a full path (shared/worktree-folder.ts).
    *  Empty = the app's data folder. Existing worktrees stay where they are. */

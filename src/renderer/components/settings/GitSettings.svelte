@@ -81,16 +81,16 @@
   <SettingRow
     setting="submodules"
     label="Submodules in new worktrees"
-    description="A new worktree's submodules start as empty folders. Grove checks them out for projects that have them, before installing dependencies. Each worktree fetches its own copy, which can take a while for large ones."
+    description="A new worktree's submodules start as empty folders. Grove can check them out for projects that have them, before installing dependencies. Each worktree fetches its own copy, which can take a while for large ones. Rewind doesn't undo changes inside a submodule yet, so this is off by default."
   >
     <Segmented.Root
-      bind:value={() => settingsStore.draft.submoduleSetup ?? 'all', (v) => { settingsStore.draft.submoduleSetup = v as SubmoduleSetup; }}
+      bind:value={() => settingsStore.draft.submoduleSetup ?? 'off', (v) => { settingsStore.draft.submoduleSetup = v as SubmoduleSetup; }}
       class="self-start"
       aria-label="Submodules in new worktrees"
     >
       <Segmented.Item value="all" title="Submodules, and the submodules inside them">All levels</Segmented.Item>
       <Segmented.Item value="top" title="Only the project's own submodules">Top level only</Segmented.Item>
-      <Segmented.Item value="off" title="Leave them empty; run git submodule update --init in the Terminal tab when you need them">Off</Segmented.Item>
+      <Segmented.Item value="off" title="Leave them empty (the default); check them out in the Terminal tab when you need them">Off</Segmented.Item>
     </Segmented.Root>
   </SettingRow>
 </SettingsGroup>

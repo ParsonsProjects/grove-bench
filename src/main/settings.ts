@@ -37,7 +37,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
 
   // Worktree
   autoInstallDeps: false,
-  submoduleSetup: 'all',
+  submoduleSetup: 'off',
   worktreeFolder: '', // empty = the app's data folder
 
   // Preview
