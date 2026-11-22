@@ -943,6 +943,30 @@ describe('AgentSessionManager event processing', () => {
     }
   });
 
+  it('marks a turn the last run left unfinished as cut off, as its agent starts again', async () => {
+    const line = (e: object) => `${JSON.stringify(e)}\n`;
+    const log = line({ type: 'user_message', text: 'run the tests', uuid: 'p1', at: 1 }) + line({ type: 'assistant_text', text: 'Running them', uuid: 'a1' });
+    const isLog = (p: unknown) => String(p).endsWith('test-resume-crash.jsonl');
+    const missing = () => { throw new Error('ENOENT'); };
+    vi.mocked(fs.statSync).mockImplementation(((p: fs.PathLike) => isLog(p) ? { mtimeMs: 1, size: log.length } : missing()) as typeof fs.statSync);
+    vi.mocked(fs.readFileSync).mockImplementation((p: fs.PathOrFileDescriptor) => isLog(p) ? log : missing());
+    try {
+      await sessionManager.createSession({
+        id: 'test-resume-crash', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+      });
+
+      const history = sessionManager.getEventHistory('test-resume-crash');
+      const at = history.findIndex((e) => e.type === 'turn_cut_off');
+      expect(history[at]).toEqual({ type: 'turn_cut_off', reason: 'unknown' });
+      expect(history[at + 1]).toEqual({ type: 'process_exit' });
+      expect(sessionManager.turnState('test-resume-crash').midTurn).toBe(false);
+      await sessionManager.destroySession('test-resume-crash');
+    } finally {
+      vi.mocked(fs.statSync).mockImplementation(missing);
+      vi.mocked(fs.readFileSync).mockImplementation(missing);
+    }
+  });
+
   it('starts the history with the setup steps already shown, without sending them again', async () => {
     const win = makeMockWindow();
     const setup = [{ type: 'status' as const, message: 'Creating worktree…' }, { type: 'status' as const, message: 'Starting agent…' }];
@@ -2840,11 +2864,14 @@ describe('AgentSessionManager turn state for a loading history', () => {
 
     for (const session of [busy, sending]) {
       expect(session.eventHistory.at(-1)).toEqual({ type: 'process_exit' });
+      // Cut off by the quit, which the next start offers to continue.
+      expect(session.eventHistory.at(-2)).toEqual({ type: 'turn_cut_off', reason: 'quit', at: expect.any(Number) });
       // Before the log was flushed, which took everything.
       expect(session.logBuffer).toEqual([]);
     }
     for (const session of [done, quiet]) {
       expect(session.eventHistory.map((e) => e.type)).not.toContain('process_exit');
+      expect(session.eventHistory.map((e) => e.type)).not.toContain('turn_cut_off');
     }
 
     // The send that was still on its way gives up, adding nothing.
@@ -2853,6 +2880,45 @@ describe('AgentSessionManager turn state for a loading history', () => {
     expect(sending.eventHistory.at(-1)).toEqual({ type: 'process_exit' });
     expect(sending.logBuffer).toEqual([]);
     expect(sending.queryHandle!.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('says why a quit cut a turn off: an update, or Windows ending the session', async () => {
+    const { session } = await startSession('test-turn-quit-update');
+    await sessionManager.sendMessage('test-turn-quit-update', 'run the tests');
+
+    await sessionManager.closeAll('update');
+
+    expect(session.eventHistory.slice(-2)).toEqual([
+      { type: 'turn_cut_off', reason: 'update', at: expect.any(Number) },
+      { type: 'process_exit' },
+    ]);
+  });
+
+  it("doesn't call a turn cut off when the user closes its thread", async () => {
+    const { session } = await startSession('test-turn-close-one');
+    await sessionManager.sendMessage('test-turn-close-one', 'run the tests');
+
+    await sessionManager.closeSession('test-turn-close-one');
+
+    expect(session.eventHistory.at(-1)).toEqual({ type: 'process_exit' });
+    expect(session.eventHistory.map((e) => e.type)).not.toContain('turn_cut_off');
+  });
+
+  it('sends Continue marked as such, and dismisses a cut-off turn once', async () => {
+    const { session } = await startSession('test-turn-continue');
+    await sessionManager.sendMessage('test-turn-continue', 'run the tests');
+    session.emit!({ type: 'turn_cut_off', reason: 'quit' });
+    session.emit!({ type: 'process_exit' });
+    session.turnHandle = null;
+
+    expect(await sessionManager.dismissCutOff('test-turn-continue')).toBe(true);
+    expect(session.eventHistory.at(-1)).toEqual({ type: 'turn_cut_off_dismissed' });
+    // Nothing left to dismiss.
+    expect(await sessionManager.dismissCutOff('test-turn-continue')).toBe(false);
+    expect(await sessionManager.dismissCutOff('no-such-thread')).toBe(false);
+
+    await sessionManager.sendMessage('test-turn-continue', 'carry on', undefined, undefined, { continued: true });
+    expect(session.eventHistory.filter((e) => e.type === 'user_message').at(-1)).toMatchObject({ text: 'carry on', continued: true });
   });
 
   it('ends the history of a turn cut short by a delete', async () => {

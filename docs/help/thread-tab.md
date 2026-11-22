@@ -72,6 +72,14 @@ An MCP server can ask you for input while the agent uses one of its tools. A blo
 ### Thinking Blocks
 Extended thinking from the agent appears as expandable sections. Click to see the agent's reasoning process.
 
+### Turns Cut Off
+If Grove Bench closes while an agent is working (you quit, it restarts to install an update, Windows shuts down or signs out, or it stops unexpectedly), that turn is cut off. When you open Grove Bench again, the thread shows an amber notice, **This turn was cut off**, saying why and when, and that the agent's last step may not have finished. Until you answer it, the thread shows as waiting for you in the sidebar, and counts in the taskbar badge and the tray menu.
+
+- **Continue** asks the agent to check where it got to and carry on. The message it sends is shown in the thread with a **continue** label. Messages you had queued go after it, one turn each.
+- **Dismiss** leaves the thread as it is. Your queued messages stay paused until you click **Resume**.
+
+Either way, the notice becomes a line in the thread saying when the turn was cut off. Sending any message answers it too. When more than one thread was cut off, or the one cut off isn't the thread that's open, a notice at the bottom right lists them, with **Continue all** and **Show them**; closing it leaves each thread's own notice in place. Nothing continues by itself.
+
 ## Copying and the Right-Click Menu
 
 Hover a code block or a table to reveal its copy icon. A table copies as cells: spreadsheets and documents paste a real table, and places that take plain text get the columns separated by tabs. For the Markdown source, Shift+click the copy icon, or right-click the table and choose **Copy table as Markdown**.

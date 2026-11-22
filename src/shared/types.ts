@@ -371,8 +371,9 @@ export type AgentEvent =
   | { type: 'activity'; activity: 'thinking' | 'tool_starting' | 'generating' | 'idle' ; toolName?: string }
   /** `at`: when it was sent (epoch ms). Older history has none. `steer`: sent
    *  into a running turn and logged where the agent read it; it has no
-   *  checkpoint of its own, so there is no rewinding to it. */
-  | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[]; files?: StoredFile[]; at?: number; steer?: true }
+   *  checkpoint of its own, so there is no rewinding to it. `continued`: sent
+   *  by Continue on a turn that was cut off (cut-off.ts). */
+  | { type: 'user_message'; text: string; uuid?: string; images?: StoredImage[]; files?: StoredFile[]; at?: number; steer?: true; continued?: true }
   /** Steers the agent never read, given back to be queued: Stop came first
    *  (`stopped`), or the agent let them go. Live only (TRANSIENT_EVENT_TYPES). */
   | { type: 'steer_returned'; steers: { uuid: string; text: string }[]; stopped?: true }
@@ -384,6 +385,13 @@ export type AgentEvent =
    *  the provider refused the credentials outright (a bad or revoked key). */
   | { type: 'error'; message: string; auth?: boolean; keyRejected?: boolean }
   | { type: 'process_exit'; exitCode?: number }
+  /** The turn under way ended because Grove Bench stopped (cut-off.ts):
+   *  written just before that turn's process_exit, by a quit (its `reason`),
+   *  or at the next start for one a crash left unfinished ('unknown'). The
+   *  thread offers to continue it until a prompt is sent or it's dismissed
+   *  (turn_cut_off_dismissed). `at`: when, if known (epoch ms). */
+  | { type: 'turn_cut_off'; reason: CutOffReason; at?: number }
+  | { type: 'turn_cut_off_dismissed' }
   // Rate limiting
   /** `extraUsage`: the plan's own limit is reached but requests go on,
    *  billed as extra usage (overage). Present only when true. */
@@ -541,6 +549,15 @@ export interface SessionPreview {
   firstPrompt: string;
   /** Most recent user/assistant text, whitespace-collapsed. */
   lastText: string;
+  /** Its last turn was cut off and nothing has answered that yet (cut-off.ts). */
+  cutOff?: CutOff;
+}
+
+/** A turn cut off when Grove Bench stopped, still waiting for Continue or
+ *  Dismiss: why, and when if known (cut-off.ts). */
+export interface CutOff {
+  reason: CutOffReason;
+  at?: number;
 }
 
 // ─── PTY / Terminal ───
@@ -1581,7 +1598,11 @@ export interface GroveBenchAPI {
   getCheckoutSharers(sessionId: string): Promise<string[]>;
 
   // Agent I/O (replaces terminal I/O)
-  sendMessage(sessionId: string, content: string, images?: ImageAttachment[], files?: FileAttachment[]): void;
+  /** `opts.continued`: Continue on a cut-off turn sends it (cut-off.ts). */
+  sendMessage(sessionId: string, content: string, images?: ImageAttachment[], files?: FileAttachment[], opts?: { continued?: boolean }): void;
+  /** Dismiss the turn a thread had cut off (cut-off.ts). False when there was
+   *  nothing to dismiss, or no thread. */
+  dismissCutOff(sessionId: string): Promise<boolean>;
   /** Send a message into the turn that is running now, for the agent to
    *  read after its current tool calls (agents with capabilities.steering).
    *  'not-running' or 'unsupported' when it didn't go: queue it instead.
@@ -2108,6 +2129,11 @@ export interface ClaudeAccountSetting {
   configDir: string;
 }
 
+/** Why a turn was cut off (turn_cut_off): Grove Bench was quit, it closed
+ *  to install an update, Windows ended the session, or nobody knows (a crash,
+ *  or the process killed: found at the next start). */
+export type CutOffReason = 'quit' | 'update' | 'windows' | 'unknown';
+
 /** What closing the window does (settings.closeWindow). */
 export type CloseWindowAction = 'quit' | 'tray';
 export const CLOSE_WINDOW_ACTIONS: readonly CloseWindowAction[] = ['quit', 'tray'];
@@ -2621,6 +2647,7 @@ export const IPC = {
   APP_RESTORE_COMPLETE: 'app:restoreComplete',
   AGENT_EVENT: 'agent:event',          // agent:event:{sessionId}
   AGENT_SEND: 'agent:send',
+  SESSION_DISMISS_CUT_OFF: 'session:dismissCutOff',
   AGENT_STEER: 'agent:steer',
   ATTACHMENT_OPEN: 'attachment:open',
   ATTACHMENT_READ: 'attachment:read',

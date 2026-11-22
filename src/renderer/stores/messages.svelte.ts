@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentSystemInfo, ControlDescriptor, FileAttachment, ImageAttachment, MadeFile, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredFile, StoredImage, ThreadTurnState } from '../../shared/types.js';
+import type { AgentEvent, AgentSystemInfo, ControlDescriptor, CutOffReason, FileAttachment, ImageAttachment, MadeFile, McpElicitationRequest, McpElicitationResponse, McpServerInfo, PermissionDecision, PermissionMode, SessionControls, StoredFile, StoredImage, ThreadTurnState } from '../../shared/types.js';
 import { CONTROL_IDS, DEFAULT_DENY_MESSAGE, subagentParent } from '../../shared/types.js';
 import { attachedFilesFromSent, type SentBlock } from '../../shared/prompt-text.js';
 import { userMessageLabel } from '../lib/message-label.js';
@@ -18,6 +18,7 @@ import { forgetQueue, loadQueues, saveQueue } from '../lib/queue-storage.js';
 import { approvalRequest, toolCallSummary } from '../lib/tool-names.js';
 import { changesFiles, toolViewOf, type ToolView } from '../../shared/tool-view.js';
 import { liveEventsMissingFrom } from '../../shared/live-events.js';
+import { CONTINUE_PROMPT } from '../../shared/cut-off.js';
 import { agentCallInput, isAgentCall, isMessageVisible, subagentOf, threadMessages, type MessageViewMode } from '../lib/message-view.js';
 import { limitName, type LimitKind } from '../../shared/limits.js';
 
@@ -95,6 +96,8 @@ export interface ChatUserMessage {
   /** Steered into a running turn, and shown where the agent read it. It has
    *  no checkpoint of its own, so it offers no rewind. */
   steer?: boolean;
+  /** Sent by Continue on a turn that was cut off (cut-off.ts). */
+  continued?: boolean;
 }
 
 export interface ChatSystemMessage {
@@ -231,7 +234,19 @@ export interface ChatFilesKeptMessage {
   copy: string;
 }
 
+/** A turn cut off when Grove Bench stopped (turn_cut_off, cut-off.ts). The
+ *  latest one offers Continue and Dismiss until a prompt or a dismissal
+ *  answers it (openCutOff); then it's a line in the thread. */
+export interface ChatCutOffMessage {
+  kind: 'cut_off';
+  id: string;
+  reason: CutOffReason;
+  at?: number;
+  dismissed?: boolean;
+}
+
 export type ChatMessage =
+  | ChatCutOffMessage
   | ChatTextMessage
   | ChatToolCallMessage
   | ChatUserMessage
@@ -287,6 +302,8 @@ export interface QueuedMessage {
   /** The uuid it was steered with, while notRead: should the agent read it
    *  after all, the message leaves the queue (steer user_message). */
   steerUuid?: string;
+  /** Continue on a cut-off turn put it first in the queue (continueCutOff). */
+  continued?: boolean;
 }
 
 /** How long a steer waits before it goes to the agent, so Take back works:
@@ -414,6 +431,17 @@ function promptAnsweredIn(events: readonly AgentEvent[], prompt: PendingPrompt):
     else if (e.type === 'result' || e.type === 'process_exit') ended = true;
   }
   return ended;
+}
+
+/** The latest cut_off in `msgs`, unless a prompt (not a steer) came after it
+ *  or it was dismissed (MessageStore.openCutOff). */
+function openCutOffIn(msgs: readonly ChatMessage[]): ChatCutOffMessage | null {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m.kind === 'user' && !m.steer) return null;
+    if (m.kind === 'cut_off') return m.dismissed ? null : m;
+  }
+  return null;
 }
 
 class MessageStore {
@@ -930,6 +958,12 @@ class MessageStore {
   setIsReady(sessionId: string, value: boolean) {
     if (this.isReady[sessionId] === value) return;
     this.isReady = { ...this.isReady, [sessionId]: value };
+    // Continue on a cut-off turn waited for the agent to come up
+    // (continueCutOff). After the current replay, if any: flushQueue never
+    // sends from one.
+    if (value && this.sideEffects && this.hasQueuedContinue(sessionId)) {
+      queueMicrotask(() => this.flushQueue(sessionId));
+    }
   }
 
   /** Whether the conversation's chat has loaded its history since it last
@@ -1559,6 +1593,51 @@ class MessageStore {
     this.steersToQueue(sessionId, back, { notRead: true, pause: event.stopped === true });
   }
 
+  /** The thread's cut-off turn still waiting for Continue or Dismiss
+   *  (cut-off.ts): its latest cut_off message, unless a prompt came after it
+   *  or it was dismissed. From the loaded messages; a thread whose history
+   *  isn't loaded has its preview's (sessionPreviews). */
+  openCutOff(sessionId: string): ChatCutOffMessage | null {
+    return openCutOffIn(this.messagesBySession[sessionId] ?? []);
+  }
+
+  /** Whether Continue has put its prompt in the queue, not sent yet. */
+  hasQueuedContinue(sessionId: string): boolean {
+    return this.getQueue(sessionId).some((m) => m.continued);
+  }
+
+  /**
+   * Continue a turn Grove Bench cut off: CONTINUE_PROMPT goes first, ahead of
+   * anything queued, which follows one turn at a time, as Resume would send
+   * it. It goes now if the agent is ready; else once it is (flushQueue after
+   * system_init), so it also works for a thread whose agent is only starting
+   * again (Continue all at launch).
+   */
+  continueCutOff(sessionId: string) {
+    if (!this.hasQueuedContinue(sessionId)) {
+      const item: QueuedMessage = { id: nextId(), displayText: CONTINUE_PROMPT, outgoing: CONTINUE_PROMPT, continued: true };
+      this.setQueue(sessionId, [item, ...this.getQueue(sessionId)]);
+    }
+    delete this.queuePausedBySession[sessionId];
+    if (this.getIsReady(sessionId)) this.flushQueue(sessionId, { resumed: true });
+  }
+
+  /** Dismiss the thread's cut-off turn: it stays as it is. Main logs it, so
+   *  it stays dismissed. */
+  dismissCutOff(sessionId: string) {
+    this.markCutOffDismissed(sessionId);
+    void window.groveBench.dismissCutOff(sessionId).catch(() => {});
+  }
+
+  /** Live, or as its event is replayed, when the notice is still in the
+   *  replay's buffer. */
+  private markCutOffDismissed(sessionId: string) {
+    const msgs = this.getMessagesForMutation(sessionId);
+    const open = openCutOffIn(msgs);
+    if (!open) return;
+    this.setMessagesForMutation(sessionId, msgs.map((m) => (m === open ? { ...open, dismissed: true } : m)));
+  }
+
   /** Lift a pause set by Stop/rewind or a usage limit and send the next
    *  queued item if idle. The user's call: it goes out even while limited. */
   resumeQueue(sessionId: string) {
@@ -1616,6 +1695,7 @@ class MessageStore {
       item.outgoing,
       item.images?.length ? item.images : undefined,
       item.files?.length ? item.files : undefined,
+      ...(item.continued ? [{ continued: true }] : []),
     );
     sessionStore.updateLastActive(sessionId);
   }
@@ -2031,20 +2111,21 @@ class MessageStore {
 
   /** Add a prompt to the display as it goes to main, with its images and
    *  other files. */
-  addSentMessage(sessionId: string, msg: Pick<QueuedMessage, 'outgoing' | 'images' | 'files'>) {
+  addSentMessage(sessionId: string, msg: Pick<QueuedMessage, 'outgoing' | 'images' | 'files' | 'continued'>) {
     this.addUserMessage(
       sessionId,
       msg.outgoing,
       msg.images?.map((img) => ({ name: img.name, dataUrl: `data:${img.mediaType};base64,${img.data}` })),
       // Shown by name until main has saved them.
       msg.files?.map((f) => ({ name: f.name, mediaType: f.mediaType, size: base64Size(f.data) })),
+      ...(msg.continued ? [{ continued: true }] : []),
     );
   }
 
   /** Add a user message to the display. `sent` is the text as sent to the
    *  agent: attached files' content blocks come off it and show as chips. */
-  addUserMessage(sessionId: string, sent: string, images?: ThreadImage[], attachments?: ThreadFile[]) {
-    this.pushMessage(sessionId, userMessage(sent, images, attachments, Date.now()));
+  addUserMessage(sessionId: string, sent: string, images?: ThreadImage[], attachments?: ThreadFile[], flags?: { continued?: boolean }) {
+    this.pushMessage(sessionId, { ...userMessage(sent, images, attachments, Date.now()), ...(flags?.continued ? { continued: true } : {}) });
     this.setIsRunning(sessionId, true);
     this.awaitingResponse[sessionId] = true;
     this.activityBySession[sessionId] = { activity: 'generating' };
@@ -2158,6 +2239,16 @@ class MessageStore {
           id: nextId(),
           thinking: event.thinking,
         });
+        break;
+
+      case 'turn_cut_off':
+        // Its process_exit follows, and ends the turn.
+        this.flushStreamingText(sessionId);
+        this.pushMessage(sessionId, { kind: 'cut_off', id: nextId(), reason: event.reason, ...(event.at !== undefined ? { at: event.at } : {}) });
+        break;
+
+      case 'turn_cut_off_dismissed':
+        this.markCutOffDismissed(sessionId);
         break;
 
       case 'files_kept':
@@ -2904,7 +2995,7 @@ class MessageStore {
     }
     // Replayed from history: the event holds the text as sent (file content
     // blocks first), so rebuild what the chat showed when it was sent.
-    this.pushMessage(sessionId, { ...userMessage(event.text, event.images, event.files, event.at), uuid: event.uuid });
+    this.pushMessage(sessionId, { ...userMessage(event.text, event.images, event.files, event.at), uuid: event.uuid, ...(event.continued ? { continued: true } : {}) });
     // Schedule checkpoint list refresh so the Checkpoints tab updates
     if (event.uuid && this.sideEffects) {
       checkpointStore.scheduleRefresh(sessionId);

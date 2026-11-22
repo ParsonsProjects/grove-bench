@@ -15,6 +15,7 @@ import { usageStore } from './usage.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import type { AgentEvent } from '../../shared/types.js';
 import { CONTROL_IDS } from '../../shared/types.js';
+import { CONTINUE_PROMPT } from '../../shared/cut-off.js';
 
 const SID = 'test-session';
 
@@ -3874,5 +3875,66 @@ describe('ingestEvent — tool_progress summary', () => {
     messageStore.ingestEvent(SID, { type: 'tool_progress', toolName: 'Bash', toolUseId: 'p3', elapsedSeconds: 2 });
 
     expect(messageStore.getActivity(SID)).toMatchObject({ toolSummary: 'npm run build', elapsedSeconds: 2 });
+  });
+});
+
+describe('turns cut off when Grove Bench stopped', () => {
+  const prompt: AgentEvent = { type: 'user_message', text: 'Run the tests', uuid: 'p1' };
+  const cutOff: AgentEvent = { type: 'turn_cut_off', reason: 'update', at: 1_000 };
+  const sent = () => mockGroveBench.sendMessage.mock.calls.map((c: unknown[]) => [c[1], c[4]]);
+
+  /** The thread as it comes back: its history replayed, the agent up. */
+  function reopened(...events: AgentEvent[]) {
+    messageStore.replayEvents(SID, [prompt, cutOff, { type: 'process_exit' }, ...events]);
+    messageStore.setIsReady(SID, true);
+  }
+
+  it('shows the cut-off turn, open until a prompt or a dismissal answers it', () => {
+    reopened();
+    expect(messageStore.openCutOff(SID)).toMatchObject({ kind: 'cut_off', reason: 'update', at: 1_000 });
+    expect(messageStore.getIsRunning(SID)).toBe(false);
+
+    messageStore.replayEvents(SID, [prompt, cutOff, { type: 'process_exit' }, { type: 'user_message', text: 'carry on', continued: true }]);
+    expect(messageStore.openCutOff(SID)).toBeNull();
+    expect(messageStore.getMessages(SID).at(-1)).toMatchObject({ kind: 'user', continued: true });
+
+    reopened({ type: 'turn_cut_off_dismissed' });
+    expect(messageStore.openCutOff(SID)).toBeNull();
+  });
+
+  it('Continue sends its prompt first, marked, and the queue after it', async () => {
+    reopened();
+    messageStore.queuedBySession = { [SID]: [{ id: 'q1', displayText: 'Then the changelog', outgoing: 'Then the changelog' }] };
+    messageStore.queuePausedBySession = { [SID]: true };
+
+    messageStore.continueCutOff(SID);
+
+    expect(sent()).toEqual([[CONTINUE_PROMPT, { continued: true }]]);
+    expect(messageStore.openCutOff(SID)).toBeNull();
+    expect(messageStore.getMessages(SID).at(-1)).toMatchObject({ kind: 'user', continued: true });
+    expect(messageStore.isQueuePaused(SID)).toBe(false);
+    expect(messageStore.getQueue(SID).map((m) => m.id)).toEqual(['q1']);
+  });
+
+  it("Continue on a thread whose history isn't loaded yet (Continue all) goes once it is, after it", async () => {
+    messageStore.continueCutOff(SID);
+    messageStore.continueCutOff(SID);
+    expect(sent()).toEqual([]);
+    expect(messageStore.getQueue(SID).filter((m) => m.continued)).toHaveLength(1);
+    expect(messageStore.hasQueuedContinue(SID)).toBe(true);
+
+    // The thread's pane loads its history as its agent starts again.
+    messageStore.replayEvents(SID, [prompt, cutOff, { type: 'process_exit' }]);
+    await Promise.resolve();
+    expect(sent()).toEqual([[CONTINUE_PROMPT, { continued: true }]]);
+    expect(messageStore.getMessages(SID).map((m) => m.kind)).toEqual(['user', 'cut_off', 'user']);
+    expect(messageStore.openCutOff(SID)).toBeNull();
+  });
+
+  it('Dismiss tells main, and the notice goes at once', () => {
+    reopened();
+    messageStore.dismissCutOff(SID);
+    expect(messageStore.openCutOff(SID)).toBeNull();
+    expect(mockGroveBench.dismissCutOff).toHaveBeenCalledWith(SID);
   });
 });

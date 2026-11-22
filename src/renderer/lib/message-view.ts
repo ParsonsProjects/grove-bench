@@ -125,7 +125,7 @@ export function isMessageVisible(msg: ChatMessage, mode: MessageViewMode): boole
       // (cost, time) is noise here. One that ended with errors stays.
       return msg.isError;
     default:
-      // user, text, error, git_identity_missing, files_kept. Every assistant text block is kept: agents
+      // user, text, error, git_identity_missing, files_kept, cut_off. Every assistant text block is kept: agents
       // routinely split one answer across several blocks (findings, then next
       // steps), so keeping only the last would hide the part that matters.
       // The notes written while working fold into one line instead
@@ -209,5 +209,5 @@ export function foldNarration(visible: ChatMessage[], notes: Set<string>): Threa
  * too (OutputPanel).
  */
 export function hasAgentReply(visible: ChatMessage[]): boolean {
-  return visible.some((m) => m.kind !== 'user' && m.kind !== 'system' && m.kind !== 'git_identity_missing' && m.kind !== 'files_kept');
+  return visible.some((m) => m.kind !== 'user' && m.kind !== 'system' && m.kind !== 'git_identity_missing' && m.kind !== 'files_kept' && m.kind !== 'cut_off');
 }

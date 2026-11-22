@@ -72,7 +72,9 @@ const api: GroveBenchAPI = {
     content: string,
     images?: import('../shared/types.js').ImageAttachment[],
     files?: import('../shared/types.js').FileAttachment[],
-  ) => ipcRenderer.send(IPC.AGENT_SEND, sessionId, content, images, files),
+    opts?: { continued?: boolean },
+  ) => ipcRenderer.send(IPC.AGENT_SEND, sessionId, content, images, files, opts),
+  dismissCutOff: (sessionId: string) => ipcRenderer.invoke(IPC.SESSION_DISMISS_CUT_OFF, sessionId) as Promise<boolean>,
   /** Send a message into the turn that is running now (Claude Code). Says
    *  'not-running' or 'unsupported' when it didn't go, to queue it instead. */
   steerMessage: (sessionId: string, content: string, uuid: string): Promise<'steered' | 'not-running' | 'unsupported'> =>
