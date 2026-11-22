@@ -169,18 +169,18 @@ describe('shipTrack next', () => {
 
   it('calls for conflicts and a branch behind its base, but only waits on a draft, running checks or a review', () => {
     expect(next({ pr: pr({ checks: green, mergeState: 'dirty', baseRefName: 'main' }) })).toEqual({ next: 'act: Conflicts with main [open-pr]', marked: true });
-    expect(next({ pr: pr({ checks: green, mergeState: 'behind', baseRefName: 'main' }) })).toEqual({ next: 'act: Behind main [open-pr]', marked: true });
-    expect(next({ pr: pr({ checks: green, isDraft: true, mergeState: 'draft' }) })).toEqual({ next: 'wait: Draft PR [open-pr]', marked: false });
-    expect(next({ pr: pr({ checks: running }) })).toEqual({ next: 'wait: Checks running', marked: false });
+    expect(next({ pr: pr({ checks: green, mergeState: 'behind', baseRefName: 'main' }) })).toEqual({ next: 'act: Behind main [update-branch]', marked: true });
+    expect(next({ pr: pr({ checks: green, isDraft: true, mergeState: 'draft' }) })).toEqual({ next: 'wait: Draft PR [mark-ready]', marked: false });
+    expect(next({ pr: pr({ checks: running }) })).toEqual({ next: 'wait: Checks running [auto-merge]', marked: false });
     expect(track({ pr: pr({ checks: green, reviewDecision: 'REVIEW_REQUIRED', requestedReviewers: ['bob', 'api-team'] }) }).next)
-      .toMatchObject({ headline: 'Waiting for a review', detail: 'Asked of bob, api-team.', tone: 'wait' });
+      .toMatchObject({ headline: 'Waiting for a review', detail: 'It needs an approving review to merge into the base branch. Asked of bob, api-team.', action: 'auto-merge', tone: 'wait', skips: ['An approving review (it has none yet)'] });
   });
 
   it('marks a PR GitHub says is ready, unless auto-merge will merge it', () => {
-    expect(next({ pr: pr({ checks: green, reviewDecision: 'APPROVED', mergeState: 'clean' }) })).toEqual({ next: 'done: Ready to merge [merge-on-github]', marked: true });
-    expect(next({ pr: pr({ checks: green, mergeState: 'clean', autoMerge: true }) })).toEqual({ next: 'wait: Merges by itself', marked: false });
+    expect(next({ pr: pr({ checks: green, reviewDecision: 'APPROVED', mergeState: 'clean' }) })).toEqual({ next: 'done: Ready to merge [merge]', marked: true });
+    expect(next({ pr: pr({ checks: green, mergeState: 'clean', autoMerge: true }) })).toEqual({ next: 'wait: Auto-merge is on [disable-auto-merge]', marked: false });
     // Ready, but someone else's to merge: no mark.
-    expect(next({ pr: pr({ checks: green, mergeState: 'clean', viewerIsAuthor: false }) })).toEqual({ next: 'done: Ready to merge [merge-on-github]', marked: false });
+    expect(next({ pr: pr({ checks: green, mergeState: 'clean', viewerIsAuthor: false }) })).toEqual({ next: 'done: Ready to merge [merge]', marked: false });
   });
 
   it('colours the merge step, and the lozenge, by GitHub\'s verdict', () => {
@@ -193,10 +193,10 @@ describe('shipTrack next', () => {
   });
 
   it('waits on a rule or on GitHub\'s verdict, and finishes on a merged PR', () => {
-    expect(next({ pr: pr({ checks: green, mergeState: 'blocked' }) })).toEqual({ next: 'wait: Blocked [open-pr]', marked: false });
+    expect(next({ pr: pr({ checks: green, mergeState: 'blocked' }) })).toEqual({ next: 'wait: Blocked [auto-merge]', marked: false });
     expect(next({ pr: pr({ checks: green }) })).toEqual({ next: 'wait: Waiting for GitHub [open-pr]', marked: false });
-    expect(next({ pr: pr({ state: 'MERGED' }) })).toEqual({ next: 'done: #42 merged', marked: false });
-    expect(next({ pr: pr({ state: 'MERGED' }), canCreatePr: true })).toEqual({ next: 'done: #42 merged [create-pr]', marked: false });
+    expect(next({ pr: pr({ state: 'MERGED' }) })).toEqual({ next: 'done: Merged into its base [tidy]', marked: false });
+    expect(next({ pr: pr({ state: 'MERGED', baseRefName: 'main' }), canCreatePr: true })).toEqual({ next: 'done: Merged into main [tidy]', marked: false });
     expect(next({ pr: pr({ state: 'CLOSED' }), canCreatePr: true })).toEqual({ next: 'wait: #42 closed without merging [create-pr]', marked: false });
   });
 });

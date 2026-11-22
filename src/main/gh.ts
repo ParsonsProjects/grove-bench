@@ -778,13 +778,13 @@ export async function prRerunFailed(cwd: string, repo: string, runId: string): P
 }
 
 /** For a call the user asked for, when GitHub's rate limit stopped it. */
-const GH_API_LIMIT_MESSAGE = 'GitHub\'s API rate limit is reached for this gh account. Try again in a few minutes.';
+export const GH_API_LIMIT_MESSAGE = 'GitHub\'s API rate limit is reached for this gh account. Try again in a few minutes.';
 
 /** GitHub's reason for a failed call, without gh's wrapping: "failed to
  *  rerun: HTTP 403: Must have admin rights to Repository. (https://...)"
  *  reads "HTTP 403: Must have admin rights to Repository.", and "gh: Not
  *  Found (HTTP 404)" reads "Not Found (HTTP 404)". */
-function ghReason(e: unknown): string {
+export function ghReason(e: unknown): string {
   return ghApiErrorMessage(e).replace(/^gh: /, '').replace(/^failed to [^:]*: /, '').replace(/\s*\(https?:\/\/[^)]*\)\s*$/, '');
 }
 

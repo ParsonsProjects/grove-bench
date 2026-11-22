@@ -21,7 +21,7 @@
   import { threadWorking } from '../lib/thread-working.js';
   import { messageStore } from '../stores/messages.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
-  import { prStore } from '../stores/pr.svelte.js';
+  import { prStore, prActionError, updateBranchNote } from '../stores/pr.svelte.js';
   import { linkedStore } from '../stores/linked.svelte.js';
   import { buildCreatePrPrompt } from '../lib/pr-prompt.js';
   import { resolveBaseBranch } from '../lib/base-branch.js';
@@ -35,6 +35,8 @@
   import StatusBarPopover from './StatusBarPopover.svelte';
   import StatusBarSteps from './StatusBarSteps.svelte';
   import ShipIcon from './ShipIcon.svelte';
+  import DropdownMenu, { type DropdownItem } from './DropdownMenu.svelte';
+  import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -175,6 +177,60 @@
   // ── Creating a PR ──
   let createPrOpen = $state(false);
 
+  // ── The ⋯ menu: the PR actions that aren't the next step (pr-actions.ts) ──
+
+  $effect(() => {
+    if (shipOpen && prInfo) void prStore.loadActionOptions(sessionId);
+  });
+  let prOptions = $derived(prStore.getActionOptions(sessionId));
+
+  /** The ⋯ menu's action under way, and what the last one came to. Shown
+   *  under the popup's header, which stays open to say it. */
+  let menuBusy = $state<string | null>(null);
+  let menuNote = $state<string | null>(null);
+  let menuError = $state<string | null>(null);
+  $effect(() => {
+    if (shipOpen) return;
+    menuNote = null;
+    menuError = null;
+  });
+
+  async function prAction(label: string, run: () => Promise<string | null | undefined | void>) {
+    if (menuBusy) return;
+    menuBusy = label;
+    menuNote = null;
+    menuError = null;
+    try {
+      menuNote = (await run()) ?? null;
+    } catch (e) {
+      menuError = prActionError(e, label);
+    } finally {
+      menuBusy = null;
+    }
+  }
+
+  let prMenuItems = $derived.by((): DropdownItem[] => {
+    if (!prInfo) return [];
+    const open = prInfo.state === 'OPEN';
+    const method = prStore.mergeMethod(sessionId, prOptions?.methods);
+    const items: DropdownItem[] = [];
+    if (open && !prInfo.isDraft) items.push({ label: 'Mark as draft', detail: 'Stops it being merged for now', onclick: () => void prAction('Marking as draft', () => prStore.setDraft(sessionId, true)) });
+    if (open && prInfo.isDraft) items.push({ label: 'Mark ready for review', onclick: () => void prAction('Marking ready', () => prStore.setDraft(sessionId, false)) });
+    if (open && !prInfo.autoMerge && prOptions?.canEnableAutoMerge) {
+      items.push({ label: 'Turn on auto-merge', detail: `Merges once nothing stops it (${method === 'merge' ? 'merge commit' : method})`, onclick: () => void prAction('Turning on auto-merge', () => prStore.setAutoMerge(sessionId, true, method)) });
+    }
+    if (open && prInfo.autoMerge && prOptions?.canDisableAutoMerge !== false) items.push({ label: 'Turn off auto-merge', onclick: () => void prAction('Turning off auto-merge', () => prStore.setAutoMerge(sessionId, false)) });
+    if (open && prOptions?.canUpdateBranch) {
+      items.push({ label: 'Update branch', detail: `Merges ${prInfo.baseRefName ?? 'the base branch'} into it on GitHub`, onclick: () => void prAction('Updating branch', async () => updateBranchNote(await prStore.updateBranch(sessionId, false))) });
+    }
+    if (prInfo.state === 'MERGED' && prOptions?.canDeleteBranch && prOptions.stackedPrs === 0 && !prStore.branchDeleted(sessionId)) {
+      items.push({ label: 'Delete branch on GitHub', detail: 'The thread keeps its own copy', onclick: () => void prAction('Deleting branch', async () => (await prStore.deletePrBranch(sessionId)).note) });
+    }
+    if (prInfo.state === 'CLOSED') items.push({ label: 'Reopen PR', onclick: () => void prAction('Reopening', () => prStore.setOpen(sessionId, true)) });
+    if (open) items.push({ label: 'Close PR', detail: 'Without merging. You can reopen it', tone: 'destructive', separator: items.length > 0, onclick: () => void prAction('Closing', () => prStore.setOpen(sessionId, false)) });
+    return items;
+  });
+
   /** Set while the PR turn is being prepared (the base branch lookup runs
    *  git), so a double click can't send it twice. */
   let preparingPrTurn = $state(false);
@@ -235,10 +291,15 @@
             <span class="font-medium text-foreground shrink-0">#{prInfo.number}</span>
             {#if prInfo.title}<span class="truncate text-foreground" title={prInfo.title}>{prInfo.title}</span>{/if}
             <Badge tone={prBadge.tone} class="shrink-0">{prBadge.label}</Badge>
+            {#if prMenuItems.length > 0}
+              <span class="ml-auto shrink-0">
+                <DropdownMenu label="More PR actions" items={prMenuItems} align="right" disabled={!!menuBusy}><EllipsisIcon /></DropdownMenu>
+              </span>
+            {/if}
             <Button
               variant="external"
               size="icon-2xs"
-              class="ml-auto shrink-0"
+              class="{prMenuItems.length > 0 ? '' : 'ml-auto'} shrink-0"
               onclick={() => window.groveBench.openExternal(prInfo.url)}
               title="Open #{prInfo.number} on GitHub"
               aria-label="Open #{prInfo.number} on GitHub"
@@ -246,6 +307,13 @@
               <ExternalLink />
             </Button>
           </div>
+        {/if}
+        {#if menuBusy}
+          <p class="text-caption text-muted-foreground" role="status">{menuBusy}…</p>
+        {:else if menuError}
+          <p class="text-caption text-red-400" role="alert">{menuError}</p>
+        {:else if menuNote}
+          <p class="text-caption text-muted-foreground" role="status">{menuNote}</p>
         {/if}
         <div class="flex items-center gap-1 min-w-0 mb-3 text-muted-foreground">
           {#if repoName}

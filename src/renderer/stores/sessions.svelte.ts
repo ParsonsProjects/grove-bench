@@ -53,6 +53,11 @@ class SessionStore {
    *  global shortcut in App and the sidebar's search field. */
   finderOpen = $state(false);
 
+  /** A thread to ask about deleting, from outside the sidebar (the branch
+   *  popup, after its PR merged): the sidebar opens its Delete Thread
+   *  confirmation, which checks for unsaved work, and clears this. */
+  destroyRequest = $state<string | null>(null);
+
   /** Sessions that completed a turn while not focused — drives the "needs you"
    *  flash on their sidebar row until the user focuses them. Read it through
    *  isUnread, which leaves closed threads out. */

@@ -752,6 +752,15 @@
   /** Bumped per request so a slow check from an earlier open is dropped. */
   let destroyGeneration = 0;
 
+  // Asked from outside the sidebar (the branch popup, once its PR merged):
+  // the same confirmation, with its checks for unsaved work.
+  $effect(() => {
+    const id = store.destroyRequest;
+    if (!id) return;
+    store.destroyRequest = null;
+    untrack(() => requestDestroy(id));
+  });
+
   function requestDestroy(id: string) {
     const generation = ++destroyGeneration;
     confirmDestroyId = id;

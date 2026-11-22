@@ -17,7 +17,7 @@ import { gitStatusStore } from '../stores/gitStatus.svelte.js';
 import { markdownPreviewStore } from '../stores/markdownPreview.svelte.js';
 import { usageReportStore } from '../stores/usageReport.svelte.js';
 import { CONTROL_IDS } from '../../shared/types.js';
-import type { PrInfo, ThreadUsage } from '../../shared/types.js';
+import type { PrActionOptions, PrInfo, ThreadUsage } from '../../shared/types.js';
 
 const ACTIVE = 's-active';
 const HIDDEN = 's-hidden';
@@ -541,6 +541,13 @@ describe('StatusBar context actions', () => {
 });
 
 describe('StatusBar PR', () => {
+  const PR_URL = 'https://github.com/o/r/pull/42';
+  /** What setup.ts's getPrActionOptions answers, to change one field of. */
+  const OPTIONS: PrActionOptions = {
+    methods: ['squash', 'merge', 'rebase'], deleteBranchOnMerge: false, autoMergeAllowed: true, mergeQueue: false, canMergeAsAdmin: false,
+    canEnableAutoMerge: true, canDisableAutoMerge: true, canUpdateBranch: false, canDeleteBranch: true, stackedPrs: 0,
+  };
+
   function pr(over: Partial<PrInfo> = {}): PrInfo {
     return {
       number: 42,
@@ -578,6 +585,11 @@ describe('StatusBar PR', () => {
     vi.mocked(window.groveBench.getPrs).mockReset();
     vi.mocked(window.groveBench.getGitSyncStatus).mockReset();
     vi.mocked(window.groveBench.push).mockReset();
+    // Back to setup.ts's own answers, so no test sees another's calls.
+    vi.mocked(window.groveBench.mergePr).mockReset();
+    vi.mocked(window.groveBench.getPrActionOptions).mockReset();
+    vi.mocked(window.groveBench.setPrOpen).mockReset();
+    vi.mocked(window.groveBench.updatePrBranch).mockReset();
     prStore.clear(ACTIVE);
     store.prerequisites = null;
     messageStore.isRunning = {};
@@ -655,7 +667,7 @@ describe('StatusBar PR', () => {
     expect(within(popup).getByText('Fix token refresh')).toBeInTheDocument();
     expect(within(popup).getByText('feat-a')).toBeInTheDocument();
     expect(within(popup).getByText('→ main')).toBeInTheDocument();
-    expect(words(nextNotice())).toBe('Waiting for a review Asked of bob.');
+    expect(words(nextNotice())).toBe('Waiting for a review It needs an approving review to merge into main. Asked of bob. Turn on auto-merge (squash)');
     const steps = within(within(popup).getByRole('list', { name: 'Steps to merged' })).getAllByRole('listitem');
     expect(steps.map(words)).toEqual([
       // No upstream read yet, but a PR stands on the pushed branch.
@@ -800,15 +812,125 @@ describe('StatusBar PR', () => {
     expect(screen.getAllByRole('button', { name: 'Address with agent' })).toHaveLength(1);
   });
 
-  it('says what GitHub says about merging, and offers the merge there once it is ready', async () => {
-    const open = vi.mocked(window.groveBench.openExternal);
-    await renderWithPrs(pr({ reviewDecision: 'APPROVED', mergeState: 'clean' }));
+  it('says what GitHub says about merging, and merges it here once it is ready, after asking', async () => {
+    await renderWithPrs(pr({ reviewDecision: 'APPROVED', mergeState: 'clean', headSha: 'abc1234' }));
     await waitFor(() => expect(lozenge().querySelector('.bg-primary')).not.toBeNull());
     await openBranch();
     expect(within(nextNotice()).getByText('Ready to merge')).toBeInTheDocument();
     expect(within(row('merge')).getByText('Nothing stops the merge')).toBeInTheDocument();
-    await fireEvent.click(within(nextNotice()).getByRole('button', { name: 'Merge on GitHub' }));
-    expect(open).toHaveBeenCalledWith('https://github.com/o/r/pull/42');
+    await waitFor(() => expect(within(nextNotice()).getByRole('checkbox', { name: 'Delete the branch after merging' })).toBeChecked());
+
+    await fireEvent.click(within(nextNotice()).getByRole('button', { name: 'Squash and merge' }));
+    expect(within(nextNotice()).getByText('Squash and merge #42 into main?')).toBeInTheDocument();
+    expect(window.groveBench.mergePr).not.toHaveBeenCalled();
+    await fireEvent.click(within(nextNotice()).getByRole('button', { name: 'Squash and merge' }));
+    await waitFor(() => expect(window.groveBench.mergePr).toHaveBeenCalledWith(ACTIVE, { number: 42, url: PR_URL, method: 'squash', headSha: 'abc1234', deleteBranch: true }, 'feat-a'));
+  });
+
+  it('closes the confirm when new commits arrive while it is open, rather than merge them unseen', async () => {
+    await renderWithPrs(pr({ reviewDecision: 'APPROVED', mergeState: 'clean', headSha: 'abc1234' }));
+    await openBranch();
+    await fireEvent.click(await within(nextNotice()).findByRole('button', { name: 'Squash and merge' }));
+    expect(within(nextNotice()).getByText('Squash and merge #42 into main?')).toBeInTheDocument();
+
+    vi.mocked(window.groveBench.getPrs).mockImplementation(async (id: string) => (id === ACTIVE ? [pr({ reviewDecision: 'APPROVED', mergeState: 'clean', headSha: 'def5678' })] : []));
+    await prStore.refresh(ACTIVE, true);
+
+    await waitFor(() => expect(within(nextNotice()).getByText('Ready to merge')).toBeInTheDocument());
+    expect(within(nextNotice()).getByRole('status')).toHaveTextContent('New commits were pushed while this was open');
+    expect(window.groveBench.mergePr).not.toHaveBeenCalled();
+  });
+
+  it('adds the PR to the merge queue where the base branch has one, and keeps the branch for it', async () => {
+    vi.mocked(window.groveBench.getPrActionOptions).mockResolvedValue({ ...OPTIONS, mergeQueue: true });
+    vi.mocked(window.groveBench.mergePr).mockResolvedValue({ note: 'In the merge queue: GitHub merges it when its turn comes.' });
+    await renderWithPrs(pr({ reviewDecision: 'APPROVED', mergeState: 'clean', headSha: 'abc1234' }));
+    await openBranch();
+    await fireEvent.click(await within(nextNotice()).findByRole('button', { name: 'Add to merge queue' }));
+    expect(within(nextNotice()).queryByRole('button', { name: 'Choose how to merge' })).toBeNull();
+    expect(within(nextNotice()).queryByRole('checkbox')).toBeNull();
+    expect(within(nextNotice()).getByText("Add #42 to main's merge queue?")).toBeInTheDocument();
+
+    await fireEvent.click(within(nextNotice()).getByRole('button', { name: 'Add to merge queue' }));
+    await waitFor(() => expect(window.groveBench.mergePr).toHaveBeenCalledWith(ACTIVE, { number: 42, url: PR_URL, method: 'squash', headSha: 'abc1234' }, 'feat-a'));
+    expect(await within(nextNotice()).findByRole('status')).toHaveTextContent('In the merge queue');
+  });
+
+  it("shows GitHub's reason when it refuses, without Electron's wrapper", async () => {
+    vi.mocked(window.groveBench.mergePr).mockRejectedValue(new Error("Error invoking remote method 'pr:merge': Error: Head branch was modified. Review and try the merge again."));
+    await renderWithPrs(pr({ reviewDecision: 'APPROVED', mergeState: 'clean', headSha: 'abc1234' }));
+    await openBranch();
+    await fireEvent.click(await within(nextNotice()).findByRole('button', { name: 'Squash and merge' }));
+    await fireEvent.click(within(nextNotice()).getByRole('button', { name: 'Squash and merge' }));
+    expect(await within(nextNotice()).findByRole('alert')).toHaveTextContent(/^Head branch was modified/);
+  });
+
+  it("opens the PR on GitHub when the next step can't be taken here", async () => {
+    vi.mocked(window.groveBench.getPrActionOptions).mockResolvedValue({ ...OPTIONS, canUpdateBranch: false });
+    await renderWithPrs(pr({ reviewDecision: 'APPROVED', mergeState: 'behind' }));
+    await openBranch();
+    expect(await within(nextNotice()).findByRole('button', { name: 'Open on GitHub' })).toBeInTheDocument();
+    expect(within(nextNotice()).queryByRole('button', { name: 'Update branch' })).toBeNull();
+  });
+
+  it('offers Merge anyway, with a red confirm listing what it skips, to an account that may bypass the rules', async () => {
+    vi.mocked(window.groveBench.getPrActionOptions).mockResolvedValueOnce({ ...OPTIONS, methods: ['squash', 'merge'], canMergeAsAdmin: true });
+    await renderWithPrs(pr({ reviewDecision: 'REVIEW_REQUIRED', mergeState: 'blocked', headSha: 'abc1234' }));
+    await openBranch();
+    await fireEvent.click(await within(nextNotice()).findByRole('button', { name: /Merge anyway/ }));
+    expect(within(nextNotice()).getByText("Bypass main's rules and merge #42?")).toBeInTheDocument();
+    expect(within(nextNotice()).getByText('An approving review (it has none yet)')).toBeInTheDocument();
+    await fireEvent.click(within(nextNotice()).getByRole('button', { name: 'Bypass and merge' }));
+    await waitFor(() => expect(window.groveBench.mergePr).toHaveBeenCalledWith(ACTIVE, { number: 42, url: PR_URL, method: 'squash', headSha: 'abc1234', admin: true, deleteBranch: true }, 'feat-a'));
+  });
+
+  it('has the other PR actions in its ⋯ menu', async () => {
+    await renderWithPrs(pr({ reviewDecision: 'APPROVED', mergeState: 'clean' }));
+    const popup = await openBranch();
+    await fireEvent.click(within(popup).getByRole('button', { name: 'More PR actions' }));
+    const menu = within(popup).getByRole('menu', { name: 'More PR actions' });
+    expect(within(menu).getAllByRole('menuitem').map((i) => i.textContent?.trim().split('  ')[0])).toEqual(
+      expect.arrayContaining([expect.stringContaining('Mark as draft'), expect.stringContaining('Close PR')]),
+    );
+    await fireEvent.click(within(menu).getByRole('menuitem', { name: /Close PR/ }));
+    await waitFor(() => expect(window.groveBench.setPrOpen).toHaveBeenCalledWith(ACTIVE, { number: 42, url: PR_URL }, false));
+    // The popup stays, to say how it went.
+    expect(popup.isConnected).toBe(true);
+  });
+
+  it("says in the popup what the ⋯ menu's Update branch did to the thread's copy", async () => {
+    vi.mocked(window.groveBench.getPrActionOptions).mockResolvedValue({ ...OPTIONS, canUpdateBranch: true });
+    vi.mocked(window.groveBench.updatePrBranch).mockResolvedValue({ pulled: false, skipped: 'busy' });
+    await renderWithPrs(pr({ reviewDecision: 'APPROVED', mergeState: 'clean' }));
+    const popup = await openBranch();
+    await waitFor(() => expect(prStore.getActionOptions(ACTIVE)).not.toBeNull());
+    await fireEvent.click(within(popup).getByRole('button', { name: 'More PR actions' }));
+    await fireEvent.click(within(popup).getByRole('menuitem', { name: /Update branch/ }));
+    await waitFor(() => expect(within(popup).getAllByRole('status').some((el) => /An agent is working in the thread/.test(el.textContent ?? ''))).toBe(true));
+  });
+
+  it('closes a menu in the popup on Escape, and leaves the popup open', async () => {
+    await renderWithPrs(pr({ reviewDecision: 'APPROVED', mergeState: 'clean' }));
+    const popup = await openBranch();
+    const more = within(popup).getByRole('button', { name: 'More PR actions' });
+    await fireEvent.click(more);
+    expect(within(popup).getByRole('menu', { name: 'More PR actions' })).toBeInTheDocument();
+
+    const escape = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+    window.dispatchEvent(escape);
+
+    // Marked handled, so the popup leaves it alone however the listeners run.
+    expect(escape.defaultPrevented).toBe(true);
+    await waitFor(() => expect(within(popup).queryByRole('menu')).toBeNull());
+    expect(popup.isConnected).toBe(true);
+    expect(document.activeElement).toBe(more);
+  });
+
+  it("doesn't offer Merge anyway to an account that can't bypass the rules", async () => {
+    await renderWithPrs(pr({ reviewDecision: 'REVIEW_REQUIRED', mergeState: 'blocked' }));
+    await openBranch();
+    await within(nextNotice()).findByRole('button', { name: /Turn on auto-merge/ });
+    expect(within(nextNotice()).queryByRole('button', { name: /Merge anyway/ })).toBeNull();
   });
 
   it('names the PR\'s own head branch, which may not be the thread\'s', async () => {
@@ -846,7 +968,7 @@ describe('StatusBar PR', () => {
   it('waits, without the green mark, while auto-merge will merge it', async () => {
     await renderWithPrs(pr({ reviewDecision: 'APPROVED', mergeState: 'clean', autoMerge: true }));
     await openBranch();
-    expect(words(nextNotice())).toBe('Merges by itself Auto-merge is on: GitHub merges it once nothing stops it.');
+    expect(words(nextNotice())).toBe('Auto-merge is on GitHub merges it as soon as nothing stops it. Turn off');
     expect(lozenge().querySelector('.bg-primary')).toBeNull();
   });
 
@@ -929,8 +1051,8 @@ describe('StatusBar PR', () => {
     await renderWithPrs(pr({ reviewDecision: 'REVIEW_REQUIRED' }));
     const popup = await openBranch();
     // Once: in the Next notice, not again on the Review row.
-    expect(within(popup).getAllByText('main needs an approving review to merge.')).toHaveLength(1);
-    expect(within(nextNotice()).getByText('main needs an approving review to merge.')).toBeInTheDocument();
+    expect(within(popup).getAllByText('It needs an approving review to merge into main.')).toHaveLength(1);
+    expect(within(nextNotice()).getByText('It needs an approving review to merge into main.')).toBeInTheDocument();
   });
 
   it('offers no agent fixes or automation on a closed PR, and a way to start a new one', async () => {
