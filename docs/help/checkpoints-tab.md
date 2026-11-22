@@ -4,6 +4,8 @@ The Checkpoints tab (`Alt+3`) lets you track how your files changed turn by turn
 
 Checkpoints are git commits kept out of your branches, so a thread that runs without git has none: the tab only says it needs git. Rewinding from a message in the Thread tab still rewinds the messages, but files stay as they are.
 
+Checkpoints cover the thread's own project only. A thread that also works in other projects (**Also works in**) doesn't rewind their files: the rewind dialog says so.
+
 ## Checkpoint List
 
 The left panel shows a numbered list of checkpoints. Each entry includes a brief description of what the agent was about to do at that point, along with `+added`/`−deleted` line counts showing how much that turn changed. Click a checkpoint to preview it.

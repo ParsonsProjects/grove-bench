@@ -2,14 +2,18 @@ import { app, ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { isSkipped, runProcess } from './process-host.js';
 import { inBackground } from './background-work.js';
 import { IPC, isPermissionMode } from '../shared/types.js';
-import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, EventHistoryPage, ThreadUsage, OpenPrSummary, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, SkillReach, WorktreeInfo } from '../shared/types.js';
+import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, EventHistoryPage, ThreadUsage, OpenPrSummary, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, SkillReach, WorktreeInfo, LinkedCheckout } from '../shared/types.js';
+import { errorMessage } from '../shared/error-message.js';
+import { linkedProjectNotes } from './linked-projects.js';
+import { linkChangeNote } from './session-config.js';
 import { sessionManager } from './agent-session.js';
 import { todaySpend } from './session-limits.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
+import { openCutOff } from '../shared/cut-off.js';
 import { decideAutoName } from './session-auto-name.js';
 import { cleanUserGoal, generateGoal, goalInputFromEvents, type GoalInput } from './session-goal.js';
 import { launchEditor } from './editor-launch.js';
-import { worktreeManager } from './worktree-manager.js';
+import { ThreadBranchMovedError, worktreeManager } from './worktree-manager.js';
 import { apiKeyState, checkCorePrerequisites, checkGh } from './prerequisites.js';
 import { canStoreApiKey, clearApiKey, parseApiKey, saveApiKey } from './credentials.js';
 import { adapterRegistry, registerClaudeAccount } from './adapters/index.js';
@@ -28,7 +32,7 @@ import { openWorktreeFile } from './worktree-files.js';
 import { generateCommitMessage } from './commit-message.js';
 import { exportFileName, threadJson, threadMarkdown, type ThreadExportInfo } from './thread-export.js';
 import type { MemoryCompactionOptions, PreviewBounds, PreviewCommand, PreviewPageKind, PtySpawnResult } from '../shared/types.js';
-import type { BranchCommitsResult, CheckpointDiffScope, FileDiffResult, GitOperation, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, OpenWorktreeFileResult, PrCreateOpts, PrReviewSubmitResult } from '../shared/types.js';
+import type { BranchCommitsResult, CheckpointDiffScope, FileDiffResult, GitOperation, FileLinesResult, GitStatusOptions, GitStatusResult, GitStatusEntry, ImageDiffContent, OpenWorktreeFileResult, LinkedProjectStatus, PrCreateOpts, PrInfo, PrReviewSubmitResult } from '../shared/types.js';
 import { parsePrReviewSubmit, submitPrReview } from './pr-review.js';
 import { showOsNotification, showTestNotification } from './notifications.js';
 import { parseGitStatusPorcelain, parseNumstat, parseNameStatus, parseHashObjectOutput } from './git-status-parser.js';
@@ -62,6 +66,7 @@ import { closeToTray } from './close-to-tray.js';
 import { replaceMisspelling, addWordToDictionary } from './spellcheck.js';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
+import { pathExists } from './fs-utils.js';
 import * as path from 'node:path';
 import { EventEmitter } from 'node:events';
 
@@ -306,6 +311,11 @@ export function registerHandlers() {
     if (activeSessions.length > 0) {
       throw new Error('Cannot remove a project while it has active threads');
     }
+    // A thread in another project working in this one through a worktree.
+    const names = await worktreeManager.threadsLinking(repoPath);
+    if (names.length > 0) {
+      throw new Error(`${names.length === 1 ? 'A thread in another project works' : `${names.length} threads in other projects work`} in this project: ${names.join(', ')}. Delete ${names.length === 1 ? 'it' : 'them'} first.`);
+    }
 
     if (await projectKind(repoPath) === 'git') {
       const orphans = await worktreeManager.cleanupOrphans(repoPath);
@@ -344,6 +354,65 @@ export function registerHandlers() {
     }
   });
 
+  /**
+   * A linked project's new worktree's submodules, as a thread's own get
+   * them (worktree-submodules.ts): git worktree add leaves them empty.
+   * Before untracked files are copied and dependencies installed, for the
+   * same reasons. Null when done or not asked for in Settings; else what to
+   * tell the user. Throws only when `signal` aborts.
+   */
+  async function linkSubmodules(dir: string, project: string, signal: AbortSignal, onStart?: () => void): Promise<string | null> {
+    const submodules = settings.getSettings().submoduleSetup ?? 'off';
+    if (submodules === 'off' || !(await hasSubmodules(dir))) return null;
+    onStart?.();
+    const config = await readSubmoduleConfig(dir);
+    const args = submoduleArgs(submodules, config.active);
+    try {
+      await initSubmodules(dir, args, submoduleEnv(process.env, config), signal);
+      logger.info(`Submodules set up in linked worktree ${dir} (${submodules})`);
+      return null;
+    } catch (e) {
+      if (signal.aborted) throw e;
+      logger.warn(`Submodule setup failed for linked worktree ${dir}:`, e);
+      const detail = (e as Error | null)?.message || String(e);
+      return `Not all of ${project}'s submodules could be set up, so some of their folders may be empty in its worktree:\n${detail}\n\nOnce that's sorted, run this in ${dir}:\n${commandLine(args)}`;
+    }
+  }
+
+  /**
+   * The other projects a new thread asks to work in
+   * (CreateSessionOpts.linkedRepos), checked as its own branch is: each an
+   * added git project other than the thread's, where `branch` is free to
+   * check out. One that has the branch continues it; the rest get it new,
+   * from their default branch.
+   */
+  async function planLinks(repoPath: string, linkedRepos: unknown, branch: string): Promise<Array<{ repoPath: string; useExisting: boolean; baseBranch?: string }>> {
+    if (!Array.isArray(linkedRepos) || linkedRepos.length === 0) return [];
+    const key = (p: string) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+    const projects = new Set(listProjects(await worktreeManager.listRepos()).map(key));
+    const plans: Array<{ repoPath: string; useExisting: boolean; baseBranch?: string }> = [];
+    for (const raw of linkedRepos) {
+      if (typeof raw !== 'string' || !raw.trim()) continue;
+      const linkRepo = raw.trim();
+      if (key(linkRepo) === key(repoPath) || plans.some((p) => key(p.repoPath) === key(linkRepo))) continue;
+      const name = path.basename(linkRepo);
+      if (!projects.has(key(linkRepo))) throw new Error(`${name} isn't one of your projects. Add it first.`);
+      const kind = await projectKind(linkRepo);
+      if (kind === 'missing') throw new Error(`The project folder ${linkRepo} wasn't found.`);
+      if (kind === 'folder') throw new Error(`${name} isn't a git repository, so this thread can't work in it through a worktree.`);
+      const exists = await branchExistsAnywhere(linkRepo, branch);
+      if (exists) {
+        const holder = (await worktreeBranches(linkRepo).catch(() => null))?.get(branch);
+        if (holder) {
+          throw new Error(`${branch} is checked out at ${holder} in ${name}. A branch can only be checked out in one place, so pick another branch name or switch ${name} off it.`);
+        }
+      }
+      const baseBranch = exists ? undefined : await getDefaultBranch(linkRepo).catch(() => undefined);
+      plans.push({ repoPath: linkRepo, useExisting: exists, ...(baseBranch ? { baseBranch } : {}) });
+    }
+    return plans;
+  }
+
   /** SESSION_CREATE once the id is settled: the checks, then the setup (in
    *  the background for a new worktree). `deleted` fires when the thread is
    *  deleted during the checks. */
@@ -368,6 +437,10 @@ export function registerHandlers() {
       throw new Error((await gitVersion())
         ? 'This project isn\'t a git repository, so a thread can only work in the project folder itself.'
         : 'Git isn\'t installed, so a thread can only work in the project folder itself.');
+    }
+
+    if (opts.direct && Array.isArray(opts.linkedRepos) && opts.linkedRepos.length > 0) {
+      throw new Error('Working in another project needs this thread in its own worktree. Pick a new or existing branch instead of the project folder.');
     }
 
     if (opts.direct) {
@@ -462,8 +535,11 @@ export function registerHandlers() {
       }
     }
 
+    // Other projects it also works in, checked now so the draft gets the reason.
+    const links = await planLinks(opts.repoPath, opts.linkedRepos, branch);
+
     deleted.throwIfAborted();
-    logger.info(`Creating session: branch=${branch}, repo=${opts.repoPath}, useExisting=${useExisting}`);
+    logger.info(`Creating session: branch=${branch}, repo=${opts.repoPath}, useExisting=${useExisting}${links.length > 0 ? `, linked=${links.map((l) => l.repoPath).join(', ')}` : ''}`);
     perfSteps.begin(id, 'new conversation', startedAt);
     perfSteps.step(id, 'checks');
 
@@ -537,35 +613,66 @@ export function registerHandlers() {
         perfSteps.step(id, 'copy files');
 
         // Install dependencies if enabled and the project has a package.json,
-        // with the package manager the project uses
-        if (settings.getSettings().autoInstallDeps) {
+        // with the package manager the project uses. `project` names a linked
+        // project's worktree; the thread's own has none.
+        const installDeps = async (dir: string, project: string | null) => {
           let manager: PackageManager = 'npm';
+          const where = project ? ` in ${project}` : '';
           try {
-            await fs.access(path.join(worktree.path, 'package.json'));
-            if (!win.isDestroyed()) {
+            await fs.access(path.join(dir, 'package.json'));
+            if (!project && !win.isDestroyed()) {
               win.webContents.send(IPC.SESSION_STATUS, worktree.id, 'installing');
             }
 
-            manager = await detectPackageManager(worktree.path);
-            emitPrelaunch({ type: 'status', message: 'Installing dependencies…' });
-            logger.info(`Running ${manager} install in worktree ${worktree.id}`);
-            await installDependencies(worktree.path, manager, signal);
-            perfSteps.step(id, 'install dependencies');
-            logger.info(`${manager} install completed for worktree ${worktree.id}`);
+            manager = await detectPackageManager(dir);
+            emitPrelaunch({ type: 'status', message: project ? `Installing ${project}'s dependencies…` : 'Installing dependencies…' });
+            logger.info(`Running ${manager} install in ${dir}`);
+            await installDependencies(dir, manager, signal);
+            perfSteps.step(id, project ? `install ${project} dependencies` : 'install dependencies');
+            logger.info(`${manager} install completed in ${dir}`);
           } catch (e) {
             if (signal.aborted) throw e;
             if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-              perfSteps.step(id, 'install dependencies (failed)');
+              perfSteps.step(id, project ? `install ${project} dependencies (failed)` : 'install dependencies (failed)');
               const err = e as { stderr?: string; message?: string };
               const stderr = err.stderr || err.message || String(e);
-              logger.warn(`${manager} install failed for worktree ${worktree.id}:`, e);
-              emitPrelaunch({ type: 'error', message: `${manager} install failed:\n${stderr}` });
+              logger.warn(`${manager} install failed in ${dir}:`, e);
+              emitPrelaunch({ type: 'error', message: `${manager} install failed${where}:\n${stderr}` });
             } else if (manager !== 'npm') {
               // The project asks for this tool, and npm used to run in its
               // place. No package.json, or no npm at all, stays quiet as before.
-              logger.warn(`${manager} isn't installed; no dependencies installed in worktree ${worktree.id}`);
-              emitPrelaunch({ type: 'error', message: `This project uses ${manager}, which isn't installed or isn't on PATH, so the worktree's dependencies weren't installed.` });
+              logger.warn(`${manager} isn't installed; no dependencies installed in ${dir}`);
+              emitPrelaunch({ type: 'error', message: `${project ?? 'This project'} uses ${manager}, which isn't installed or isn't on PATH, so the worktree's dependencies weren't installed.` });
             }
+          }
+        };
+        const autoInstall = settings.getSettings().autoInstallDeps;
+        if (autoInstall) await installDeps(worktree.path, null);
+
+        // Linked projects' worktrees, on the same branch name. One that
+        // fails is said and left out: the thread still starts.
+        for (const plan of links) {
+          signal.throwIfAborted();
+          const project = path.basename(plan.repoPath);
+          emitPrelaunch({ type: 'status', message: `Making a worktree of ${project}…` });
+          try {
+            const link = await worktreeManager.createLink(id, { repoPath: plan.repoPath, branchName: branch, baseBranch: plan.baseBranch, useExisting: plan.useExisting });
+            perfSteps.step(id, `link ${project}`);
+            const submoduleError = await linkSubmodules(link.path, project, signal,
+              () => emitPrelaunch({ type: 'status', message: `Setting up ${project}'s submodules…` }));
+            if (submoduleError) emitPrelaunch({ type: 'error', message: submoduleError });
+            signal.throwIfAborted();
+            try {
+              const config = await worktreeManager.getRepoConfig(plan.repoPath);
+              if (config.copyFiles.length > 0) await worktreeManager.copyProjectFiles(plan.repoPath, link.path, config.copyFiles);
+            } catch (e) {
+              logger.warn(`Failed to copy untracked files to ${link.path}:`, e);
+            }
+            if (autoInstall) await installDeps(link.path, project);
+          } catch (e) {
+            if (signal.aborted) throw e;
+            logger.warn(`Could not link ${plan.repoPath} to ${id}:`, e);
+            emitPrelaunch({ type: 'error', message: `Couldn't make a worktree of ${project}, so this thread works without it: ${(e as Error | null)?.message || String(e)}` });
           }
         }
 
@@ -576,6 +683,7 @@ export function registerHandlers() {
           id: worktree.id,
           branch: worktree.branch,
           cwd: worktree.path,
+          linked: worktree.linked ?? [],
           repoPath: opts.repoPath,
           window: win,
           adapterType: opts.adapterType,
@@ -666,6 +774,7 @@ export function registerHandlers() {
         id: worktree.id,
         branch: worktree.branch,
         cwd: worktree.path,
+        linked: worktree.linked ?? [],
         repoPath,
         window: win,
         resumeSessionId: providerSessionId,
@@ -720,6 +829,96 @@ export function registerHandlers() {
   ipcMain.handle(IPC.SESSION_STOP_TASK, async (_event, id: string, taskId: string) => {
     logger.info(`Stopping background task: session=${id} task=${taskId}`);
     await sessionManager.stopTask(id, taskId);
+  });
+
+  // ─── Linking projects part way through (docs/linked-projects-plan.md) ───
+
+  /** The thread a link or unlink is for, refused when it can't take one now. */
+  async function linkableThread(sessionId: unknown, repoPath: unknown, verb: 'Link' | 'Unlink'): Promise<WorktreeInfo> {
+    if (typeof sessionId !== 'string' || typeof repoPath !== 'string' || !repoPath.trim()) throw new Error('No project given');
+    // Read from the manifest too, so a thread that isn't open still has its info.
+    const worktree = await worktreeManager.getWorktreeOrManifest(sessionId);
+    if (!worktree) throw new Error('Thread not found');
+    if (worktree.direct || worktree.noGit) {
+      throw new Error('Working in another project needs this thread in its own worktree, and this one works in the project folder.');
+    }
+    // Only an open thread can be told about the change ahead of its next
+    // message: an agent that resumes later wouldn't hear of it.
+    const live = sessionManager.getSession(sessionId);
+    if (!live || live.status === 'stopped' || live.status === 'error') throw new Error(`Open the thread first, so its agent is told. Then ${verb.toLowerCase()} the project.`);
+    // Its agent restarts to take the change, which would end the turn.
+    if (sessionManager.isMidTurn(sessionId)) throw new Error(`${verb} the project once the agent finishes this turn.`);
+    return worktree;
+  }
+
+  ipcMain.handle(IPC.SESSION_LINK_PROJECT, async (_event, sessionId: unknown, repoPath: unknown): Promise<{ link: LinkedCheckout; warning?: string }> => {
+    const worktree = await linkableThread(sessionId, repoPath, 'Link');
+    const id = sessionId as string;
+    // Said as it is, not as its branch being checked out in its own worktree.
+    const key = (p: string) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+    if (worktree.linked?.some((l) => key(l.repoPath) === key(repoPath as string))) {
+      throw new Error(`This thread already works in ${path.basename(repoPath as string)}.`);
+    }
+    // The same checks as when a thread starts with it, on its branch now.
+    // Renamed meanwhile (the name after the first reply): checked again on
+    // the new name, once.
+    let branch = worktree.branch;
+    let plan: Awaited<ReturnType<typeof planLinks>>[number] | undefined;
+    let link: LinkedCheckout | undefined;
+    for (let attempt = 0; !link; attempt++) {
+      [plan] = await planLinks(worktree.repoPath, [repoPath], branch);
+      if (!plan) throw new Error("A thread can't link its own project.");
+      try {
+        link = await worktreeManager.createLink(id, { repoPath: plan.repoPath, branchName: branch, baseBranch: plan.baseBranch, useExisting: plan.useExisting });
+      } catch (e) {
+        if (!(e instanceof ThreadBranchMovedError) || attempt > 0) throw e;
+        branch = e.branch;
+      }
+    }
+    if (!plan) throw new Error("A thread can't link its own project.");
+    const project = path.basename(plan.repoPath);
+    let warning = (await linkSubmodules(link.path, project, new AbortController().signal)) ?? undefined;
+    try {
+      const config = await worktreeManager.getRepoConfig(plan.repoPath);
+      if (config.copyFiles.length > 0) await worktreeManager.copyProjectFiles(plan.repoPath, link.path, config.copyFiles);
+    } catch (e) {
+      logger.warn(`Failed to copy untracked files to ${link.path}:`, e);
+    }
+    if (settings.getSettings().autoInstallDeps) {
+      let manager: PackageManager = 'npm';
+      try {
+        await fs.access(path.join(link.path, 'package.json'));
+        manager = await detectPackageManager(link.path);
+        await installDependencies(link.path, manager, new AbortController().signal);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+          logger.warn(`${manager} install failed in ${link.path}:`, e);
+          warning = [warning, `${manager} install failed in ${project}, so its worktree has no dependencies installed: ${errorMessage(e)}`].filter(Boolean).join('\n\n');
+        } else if (manager !== 'npm') {
+          warning = [warning, `${project} uses ${manager}, which isn't installed or isn't on PATH, so its worktree's dependencies weren't installed.`].filter(Boolean).join('\n\n');
+        }
+      }
+    }
+    const links = worktreeManager.getWorktree(id)?.linked ?? [];
+    const adapter = sessionManager.getSessionAdapter(id);
+    const [note] = linkedProjectNotes([link], adapter?.capabilities.additionalDirectoryInstructions === true);
+    await sessionManager.setLinked(id, links, linkChangeNote({ linked: note }));
+    logger.info(`Linked ${plan.repoPath} to thread ${id} at ${link.path}`);
+    return { link, ...(warning ? { warning } : {}) };
+  });
+
+  ipcMain.handle(IPC.SESSION_UNLINK_PROJECT, async (_event, sessionId: unknown, repoPath: unknown, deleteBranch: unknown) => {
+    await linkableThread(sessionId, repoPath, 'Unlink');
+    const id = sessionId as string;
+    // With the agent stopped, so nothing it runs holds files there.
+    await sessionManager.unlinkStopped(id, async () => {
+      const unlinked = await worktreeManager.unlinkProject(id, repoPath as string, deleteBranch === true);
+      logger.info(`Unlinked ${unlinked.repoPath} from thread ${id}`);
+      return {
+        linked: worktreeManager.getWorktree(id)?.linked ?? [],
+        note: linkChangeNote({ unlinked: { name: path.basename(unlinked.repoPath), path: unlinked.path } }),
+      };
+    });
   });
 
   ipcMain.handle(IPC.SESSION_DESTROY, async (_event, id: string, deleteBranch: boolean = false) => {
@@ -1093,7 +1292,9 @@ export function registerHandlers() {
     content: string,
     images?: import('../shared/types.js').ImageAttachment[],
     files?: import('../shared/types.js').FileAttachment[],
+    opts?: unknown,
   ) => {
+    const continued = typeof opts === 'object' && opts !== null && (opts as { continued?: unknown }).continued === true;
     // Tell the user the prompt was not delivered, then unlock the renderer
     // so it doesn't stay stuck in "Writing message".
     const notDelivered = (message: string) => {
@@ -1102,7 +1303,7 @@ export function registerHandlers() {
       event.sender.send(channel, { type: 'error', message });
       event.sender.send(channel, { type: 'process_exit' });
     };
-    sessionManager.sendMessage(sessionId, content, images, files).then(
+    sessionManager.sendMessage(sessionId, content, images, files, { continued }).then(
       (ok) => {
         if (ok === 'nothing-to-send') notDelivered('Message not sent: its attachments were left out and nothing was typed.');
         // Session is dead or never connected
@@ -1422,6 +1623,10 @@ export function registerHandlers() {
     }
   });
 
+  ipcMain.handle(IPC.SESSION_DISMISS_CUT_OFF, (_event, sessionId: unknown) => (
+    typeof sessionId === 'string' ? sessionManager.dismissCutOff(sessionId) : false
+  ));
+
   ipcMain.handle(IPC.SESSION_PREVIEWS, async (_event, sessionIds: string[]) => {
     const previews: Record<string, import('../shared/types.js').SessionPreview> = {};
     // A stopped conversation's preview parses its whole event log, and the
@@ -1430,7 +1635,11 @@ export function registerHandlers() {
     let sliceStart = performance.now();
     for (const id of sessionIds ?? []) {
       try {
-        previews[id] = extractSessionPreview(prelaunchPrefixedEvents(id));
+        const events = prelaunchPrefixedEvents(id);
+        const preview = extractSessionPreview(events);
+        // With no agent running, a turn left unfinished was cut off too.
+        const cutOff = openCutOff(events, !sessionManager.isLive(id));
+        previews[id] = cutOff ? { ...preview, cutOff: { reason: cutOff.reason, ...(cutOff.at !== undefined ? { at: cutOff.at } : {}) } } : preview;
       } catch (e) {
         logger.warn(`[session-previews] preview failed for ${id}:`, e);
       }
@@ -1474,8 +1683,8 @@ export function registerHandlers() {
     return [...sortedDirs, ...files];
   });
 
-  ipcMain.handle(IPC.FILE_OPEN_IN_EDITOR, async (_event, sessionId: string, filePath: string, line?: number) => {
-    const worktree = worktreeManager.getWorktree(sessionId);
+  ipcMain.handle(IPC.FILE_OPEN_IN_EDITOR, async (_event, sessionId: string, filePath: string, line?: number, opts?: { linkedRepo?: unknown }) => {
+    const worktree = readCheckout(sessionId, opts?.linkedRepo);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
     const resolved = path.resolve(worktree.path, filePath);
     const normalizedResolved = path.normalize(resolved);
@@ -1535,7 +1744,13 @@ export function registerHandlers() {
 
   ipcMain.handle(IPC.PREVIEW_GET_STATES, () => previewManager.getStates());
 
-  ipcMain.handle(IPC.OPEN_SESSION_FOLDER, async (_event, sessionId: string) => {
+  ipcMain.handle(IPC.OPEN_SESSION_FOLDER, async (_event, sessionId: string, linkedRepo?: unknown) => {
+    // One of the thread's linked projects' worktrees: only one it has.
+    if (typeof linkedRepo === 'string') {
+      const link = (await worktreeManager.getWorktreeOrManifest(sessionId))?.linked?.find((l) => l.repoPath === linkedRepo);
+      if (link) await shell.openPath(link.path);
+      return;
+    }
     const session = sessionManager.getSession(sessionId);
     if (session) {
       await shell.openPath(session.worktreePath);
@@ -1551,6 +1766,18 @@ export function registerHandlers() {
 
   // ─── File revert & diff (for changes review panel) ───
 
+  /** The checkout a Changes read looks at: the thread's own worktree, or
+   *  with `linkedRepo` its worktree of that linked project, read only
+   *  (docs/linked-projects-plan.md). Undefined for a thread that isn't
+   *  known, or a project it doesn't link. Writes (stage, revert, commit)
+   *  only ever take the thread's own. */
+  function readCheckout(sessionId: string, linkedRepo: unknown): { path: string; noGit?: boolean } | undefined {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree || linkedRepo === undefined) return worktree;
+    const link = typeof linkedRepo === 'string' ? worktree.linked?.find((l) => l.repoPath === linkedRepo) : undefined;
+    return link ? { path: link.path } : undefined;
+  }
+
   ipcMain.handle(IPC.FILE_REVERT, async (_event, sessionId: string, filePath: string, staged?: boolean, renamedFrom?: string) => {
     const worktree = worktreeManager.getWorktree(sessionId);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
@@ -1559,8 +1786,8 @@ export function registerHandlers() {
     await revertFile(worktree.path, relPath, staged === true, oldPath);
   });
 
-  ipcMain.handle(IPC.FILE_DIFF, async (_event, sessionId: string, filePath: string, staged?: boolean, opts?: { base?: string }): Promise<FileDiffResult> => {
-    const worktree = worktreeManager.getWorktree(sessionId);
+  ipcMain.handle(IPC.FILE_DIFF, async (_event, sessionId: string, filePath: string, staged?: boolean, opts?: { base?: string; linkedRepo?: unknown }): Promise<FileDiffResult> => {
+    const worktree = readCheckout(sessionId, opts?.linkedRepo);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
     const { relPath, resolved } = sanitizeWorktreeRelPath(worktree.path, filePath);
 
@@ -1610,8 +1837,8 @@ export function registerHandlers() {
 
   // Lines of the new side of a file, for expanding context around hunks.
   // Staged diffs compare against the index, so serve the index version there.
-  ipcMain.handle(IPC.FILE_LINES, async (_event, sessionId: string, filePath: string, staged?: boolean): Promise<FileLinesResult> => {
-    const worktree = worktreeManager.getWorktree(sessionId);
+  ipcMain.handle(IPC.FILE_LINES, async (_event, sessionId: string, filePath: string, staged?: boolean, opts?: { linkedRepo?: unknown }): Promise<FileLinesResult> => {
+    const worktree = readCheckout(sessionId, opts?.linkedRepo);
     if (!worktree) return null;
     const { relPath, resolved } = sanitizeWorktreeRelPath(worktree.path, filePath);
     try {
@@ -1628,8 +1855,8 @@ export function registerHandlers() {
     }
   });
 
-  ipcMain.handle(IPC.FILE_CONTENT_DATA_URL, async (_event, sessionId: string, filePath: string): Promise<ImageDiffContent> => {
-    const worktree = worktreeManager.getWorktree(sessionId);
+  ipcMain.handle(IPC.FILE_CONTENT_DATA_URL, async (_event, sessionId: string, filePath: string, opts?: { linkedRepo?: unknown }): Promise<ImageDiffContent> => {
+    const worktree = readCheckout(sessionId, opts?.linkedRepo);
     if (!worktree) throw new Error(`Worktree not found for session ${sessionId}`);
     const { relPath, resolved } = sanitizeWorktreeRelPath(worktree.path, filePath);
     const mime = mimeForImageExt(imageExtFor(relPath) ?? '');
@@ -1709,6 +1936,45 @@ export function registerHandlers() {
       logger.warn(`git sync status failed for session ${sessionId}:`, e);
       return { upstream: null, ahead: 0, behind: 0 };
     }
+  }));
+
+  // Polled to keep what's shown current: background work (background-work.ts).
+  // Answered, not thrown: each thing that can't be read is null.
+  ipcMain.handle(IPC.GIT_LINKED_STATUS, (_event, sessionId: string, opts?: { pr?: unknown; timeout?: unknown }) => inBackground(async (): Promise<LinkedProjectStatus[]> => {
+    const links = worktreeManager.getWorktree(sessionId)?.linked ?? [];
+    if (links.length === 0) return [];
+    const withPr = opts?.pr === true;
+    // A check the user waits on (the delete dialogs) kills git after this.
+    const timeout = requestedTimeout(opts?.timeout);
+    const timed = timeout ? { timeout } : undefined;
+    const selfLogin = withPr ? await ghLogin().catch(() => null) : null;
+    return Promise.all(links.map(async (link): Promise<LinkedProjectStatus> => {
+      const empty = { repoPath: link.repoPath, path: link.path, branch: null, uncommitted: null, sync: null, base: null, unmerged: null, pr: null };
+      if (!(await pathExists(link.path))) return { ...empty, missing: true };
+      const [branch, porcelain, sync, base] = await Promise.all([
+        currentBranch(link.path, timed).catch(() => null),
+        // As the Changes tab reads it: every untracked file, and no lock
+        // taken that would get in the agent's way.
+        statusGit(link.path, timeout).catch(() => null),
+        syncStatus(link.path, timed).catch(() => null),
+        getDefaultBranch(link.repoPath).catch(() => null),
+      ]);
+      const unmerged = base ? await branchCommits(link.path, base, timed).then((c) => c.length, () => null) : null;
+      let pr: PrInfo | null = null;
+      if (withPr && branch && branch !== base) {
+        const prs = await prsForBranches(link.repoPath, [branch], selfLogin).catch(() => []);
+        pr = prs.find((p) => p.headRefName === branch && p.state === 'OPEN') ?? prs.find((p) => p.headRefName === branch) ?? null;
+      }
+      return {
+        ...empty,
+        branch,
+        uncommitted: porcelain === null ? null : parseGitStatusPorcelain(porcelain).entries.length,
+        sync,
+        base,
+        unmerged,
+        pr,
+      };
+    }));
   }));
 
   // ─── Branch operations ───
@@ -1808,14 +2074,14 @@ export function registerHandlers() {
 
   // Polled to keep what's shown current: background work (background-work.ts).
   ipcMain.handle(IPC.GIT_STATUS, (_event, sessionId: string, opts?: GitStatusOptions) => inBackground(async (): Promise<GitStatusResult> => {
-    const worktree = worktreeManager.getWorktree(sessionId);
+    const worktree = readCheckout(sessionId, opts?.linkedRepo);
     if (!worktree || worktree.noGit) return { entries: [] };
     const cwd = worktree.path;
     const timeout = requestedTimeout(opts?.timeout);
     // A merge or rebase stopped part way: the Changes tab finishes or aborts it.
     // A timed check skips it: it runs git with no time limit, and only the
-    // Changes tab reads it.
-    const operation = timeout ? Promise.resolve(null) : Promise.resolve().then(() => gitOperation(cwd)).catch((e) => {
+    // Changes tab reads it. So does a linked project's, which it only shows.
+    const operation = timeout || opts?.linkedRepo !== undefined ? Promise.resolve(null) : Promise.resolve().then(() => gitOperation(cwd)).catch((e) => {
       logger.warn(`git operation check failed for session ${sessionId}:`, e);
       return null;
     });

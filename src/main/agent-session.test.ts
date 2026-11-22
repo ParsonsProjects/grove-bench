@@ -3,6 +3,7 @@ import type { AdapterEvent, AgentAdapter, AgentQueryHandle, AdapterConfig, Permi
 import type { ManagedSession } from './session-types.js';
 import { IPC, PERMISSION_TIMEOUT_MINUTES, type AgentEvent, type AgentSystemInfo, type McpServerInfo } from '../shared/types.js';
 import * as fs from 'node:fs';
+import path from 'node:path';
 import { perfSteps } from './perf-steps.js';
 import { worktreeManager } from './worktree-manager.js';
 import { STREAM_FLUSH_MS } from './session-stream.js';
@@ -21,10 +22,12 @@ vi.mock('node:fs', () => ({
   default: {
     readFileSync: vi.fn(() => { throw new Error('ENOENT'); }),
     statSync: vi.fn(() => { throw new Error('ENOENT'); }),
+    existsSync: vi.fn(() => false),
     writeFileSync: vi.fn(),
     appendFileSync: vi.fn(),
     mkdirSync: vi.fn(),
   },
+  existsSync: vi.fn(() => false),
   readFileSync: vi.fn(() => { throw new Error('ENOENT'); }),
   statSync: vi.fn(() => { throw new Error('ENOENT'); }),
   writeFileSync: vi.fn(),
@@ -74,7 +77,7 @@ vi.mock('./settings.js', () => ({
   getSettings: vi.fn(() => ({
     defaultSystemPromptAppend: null,
     toolAllowRules: [],
-    toolDenyRules: [],
+    toolDenyRules: [], workingDirectories: [],
     cavemanMode: 'off',
   })),
   loadSettings: vi.fn(() => ({ alwaysOnTop: false, theme: 'system' })),
@@ -694,7 +697,7 @@ describe('AgentSessionManager caveman mode', () => {
     settingsMock.getSettings.mockReturnValue({
       defaultSystemPromptAppend: null,
       toolAllowRules: [],
-      toolDenyRules: [],
+      toolDenyRules: [], workingDirectories: [],
       cavemanMode: 'off',
     });
   });
@@ -720,7 +723,7 @@ describe('AgentSessionManager caveman mode', () => {
     settingsMock.getSettings.mockReturnValue({
         defaultSystemPromptAppend: null,
       toolAllowRules: [],
-      toolDenyRules: [],
+      toolDenyRules: [], workingDirectories: [],
       cavemanMode: 'full',
     });
 
@@ -744,7 +747,7 @@ describe('AgentSessionManager caveman mode', () => {
     settingsMock.getSettings.mockReturnValue({
         defaultSystemPromptAppend: null,
       toolAllowRules: [],
-      toolDenyRules: [],
+      toolDenyRules: [], workingDirectories: [],
       cavemanMode: 'lite',
     });
 
@@ -937,6 +940,30 @@ describe('AgentSessionManager event processing', () => {
       const store = (sessionManager as unknown as { events: { historyCache: Map<string, unknown> } }).events;
       expect(store.historyCache.has('test-resume-log')).toBe(false);
       await sessionManager.destroySession('test-resume-log');
+    } finally {
+      vi.mocked(fs.statSync).mockImplementation(missing);
+      vi.mocked(fs.readFileSync).mockImplementation(missing);
+    }
+  });
+
+  it('marks a turn the last run left unfinished as cut off, as its agent starts again', async () => {
+    const line = (e: object) => `${JSON.stringify(e)}\n`;
+    const log = line({ type: 'user_message', text: 'run the tests', uuid: 'p1', at: 1 }) + line({ type: 'assistant_text', text: 'Running them', uuid: 'a1' });
+    const isLog = (p: unknown) => String(p).endsWith('test-resume-crash.jsonl');
+    const missing = () => { throw new Error('ENOENT'); };
+    vi.mocked(fs.statSync).mockImplementation(((p: fs.PathLike) => isLog(p) ? { mtimeMs: 1, size: log.length } : missing()) as typeof fs.statSync);
+    vi.mocked(fs.readFileSync).mockImplementation((p: fs.PathOrFileDescriptor) => isLog(p) ? log : missing());
+    try {
+      await sessionManager.createSession({
+        id: 'test-resume-crash', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+      });
+
+      const history = sessionManager.getEventHistory('test-resume-crash');
+      const at = history.findIndex((e) => e.type === 'turn_cut_off');
+      expect(history[at]).toEqual({ type: 'turn_cut_off', reason: 'unknown' });
+      expect(history[at + 1]).toEqual({ type: 'process_exit' });
+      expect(sessionManager.turnState('test-resume-crash').midTurn).toBe(false);
+      await sessionManager.destroySession('test-resume-crash');
     } finally {
       vi.mocked(fs.statSync).mockImplementation(missing);
       vi.mocked(fs.readFileSync).mockImplementation(missing);
@@ -1208,9 +1235,135 @@ describe('AgentSessionManager event processing', () => {
   });
 });
 
+describe('AgentSessionManager folders outside the project', () => {
+  const baseSettings = () => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], workingDirectories: [], cavemanMode: 'off' });
+  afterEach(() => {
+    settingsMock.getSettings.mockImplementation(baseSettings);
+  });
+
+  it("gives the agent the setting's folders and the thread's linked worktrees, and protects the linked projects' own folders", async () => {
+    settingsMock.getSettings.mockImplementation(() => ({ ...baseSettings(), workingDirectories: ['/shared', 'not/absolute'] }));
+    await sessionManager.createSession({
+      id: 'test-folders', branch: 'feat', cwd: '/wt/a1', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+      linked: [{ repoPath: '/code/b', path: '/wt/b1', branch: 'feat' }],
+    });
+    await vi.waitFor(() => expect(mockAdapter.lastConfig).not.toBeNull());
+    expect(mockAdapter.lastConfig!.additionalDirectories).toEqual([path.resolve('/wt/b1'), path.resolve('/shared')]);
+    expect(mockAdapter.lastConfig!.protectedEditRoots).toEqual([path.resolve('/code/b')]);
+    expect(mockAdapter.lastConfig!.linkedWorktrees).toEqual(['/wt/b1']);
+    expect(mockAdapter.lastConfig!.additionalDirectoryInstructions).toBe(true);
+    // The agent is told where the linked worktree is, and what not to edit.
+    expect(mockAdapter.lastConfig!.appendSystemPrompt).toContain("- b: /wt/b1 (the project's own folder, /code/b, is not yours to edit)");
+
+    await sessionManager.destroySession('test-folders');
+  });
+});
+
+describe('AgentSessionManager linking a project part way through', () => {
+  const baseSettings = () => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], workingDirectories: [], cavemanMode: 'off' });
+  afterEach(() => {
+    settingsMock.getSettings.mockImplementation(baseSettings);
+  });
+
+  it('restarts the agent with the new folder and prompt, and tells it once, ahead of the next message', async () => {
+    await sessionManager.createSession({ id: 'test-link-later', branch: 'feat', cwd: '/wt/a1', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'mock-session-id', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    const starts = mockAdapter.startCallCount;
+    expect(mockAdapter.lastConfig!.appendSystemPrompt).not.toContain('OTHER PROJECTS');
+
+    await sessionManager.setLinked('test-link-later', [{ repoPath: '/code/b', path: '/wt/b1', branch: 'feat' }], 'Note from Grove Bench: b is linked.\n');
+
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(starts + 1));
+    const config = mockAdapter.lastConfig!;
+    expect(config.additionalDirectories).toEqual([path.resolve('/wt/b1')]);
+    expect(config.protectedEditRoots).toEqual([path.resolve('/code/b')]);
+    // The same conversation goes on.
+    expect(config.resumeSessionId).toBe('mock-session-id');
+    expect(config.appendSystemPrompt).toContain("- b: /wt/b1 (the project's own folder, /code/b, is not yours to edit)");
+
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'mock-session-id', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    const session = sessionManager.getSession('test-link-later')!;
+    // A slash command must lead its message, so the note waits.
+    await sessionManager.sendMessage('test-link-later', '/compact');
+    expect(session.queryHandle!.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ text: '/compact' }));
+    await sessionManager.sendMessage('test-link-later', 'Now fix billing');
+    expect(session.queryHandle!.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ text: 'Note from Grove Bench: b is linked.\nNow fix billing' }));
+    await sessionManager.sendMessage('test-link-later', 'And the tests');
+    expect(session.queryHandle!.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ text: 'And the tests' }));
+
+    await sessionManager.destroySession('test-link-later');
+  });
+});
+
+describe('AgentSessionManager linked projects: what the review found', () => {
+  async function started(id: string) {
+    await sessionManager.createSession({ id, branch: 'feat', cwd: '/wt/a1', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
+    await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+    mockAdapter.control!.emitEvent({ type: 'system_init', sessionId: 'mock-session-id', model: 'm', tools: [] });
+    await new Promise((r) => setTimeout(r, 50));
+    return sessionManager.getSession(id)!;
+  }
+
+  it('lets a turn that started during the link run to its end, then restarts with the new folder', async () => {
+    await started('test-link-mid-turn');
+    await sessionManager.sendMessage('test-link-mid-turn', 'Fix the PR checks');
+    expect(sessionManager.isMidTurn('test-link-mid-turn')).toBe(true);
+    const starts = mockAdapter.startCallCount;
+
+    await sessionManager.setLinked('test-link-mid-turn', [{ repoPath: '/code/b', path: '/wt/b1', branch: 'feat' }], 'Note: b is linked.\n');
+    await new Promise((r) => setTimeout(r, 30));
+    expect(mockAdapter.startCallCount).toBe(starts);
+
+    mockAdapter.control!.emitEvent({ type: 'result', subtype: 'success', isError: false });
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(starts + 1));
+    expect(mockAdapter.lastConfig!.additionalDirectories).toEqual([path.resolve('/wt/b1')]);
+
+    await sessionManager.destroySession('test-link-mid-turn');
+  });
+
+  it('unlinks with the agent stopped, its process tree first, then starts it again without the folder', async () => {
+    const session = await started('test-unlink-stopped');
+    session.linked = [{ repoPath: '/code/b', path: '/wt/b1', branch: 'feat' }];
+    const handle = session.queryHandle!;
+    const kill = vi.spyOn(handle, 'killProcessTree');
+    const starts = mockAdapter.startCallCount;
+    let killedBeforeRemove = false;
+
+    await sessionManager.unlinkStopped('test-unlink-stopped', async () => {
+      killedBeforeRemove = kill.mock.calls.length > 0;
+      return { linked: [], note: 'Note: b is gone.\n' };
+    });
+
+    expect(killedBeforeRemove).toBe(true);
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(starts + 1));
+    expect(mockAdapter.lastConfig!.additionalDirectories ?? []).toEqual([]);
+    expect(session.linkNote).toBe('Note: b is gone.\n');
+
+    await sessionManager.destroySession('test-unlink-stopped');
+  });
+
+  it("keeps the links and starts the agent again when the worktree can't be removed", async () => {
+    const session = await started('test-unlink-fails');
+    const linked = [{ repoPath: '/code/b', path: '/wt/b1', branch: 'feat' }];
+    session.linked = linked;
+    const starts = mockAdapter.startCallCount;
+
+    await expect(sessionManager.unlinkStopped('test-unlink-fails', async () => { throw new Error('still in use'); })).rejects.toThrow('still in use');
+
+    await vi.waitFor(() => expect(mockAdapter.startCallCount).toBe(starts + 1));
+    expect(session.linked).toBe(linked);
+    expect(session.linkNote ?? null).toBeNull();
+
+    await sessionManager.destroySession('test-unlink-fails');
+  });
+});
+
 describe('AgentSessionManager prompt suggestions', () => {
   // As the settings mock at the top of this file returns them.
-  const baseSettings = () => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off' });
+  const baseSettings = () => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], workingDirectories: [], cavemanMode: 'off' });
   const withSuggestions = (on: boolean) => () => ({ ...baseSettings(), promptSuggestions: on });
   const sentSuggestions = (win: ReturnType<typeof makeMockWindow>) =>
     win._send.mock.calls.filter(([, event]: [string, AgentEvent]) => event?.type === 'prompt_suggestion');
@@ -1297,7 +1450,7 @@ describe('AgentSessionManager prompt suggestions', () => {
 
 describe('AgentSessionManager limits', () => {
   // As the settings mock at the top of this file returns them.
-  const baseSettings = () => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off' });
+  const baseSettings = () => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], workingDirectories: [], cavemanMode: 'off' });
   afterEach(() => {
     settingsMock.getSettings.mockImplementation(baseSettings);
   });
@@ -2753,7 +2906,7 @@ describe('AgentSessionManager turn state for a loading history', () => {
   });
 
   it('lists MCP questions and limit questions too', async () => {
-    const limitSettings = { defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off', turnToolCallLimit: 1 };
+    const limitSettings = { defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], workingDirectories: [], cavemanMode: 'off', turnToolCallLimit: 1 };
     settingsMock.getSettings.mockImplementation(() => limitSettings);
     try {
       await startSession('test-turn-asks');
@@ -2774,7 +2927,7 @@ describe('AgentSessionManager turn state for a loading history', () => {
 
       await sessionManager.destroySession('test-turn-asks');
     } finally {
-      settingsMock.getSettings.mockImplementation(() => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off' }));
+      settingsMock.getSettings.mockImplementation(() => ({ defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], workingDirectories: [], cavemanMode: 'off' }));
     }
   });
 
@@ -2840,11 +2993,14 @@ describe('AgentSessionManager turn state for a loading history', () => {
 
     for (const session of [busy, sending]) {
       expect(session.eventHistory.at(-1)).toEqual({ type: 'process_exit' });
+      // Cut off by the quit, which the next start offers to continue.
+      expect(session.eventHistory.at(-2)).toEqual({ type: 'turn_cut_off', reason: 'quit', at: expect.any(Number) });
       // Before the log was flushed, which took everything.
       expect(session.logBuffer).toEqual([]);
     }
     for (const session of [done, quiet]) {
       expect(session.eventHistory.map((e) => e.type)).not.toContain('process_exit');
+      expect(session.eventHistory.map((e) => e.type)).not.toContain('turn_cut_off');
     }
 
     // The send that was still on its way gives up, adding nothing.
@@ -2853,6 +3009,64 @@ describe('AgentSessionManager turn state for a loading history', () => {
     expect(sending.eventHistory.at(-1)).toEqual({ type: 'process_exit' });
     expect(sending.logBuffer).toEqual([]);
     expect(sending.queryHandle!.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('says why a quit cut a turn off: an update, or Windows ending the session', async () => {
+    const { session } = await startSession('test-turn-quit-update');
+    await sessionManager.sendMessage('test-turn-quit-update', 'run the tests');
+
+    await sessionManager.closeAll('update');
+
+    expect(session.eventHistory.slice(-2)).toEqual([
+      { type: 'turn_cut_off', reason: 'update', at: expect.any(Number) },
+      { type: 'process_exit' },
+    ]);
+  });
+
+  it("doesn't call a turn cut off when the user closes its thread", async () => {
+    const { session } = await startSession('test-turn-close-one');
+    await sessionManager.sendMessage('test-turn-close-one', 'run the tests');
+
+    await sessionManager.closeSession('test-turn-close-one');
+
+    expect(session.eventHistory.at(-1)).toEqual({ type: 'process_exit' });
+    expect(session.eventHistory.map((e) => e.type)).not.toContain('turn_cut_off');
+  });
+
+  it("logs the end of a prompt that didn't reach the agent, so the next start doesn't take it for a crash", async () => {
+    const { session } = await startSession('test-turn-send-failed');
+    vi.mocked(session.queryHandle!.sendMessage).mockImplementationOnce(() => { throw new Error('pipe closed'); });
+
+    expect(await sessionManager.sendMessage('test-turn-send-failed', 'run the tests')).toBe(false);
+
+    expect(session.eventHistory.slice(-2).map((e) => e.type)).toEqual(['user_message', 'process_exit']);
+    expect(sessionManager.turnState('test-turn-send-failed').midTurn).toBe(false);
+  });
+
+  it('counts a thread still closing as live, so its unfinished turn is not taken for a crash', async () => {
+    await startSession('test-turn-closing');
+    await sessionManager.sendMessage('test-turn-closing', 'run the tests');
+    const closed = sessionManager.closeSession('test-turn-closing');
+    expect(sessionManager.isLive('test-turn-closing')).toBe(true);
+    await closed;
+    expect(sessionManager.isLive('test-turn-closing')).toBe(false);
+  });
+
+  it('sends Continue marked as such, and dismisses a cut-off turn once', async () => {
+    const { session } = await startSession('test-turn-continue');
+    await sessionManager.sendMessage('test-turn-continue', 'run the tests');
+    session.emit!({ type: 'turn_cut_off', reason: 'quit' });
+    session.emit!({ type: 'process_exit' });
+    session.turnHandle = null;
+
+    expect(await sessionManager.dismissCutOff('test-turn-continue')).toBe(true);
+    expect(session.eventHistory.at(-1)).toEqual({ type: 'turn_cut_off_dismissed' });
+    // Nothing left to dismiss.
+    expect(await sessionManager.dismissCutOff('test-turn-continue')).toBe(false);
+    expect(await sessionManager.dismissCutOff('no-such-thread')).toBe(false);
+
+    await sessionManager.sendMessage('test-turn-continue', 'carry on', undefined, undefined, { continued: true });
+    expect(session.eventHistory.filter((e) => e.type === 'user_message').at(-1)).toMatchObject({ text: 'carry on', continued: true });
   });
 
   it('ends the history of a turn cut short by a delete', async () => {
@@ -4791,7 +5005,7 @@ describe('AgentSessionManager model handling', () => {
     await sessionManager.destroySession('test-model-default');
   });
 
-  const BASE_SETTINGS = { defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], cavemanMode: 'off' };
+  const BASE_SETTINGS = { defaultSystemPromptAppend: null, toolAllowRules: [], toolDenyRules: [], workingDirectories: [], cavemanMode: 'off' };
 
   it('records which agent the conversation runs', async () => {
     await sessionManager.createSession({ id: 'test-agent-recorded', branch: 'main', cwd: '/repo', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock' });
@@ -5247,7 +5461,7 @@ describe('AgentSessionManager session controls', () => {
   const SETTINGS = {
     defaultSystemPromptAppend: null,
     toolAllowRules: [],
-    toolDenyRules: [],
+    toolDenyRules: [], workingDirectories: [],
     cavemanMode: 'off',
   };
 
@@ -5523,6 +5737,34 @@ describe('AgentSessionManager.switchAgent', () => {
     extraAdapters.other = other;
     return other;
   }
+
+  it("builds the linked projects' prompt again for the new agent, which may not load their CLAUDE.md itself", async () => {
+    const other = otherAgent();
+    Object.defineProperty(other, 'capabilities', { value: { ...other.capabilities, additionalDirectoryInstructions: false } });
+    Object.defineProperty(mockAdapter, 'capabilities', { value: { ...mockAdapter.capabilities, additionalDirectoryInstructions: true }, configurable: true });
+    const fsMod = await import('node:fs');
+    // linked-projects.ts reads the default export's.
+    const exists = vi.mocked(fsMod.default.existsSync).mockImplementation((p) => String(p).endsWith('CLAUDE.md'));
+    try {
+      await sessionManager.createSession({
+        id: 'sw-linked', branch: 'main', cwd: '/wt/sw-linked', repoPath: '/repo', window: makeMockWindow(), adapterType: 'mock',
+        linked: [{ repoPath: '/code/b', path: '/wt/b1', branch: 'main' }],
+      });
+      await vi.waitFor(() => expect(mockAdapter.control).not.toBeNull());
+      const session = sessionManager.getSession('sw-linked')!;
+      // Claude-like: loads B's CLAUDE.md itself, so isn't told to read it.
+      expect(session.appendSystemPrompt).not.toContain('CLAUDE.md');
+
+      await sessionManager.switchAgent('sw-linked', 'other', { transcript: false });
+      await vi.waitFor(() => expect(other.control).not.toBeNull());
+
+      expect(session.appendSystemPrompt).toContain(`read ${path.join('/wt/b1', 'CLAUDE.md')}`);
+      await sessionManager.destroySession('sw-linked');
+    } finally {
+      exists.mockImplementation(() => false);
+      Object.defineProperty(mockAdapter, 'capabilities', { value: { ...mockAdapter.capabilities, additionalDirectoryInstructions: undefined }, configurable: true });
+    }
+  });
 
   it('hands the conversation to the new agent, which gets a short transcript with the next message only', async () => {
     const { worktreeManager } = await import('./worktree-manager.js');

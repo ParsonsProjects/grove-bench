@@ -30,7 +30,7 @@ export function requestPermission(session: ManagedSession, request: PermissionRe
   // prompt below. session.permissionMode is read live so mid-query mode
   // switches take effect immediately. (Native auto mode never reaches here
   // for classifier-approved calls; only its escalations do.)
-  if (session.permissionMode === 'readSafe' && isReadOnlyToolCall(request.toolName, request.toolInput, session.worktreePath, request.toolView)) {
+  if (session.permissionMode === 'readSafe' && isReadOnlyToolCall(request.toolName, request.toolInput, session.worktreePath, request.toolView, session.linked.map((l) => l.path))) {
     return Promise.resolve({ behavior: 'allow', updatedInput: request.toolInput });
   }
   if (request.toolCategory === 'edit') {

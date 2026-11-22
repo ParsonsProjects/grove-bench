@@ -160,6 +160,9 @@ A minimal version, without the `Project` record:
 
 ## Goal 2: one conversation, several repositories
 
+A smaller slice of this, linking a second project's worktree to a thread, is
+planned in `docs/linked-projects-plan.md`.
+
 The hard constraint is that Claude Code has one working directory. Project-level
 CLAUDE.md files, `.claude/settings.json`, project skills and `.mcp.json` are
 resolved from `cwd`

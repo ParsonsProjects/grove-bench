@@ -10,6 +10,16 @@ interface SessionReview {
 }
 
 const STORAGE_PREFIX = 'grove-bench:review:';
+/** Between a thread's id and a linked project's folder in that project's
+ *  review key (linkedReviewKey). */
+const LINKED_SEPARATOR = '::linked::';
+
+/** The review key for a thread's view of one of its linked projects
+ *  (docs/linked-projects-plan.md): its viewed marks and comments are kept
+ *  apart from the thread's own, which may name the same paths. */
+export function linkedReviewKey(sessionId: string, repoPath: string): string {
+  return `${sessionId}${LINKED_SEPARATOR}${repoPath}`;
+}
 
 function load(sessionId: string): SessionReview {
   try {
@@ -127,11 +137,25 @@ class ReviewStore {
     this.set(sessionId, { ...r, comments: [] });
   }
 
+  /** Drop a deleted thread's review state, its linked projects' too. */
   clear(sessionId: string): void {
-    this.loaded.delete(sessionId);
-    const { [sessionId]: _drop, ...rest } = this.bySession;
-    this.bySession = rest;
-    try { localStorage.removeItem(STORAGE_PREFIX + sessionId); } catch { /* ignore */ }
+    const linkedPrefix = sessionId + LINKED_SEPARATOR;
+    const keys = [sessionId];
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith(STORAGE_PREFIX + linkedPrefix)) keys.push(key.slice(STORAGE_PREFIX.length));
+      }
+    } catch { /* storage unavailable */ }
+    for (const key of [...this.loaded.keys(), ...Object.keys(this.bySession)]) {
+      if (key.startsWith(linkedPrefix)) keys.push(key);
+    }
+    const drop = new Set(keys);
+    for (const key of drop) this.loaded.delete(key);
+    this.bySession = Object.fromEntries(Object.entries(this.bySession).filter(([key]) => !drop.has(key)));
+    try {
+      for (const key of drop) localStorage.removeItem(STORAGE_PREFIX + key);
+    } catch { /* ignore */ }
   }
 }
 

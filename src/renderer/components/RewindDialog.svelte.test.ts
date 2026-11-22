@@ -120,3 +120,17 @@ describe('RewindDialog', () => {
     }
   });
 });
+
+describe('RewindDialog with linked projects', () => {
+  it("says the linked projects' files stay, unless only the thread is rewound", async () => {
+    store.repos = ['/repo/a', '/repo/b'];
+    store.sessions = [{ id: SID, branch: 'feat', repoPath: '/repo/a', status: 'running', linkedRepos: ['/repo/b'] }];
+    render(RewindDialog, { sessionId: SID });
+    messageStore.openRewindDialog(SID);
+
+    expect((await screen.findByTestId('rewind-linked-stay')).textContent).toContain('Changes in b stay as they are');
+    await fireEvent.click(screen.getByLabelText('Thread only (keep file changes on disk)'));
+    await waitFor(() => expect(screen.queryByTestId('rewind-linked-stay')).toBeNull());
+    store.repos = [];
+  });
+});

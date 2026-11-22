@@ -1,8 +1,10 @@
+import path from 'node:path';
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../shared/types.js';
-import type { AgentSystemInfo, SessionInfo, SessionStatus, AgentEvent, ThreadUsage, UsageSummary, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls, ThreadTurnState, EventHistoryPage } from '../shared/types.js';
+import type { AgentSystemInfo, SessionInfo, SessionStatus, AgentEvent, ThreadUsage, UsageSummary, PermissionDecision, PermissionMode, McpServerInfo, McpAuthStartResult, McpElicitationResponse, McpServerContextCost, ProviderUsage, SessionControls, ThreadTurnState, EventHistoryPage, LinkedCheckout, CutOffReason } from '../shared/types.js';
 import { CONTROL_IDS, MCP_SIGN_IN_TIMEOUT_MS, isMcpServerDown, isPermissionMode, subagentParent } from '../shared/types.js';
 import { userEventText } from '../shared/prompt-text.js';
+import { openCutOff } from '../shared/cut-off.js';
 import { errorMessage } from '../shared/error-message.js';
 import { applyRateLimit } from '../shared/usage.js';
 import { loadUsageSnapshot, saveUsageSnapshot } from './app-state.js';
@@ -54,6 +56,7 @@ import {
   readSafeWarning, readSafeSandbox, hasSandboxWarning, startingPermissionMode,
   initialControls, normalizeModelId, appendedSystemPrompt,
 } from './session-config.js';
+import { agentFolders, linkedProjectNotes } from './linked-projects.js';
 
 // SDK teardown rejections (a query closed with control responses in flight)
 // are filtered in crash-handling.ts, which owns the process-wide handler.
@@ -309,6 +312,8 @@ class AgentSessionManager {
     adoptSetupEvents?: () => AgentEvent[];
     /** The thread's spend and spend allowance when last saved (worktree manifest). */
     savedLimits?: SavedThreadLimits;
+    /** Other projects' worktrees the thread also works in. */
+    linked?: LinkedCheckout[];
   }): Promise<SessionInfo> {
     const { id, branch, cwd, repoPath, window: win } = opts;
 
@@ -339,12 +344,15 @@ class AgentSessionManager {
     );
     // Archive expired thread notes first, so the memory index never lists them.
     memoryCompact.expireSessionNotes(repoPath);
-    // Path rules, project memory, caveman mode and the user's own addition.
+    // Path rules, linked projects, project memory, caveman mode and the
+    // user's own addition.
+    const userAppendPrompt = opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null);
     const effectiveAppendPrompt = appendedSystemPrompt({
       cwd,
       repoPath,
-      userAppend: opts.appendSystemPrompt ?? (appSettings.defaultSystemPromptAppend || null),
+      userAppend: userAppendPrompt,
       cavemanMode: appSettings.cavemanMode,
+      linked: linkedProjectNotes(opts.linked ?? [], adapter.capabilities.additionalDirectoryInstructions === true),
     });
 
     // Ensure memory directory exists for this repo
@@ -361,6 +369,7 @@ class AgentSessionManager {
       id,
       branch,
       worktreePath: cwd,
+      linked: opts.linked ?? [],
       repoPath,
       status: 'starting',
       agentType: adapterType,
@@ -386,6 +395,7 @@ class AgentSessionManager {
       lastResult: null,
       permissionMode: effectivePermissionMode,
       appendSystemPrompt: effectiveAppendPrompt,
+      userAppendPrompt,
       customSystemPrompt: opts.customSystemPrompt ?? null,
       allowedTools: opts.allowedTools ? new Set(opts.allowedTools) : null,
       outputFormat: opts.outputFormat ?? null,
@@ -422,6 +432,14 @@ class AgentSessionManager {
     for (const event of opts.adoptSetupEvents?.() ?? []) this.events.append(session, event);
 
     const emit = this.createEmitter(session);
+
+    // The last run left a turn unfinished with nothing saying why (a crash,
+    // or the process killed): it ended then. Logged as cut off, so the thread
+    // offers to continue it, and as ended, so nothing waits on it.
+    if (openCutOff(session.eventHistory, true)?.inferred) {
+      emit({ type: 'turn_cut_off', reason: 'unknown' });
+      emit({ type: 'process_exit' });
+    }
 
     // Tell the renderer which mode the conversation starts in. It shows
     // 'default' until a mode_sync arrives, and adapters don't report the
@@ -599,8 +617,15 @@ class AgentSessionManager {
     }
     let handle: AgentQueryHandle;
     try {
+    const folders = agentFolders(session.worktreePath, currentSettings.workingDirectories, session.linked);
     handle = await session.adapter.start({
       cwd: session.worktreePath,
+      additionalDirectories: folders.additionalDirectories,
+      linkedWorktrees: session.linked.map((l) => l.path),
+      folderNames: Object.fromEntries(session.linked.map((l) => [path.resolve(l.path), path.basename(l.repoPath)])),
+      // B's CLAUDE.md, as a linked project's instructions.
+      additionalDirectoryInstructions: session.linked.length > 0,
+      protectedEditRoots: folders.protectedEditRoots,
       attachmentsDir: attachmentsFolder(id),
       // session.model is the source of truth — it survives stop/restart and
       // resume cycles, so the user's selected model isn't lost when the query
@@ -617,7 +642,7 @@ class AgentSessionManager {
       // Mode is read at query start: switching into read-safe mid-query keeps
       // classifier-only protection until the next query (re)start.
       sandbox: !caps.sandbox ? null
-        : session.sandbox ?? (session.permissionMode === 'readSafe' ? readSafeSandbox(session.worktreePath) : null),
+        : session.sandbox ?? (session.permissionMode === 'readSafe' ? readSafeSandbox([session.worktreePath, ...session.linked.map((l) => l.path)]) : null),
       memoryOperations: {
         list: () => memory.listMemoryFiles(session.repoPath),
         read: (p) => memory.readMemoryFile(session.repoPath, p),
@@ -1082,6 +1107,7 @@ class AgentSessionManager {
       logged();
     }
     this.runHeldMcpReconnects(session);
+    this.runHeldRestart(session);
   }
 
   /** The context meter's size comes with each reply, so a turn that compacted
@@ -1329,11 +1355,14 @@ class AgentSessionManager {
   /** Send a prompt. True once the agent has it; false when the session is
    *  gone or never connected; 'nothing-to-send' when every attachment was
    *  left out and nothing was typed. */
+  /** `opts.continued`: Continue on a cut-off turn sent it (cut-off.ts); the
+   *  thread marks it so. */
   async sendMessage(
     id: string,
     content: string,
     images?: import('../shared/types.js').ImageAttachment[],
     files?: import('../shared/types.js').FileAttachment[],
+    opts: { continued?: boolean } = {},
   ): Promise<boolean | 'nothing-to-send'> {
     // When it was sent, for the thread to show. Taken before the waits below
     // (setup, a wake), which can take minutes.
@@ -1406,6 +1435,7 @@ class AgentSessionManager {
     const audioInHistory = savedFiles.length > 0 ? audioSentInline(session.eventHistory) : 0;
     const userEvent: Extract<AgentEvent, { type: 'user_message' }> = {
       type: 'user_message', text: content, uuid, at: sentAt,
+      ...(opts.continued && { continued: true as const }),
       ...(storedImages.length > 0 && { images: storedImages }),
       ...(savedFiles.length > 0 && { files: savedFiles.map((f) => f.stored) }),
     };
@@ -1413,6 +1443,9 @@ class AgentSessionManager {
     // prompt reaches the agent only after the checkpoint (see turnInFlight).
     const unsent = session.unsentPrompts ??= new Set();
     unsent.add(uuid);
+    // Reached the agent: else the history gets the end of the turn it never
+    // started (finally below).
+    let delivered = false;
     try {
       session.emit?.(userEvent);
 
@@ -1455,8 +1488,11 @@ class AgentSessionManager {
         // Once per query: a second message before the reply doesn't repeat it,
         // but a query that failed to start and was replaced gets it again.
         const withNote = handoffNote !== null && session.handoffSentTo !== queryHandle;
+        // A project linked or unlinked since the last message. Not ahead of
+        // a slash command, which must lead: it waits for the next message.
+        const linkNote = !isSlashCommand(content) ? session.linkNote ?? null : null;
         const message: UserMessage = {
-          text: withNote ? `${handoffNote}\n${content}` : content,
+          text: `${withNote ? `${handoffNote}\n` : ''}${linkNote ?? ''}${content}`,
           // With the path of each saved copy when every one was saved (so the
           // lists line up), for an agent that can't take images.
           images: images?.map((img, i) => {
@@ -1474,10 +1510,12 @@ class AgentSessionManager {
         };
         if (withNote) session.handoffSentTo = queryHandle;
         queryHandle.sendMessage(message);
+        if (linkNote) session.linkNote = null;
         if (session.promptsBeforeInit?.handle === queryHandle) session.promptsBeforeInit.prompts.push(message);
         logger.debug(`[sendMessage] session=${id} sent successfully`);
         // Update last-active timestamp (fire-and-forget)
         worktreeManager.updateLastActive(id).catch(() => {});
+        delivered = true;
         return true;
       } catch (e) {
         console.error(`[sendMessage] session=${id} send FAILED:`, e);
@@ -1489,6 +1527,11 @@ class AgentSessionManager {
     } finally {
       // Gone to the agent (turnHandle has it now), or given up on.
       unsent.delete(uuid);
+      // Given up on, with nothing else under way: the history says its turn
+      // ended, as the window was told (ipc's notDelivered), so the next start
+      // doesn't take it for a turn a crash cut off (cut-off.ts). A close
+      // writes its own (shutDown).
+      if (!delivered && !session.destroying && !turnInFlight(session)) session.emit?.({ type: 'process_exit' });
     }
   }
 
@@ -2089,6 +2132,86 @@ class AgentSessionManager {
   }
 
   /**
+   * The thread's linked projects changed part way through
+   * (docs/linked-projects-plan.md): the prompt is built again with them, the
+   * agent is told ahead of its next message (`note`), and a running agent
+   * is restarted on the same conversation, as no agent takes new folders
+   * mid-session (runQuery reads the folders at each start). One asleep, or
+   * not running, gets them when it next starts. The caller refuses a link
+   * mid-turn, but its setup takes a while: a turn that started meanwhile
+   * (a PR fix, a goal carrying on) runs to its end first.
+   */
+  async setLinked(id: string, linked: LinkedCheckout[], note: string): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session || session.destroying) return;
+    this.applyLinks(session, linked, note);
+    if (session.status === 'stopped' || session.status === 'error') return;
+    if (this.isMidTurn(id)) {
+      session.restartAfterTurn = true;
+      return;
+    }
+    await this.stopQuery(id);
+  }
+
+  /**
+   * Unlink a project from a running thread: the agent is stopped first,
+   * its process tree with it, so nothing it started (a dev server, a
+   * watcher) still has files open in the worktree, and Windows is given a
+   * moment to let them go. Then `remove` takes the worktree away and says
+   * what is left, and the agent starts again on the same conversation. A
+   * `remove` that throws leaves the links as they were: the agent starts
+   * again all the same, and the error is passed on. The caller refuses
+   * this mid-turn.
+   */
+  async unlinkStopped(id: string, remove: () => Promise<{ linked: LinkedCheckout[]; note: string }>): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session || session.destroying || session.status === 'stopped' || session.status === 'error') {
+      const { linked, note } = await remove();
+      if (session && !session.destroying) this.applyLinks(session, linked, note);
+      return;
+    }
+    let failure: unknown = null;
+    await this.stopQuery(id, async () => {
+      await new Promise((r) => setTimeout(r, this.handleReleaseMs));
+      try {
+        const { linked, note } = await remove();
+        this.applyLinks(session, linked, note);
+      } catch (e) {
+        failure = e;
+      }
+    }, { killTree: true });
+    if (failure) throw failure instanceof Error ? failure : new Error(String(failure));
+  }
+
+  /** Take the thread's linked projects as they are now: the prompt is built
+   *  again and `note` waits for the next message. */
+  private applyLinks(session: ManagedSession, linked: LinkedCheckout[], note: string): void {
+    session.linked = linked;
+    this.rebuildAppendPrompt(session);
+    session.linkNote = `${session.linkNote ?? ''}${note}`;
+  }
+
+  /** Grove's part of the system prompt, built again from what it is made of
+   *  now: the thread's linked projects (as its agent is told about them),
+   *  memory, follow-ups, caveman mode and the user's own addition. */
+  private rebuildAppendPrompt(session: ManagedSession): void {
+    session.appendSystemPrompt = appendedSystemPrompt({
+      cwd: session.worktreePath,
+      repoPath: session.repoPath,
+      userAppend: session.userAppendPrompt,
+      cavemanMode: settings.getSettings().cavemanMode,
+      linked: linkedProjectNotes(session.linked, session.adapter.capabilities.additionalDirectoryInstructions === true),
+    });
+  }
+
+  /** A restart that waited for the turn to end (restartAfterTurn). */
+  private runHeldRestart(session: ManagedSession): void {
+    if (!session.restartAfterTurn || this.isMidTurn(session.id) || session.destroying) return;
+    session.restartAfterTurn = false;
+    void this.stopQuery(session.id);
+  }
+
+  /**
    * Stop the current query but keep the session alive so the user can send
    * follow-up messages without losing state or remounting the UI: a new
    * query starts at once. `beforeRestart` runs in between, once the old
@@ -2274,7 +2397,9 @@ class AgentSessionManager {
    * it from the provider's transcript, as after an app restart. Checkpoint
    * refs and the worktree are kept.
    */
-  closeSession(id: string): Promise<void> {
+  /** `cutOff`: Grove Bench is quitting, and why: a turn under way is logged
+   *  as cut off (cut-off.ts), so the next start offers to continue it. */
+  closeSession(id: string, cutOff?: CutOffReason): Promise<void> {
     // Closed before it was up: say so, rather than leave the run waiting.
     perfSteps.fail(id, 'closed');
     const inFlight = this.closing.get(id);
@@ -2284,7 +2409,7 @@ class AgentSessionManager {
       // Still being set up (new worktree, dependency install, resume): close
       // it once it exists, or setup would start an agent after the close.
       const setup = this.pendingSetups.get(id);
-      return setup ? setup.then(() => this.closeSession(id)) : Promise.resolve();
+      return setup ? setup.then(() => this.closeSession(id, cutOff)) : Promise.resolve();
     }
 
     // Out of the map at once so a reopen can't reattach to the dying agent;
@@ -2292,7 +2417,7 @@ class AgentSessionManager {
     this.sessions.delete(id);
     const closed = (async () => {
       try {
-        await this.shutDown(session, 'Conversation closed');
+        await this.shutDown(session, 'Conversation closed', cutOff);
       } catch (err) {
         logger.warn(`Closing session ${id} failed:`, err);
       } finally {
@@ -2361,7 +2486,7 @@ class AgentSessionManager {
    * under it (background tasks, dev servers, MCP servers), close its query
    * and deny pending permissions.
    */
-  private async shutDown(session: ManagedSession, reason: string): Promise<void> {
+  private async shutDown(session: ManagedSession, reason: string, cutOff?: CutOffReason): Promise<void> {
     const { id } = session;
 
     // Must be set before the agent is killed or its query closed: either ends
@@ -2411,7 +2536,11 @@ class AgentSessionManager {
     // now, with the agent dead: a turn can end or start during the kill (the
     // run's tail leaves the turn as it is for this). Before the caller
     // flushes the log.
-    if (turnInFlight(session)) session.emit?.({ type: 'process_exit' });
+    if (turnInFlight(session)) {
+      // Grove Bench quitting cut it off: the next start offers to continue it.
+      if (cutOff) session.emit?.({ type: 'turn_cut_off', reason: cutOff, at: Date.now() });
+      session.emit?.({ type: 'process_exit' });
+    }
     // That ends the turn. Sends still on their way give up (see sendMessage).
     session.turnHandle = null;
     session.unsentPrompts?.clear();
@@ -2429,9 +2558,22 @@ class AgentSessionManager {
   /** App quit: stop every live agent the way closing its conversation does.
    *  Worktrees, branches and checkpoints stay, so the conversations reopen
    *  on the next launch. */
-  async closeAll(): Promise<void> {
-    for (const id of [...this.sessions.keys()]) void this.closeSession(id);
+  /** Close every thread, as Grove Bench quits: `cutOff` says why, for the
+   *  turns this cuts off. */
+  async closeAll(cutOff: CutOffReason = 'quit'): Promise<void> {
+    for (const id of [...this.sessions.keys()]) void this.closeSession(id, cutOff);
     await this.waitForCloses();
+  }
+
+  /** Dismiss the turn this thread had cut off (cut-off.ts): logged, so it
+   *  stays dismissed. Waits for a thread still starting up. False when there
+   *  is no thread, or nothing to dismiss. */
+  async dismissCutOff(id: string): Promise<boolean> {
+    if (!this.sessions.has(id)) await this.pendingSetups.get(id);
+    const session = this.sessions.get(id);
+    if (!session?.emit || !openCutOff(session.eventHistory)) return false;
+    session.emit({ type: 'turn_cut_off_dismissed' });
+    return true;
   }
 
   /** Resolves once every conversation being closed has finished shutting down. */
@@ -2607,6 +2749,8 @@ class AgentSessionManager {
       session.adapter = adapter;
       session.agentType = adapter.id;
       session.model = model;
+      // The linked projects are told about by what the new agent loads itself.
+      this.rebuildAppendPrompt(session);
       // A guess the old agent is still writing isn't wanted, and its
       // failures say nothing about the new one.
       this.promptSuggestions.forget(id);
@@ -2962,6 +3106,13 @@ class AgentSessionManager {
 
   get count(): number {
     return this.sessions.size;
+  }
+
+  /** Whether the thread has its agent up (or sleeping), or is still
+   *  closing: its history's last turn may still be running, or is about to
+   *  get its end (shutDown writes it after the thread leaves `sessions`). */
+  isLive(id: string): boolean {
+    return this.sessions.has(id) || this.closing.has(id);
   }
 
   /** Conversations still shutting down after closeSession(). */

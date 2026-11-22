@@ -183,6 +183,10 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
  *  holds up the window, as for Claude Code. The command is found as a shell
  *  would, npm's .cmd shims included. Shared by conversations, generateText
  *  and the sign-in check so a start-up fix lands in all of them. */
+/** The folders each thread (by its cwd) was last warned its agent can't be
+ *  given (warnUnusedRoots), so a restart or wake doesn't say it again. */
+const unusedRootsWarned = new Map<string, string>();
+
 function spawnAgent(def: AcpAgentDefinition, cwd: string, extraEnv?: Record<string, string> | null): HostedProcess {
   const savedKey = def.apiKey ? getApiKey(def.id) : null;
   const env = {
@@ -820,17 +824,19 @@ class AcpQuery {
     const rpc = this.rpc!;
     const { cwd, resumeSessionId } = this.config;
     const caps = this.init?.agentCapabilities;
+    const roots = this.rootsParams();
+    this.warnUnusedRoots();
     if (resumeSessionId) {
       try {
         if (caps?.sessionCapabilities?.resume) {
-          this.takeSetup(await this.signedIn(() => rpc.request<AcpSessionSetup>('session/resume', { sessionId: resumeSessionId, cwd, mcpServers })), false);
+          this.takeSetup(await this.signedIn(() => rpc.request<AcpSessionSetup>('session/resume', { sessionId: resumeSessionId, cwd, mcpServers, ...roots })), false);
           this.sessionId = resumeSessionId;
           return;
         }
         if (caps?.loadSession) {
           this.replaying = true;
           try {
-            this.takeSetup(await this.signedIn(() => rpc.request<AcpSessionSetup>('session/load', { sessionId: resumeSessionId, cwd, mcpServers })), false);
+            this.takeSetup(await this.signedIn(() => rpc.request<AcpSessionSetup>('session/load', { sessionId: resumeSessionId, cwd, mcpServers, ...roots })), false);
           } finally {
             this.replaying = false;
           }
@@ -846,7 +852,7 @@ class AcpQuery {
         this.emit({ type: 'status', level: 'warning', newConversation: true, message: `${this.def.displayName} couldn't reopen this thread, so it starts afresh. The thread above stays, but the agent won't remember it.` });
       }
     }
-    const setup = await this.signedIn(() => rpc.request<AcpSessionSetup>('session/new', { cwd, mcpServers }));
+    const setup = await this.signedIn(() => rpc.request<AcpSessionSetup>('session/new', { cwd, mcpServers, ...roots }));
     if (!setup?.sessionId) throw new Error(`${this.def.displayName} did not start a session`);
     this.sessionId = setup.sessionId;
     this.takeSetup(setup, true);
@@ -859,6 +865,33 @@ class AcpQuery {
     const result = await withKeySignIn(this.rpc!, this.def, this.init, request);
     this.adapter.recordSignIn(true);
     return result;
+  }
+
+  /** The folders outside cwd a session request carries
+   *  (AdapterConfig.additionalDirectories), sent only to an agent that
+   *  advertises sessionCapabilities.additionalDirectories. On load and
+   *  resume the list replaces the session's earlier one. */
+  private rootsParams(): { additionalDirectories?: string[] } {
+    const dirs = this.config.additionalDirectories ?? [];
+    if (dirs.length === 0 || !this.init?.agentCapabilities?.sessionCapabilities?.additionalDirectories) return {};
+    return { additionalDirectories: [...dirs] };
+  }
+
+  /** Says so when there are folders outside cwd that the agent can't be
+   *  given, because it didn't advertise them: once for the thread (its
+   *  cwd) and these folders, not again on each restart or wake. */
+  private warnUnusedRoots(): void {
+    const dirs = this.config.additionalDirectories ?? [];
+    if (dirs.length === 0 || this.init?.agentCapabilities?.sessionCapabilities?.additionalDirectories) return;
+    const key = [...dirs].sort().join('\n');
+    if (unusedRootsWarned.get(this.config.cwd) === key) return;
+    unusedRootsWarned.set(this.config.cwd, key);
+    const names = dirs.map((d) => this.config.folderNames?.[d] ?? (path.basename(d) || d)).join(', ');
+    this.emit({
+      type: 'status',
+      level: 'warning',
+      message: `${this.def.displayName} didn't say it can use folders outside the project, so it may not be able to edit ${names}.`,
+    });
   }
 
   private instructions(): string | null {
@@ -1072,6 +1105,7 @@ class AcpQuery {
       const setup = await this.rpc!.request<AcpSessionSetup>('session/new', {
         cwd: this.config.cwd,
         mcpServers: this.mcpServers,
+        ...this.rootsParams(),
       });
       if (!setup?.sessionId) throw new Error(`${this.def.displayName} did not start a session`);
       this.sessionId = setup.sessionId;
@@ -1279,7 +1313,7 @@ class AcpQuery {
     if (decision === 'allow') return;
     // Read-safe approves read-only calls when the user is asked
     // (session-permissions.ts), so one that wasn't asked about lost nothing.
-    if (decision === 'ask' && this.groveMode === 'readSafe' && isReadOnlyToolCall(d.toolName, d.toolInput, this.config.cwd, d.toolView)) return;
+    if (decision === 'ask' && this.groveMode === 'readSafe' && isReadOnlyToolCall(d.toolName, d.toolInput, this.config.cwd, d.toolView, this.config.linkedWorktrees ?? [])) return;
     this.warnedUnasked = true;
     const raw = d.toolView.command ?? d.toolView.path ?? d.toolView.summary ?? call.title ?? 'a tool';
     const what = raw.length > 80 ? `${raw.slice(0, 79)}…` : raw;
@@ -1433,6 +1467,8 @@ class AcpQuery {
       alwaysAllowedTools: config.alwaysAllowedTools,
       groveServers: groveServersOf(config),
       approveEditsInWorktree: this.groveMode === 'acceptEdits' || this.groveMode === 'readSafe',
+      linkedWorktrees: config.linkedWorktrees,
+      protectedEditRoots: config.protectedEditRoots,
     }).behavior;
   }
 }

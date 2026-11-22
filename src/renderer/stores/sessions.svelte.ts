@@ -19,6 +19,9 @@ interface SessionEntry {
   /** Timestamp (ms) of the last activity: a message sent, or a turn the
    *  agent finished. */
   lastActiveAt?: number;
+  /** Other projects the thread also works in, through linked worktrees
+   *  (docs/linked-projects-plan.md). Their state comes from linkedStore. */
+  linkedRepos?: string[];
 }
 
 class SessionStore {
@@ -227,6 +230,14 @@ class SessionStore {
     this.sessions = this.sessions.map((s) =>
       s.id === id ? { ...s, status } : s
     );
+  }
+
+  /** The projects a thread also works in changed (linked or unlinked). */
+  setLinkedRepos(id: string, repos: string[]): void {
+    const entry = this.sessions.find((s) => s.id === id);
+    if (!entry) return;
+    if (repos.length > 0) entry.linkedRepos = [...repos];
+    else delete entry.linkedRepos;
   }
 
   /** Fill in what main decided for a thread added before main replied

@@ -125,6 +125,12 @@ function looksLikeRemoteUrl(token: string): boolean {
   return t.includes('://') || /^[^\s/]+@[^\s/]+:/.test(t);
 }
 
+/** Whether `p` is inside the worktree at `cwd`, or one of `extraRoots`
+ *  (the thread's linked projects' worktrees). */
+function insideScope(cwd: string, extraRoots: readonly string[], p: string): boolean {
+  return isPathInside(cwd, p) || extraRoots.some((root) => isPathInside(root, p));
+}
+
 /**
  * True when a command-line token references a filesystem location outside the
  * worktree. Checks the token itself and any value after "=" (--flag=/path).
@@ -133,7 +139,7 @@ function looksLikeRemoteUrl(token: string): boolean {
  * a path only when it has a second separator ("/etc/passwd", "/c/Users/…") so
  * Windows-style switches like findstr's "/s" stay usable.
  */
-function referencesPathOutsideCwd(token: string, cwd: string | undefined): boolean {
+function referencesPathOutsideCwd(token: string, cwd: string | undefined, extraRoots: readonly string[]): boolean {
   const raw = stripQuotes(token);
   const candidates = [raw];
   const eq = raw.indexOf('=');
@@ -147,19 +153,19 @@ function referencesPathOutsideCwd(token: string, cwd: string | undefined): boole
     const isPosixPath = c.startsWith('/') && c.indexOf('/', 1) !== -1;
     if (isDrivePath || isUnc || isPosixPath) {
       if (!cwd) return true;
-      if (!isPathInside(cwd, path.resolve(c))) return true;
+      if (!insideScope(cwd, extraRoots, path.resolve(c))) return true;
     }
   }
   return false;
 }
 
 /** Classify a single simple command (no shell operators). */
-function isReadOnlySimpleCommand(segment: string, cwd: string | undefined): boolean {
+function isReadOnlySimpleCommand(segment: string, cwd: string | undefined, extraRoots: readonly string[]): boolean {
   const tokens = segment.trim().split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return true; // empty segment (e.g. trailing ;)
 
   // Worktree scoping applies to every recognized command's arguments.
-  if (tokens.some((t) => referencesPathOutsideCwd(t, cwd))) return false;
+  if (tokens.some((t) => referencesPathOutsideCwd(t, cwd, extraRoots))) return false;
 
   const cmd = tokens[0].toLowerCase();
 
@@ -237,11 +243,11 @@ function isReadOnlySimpleCommand(segment: string, cwd: string | undefined): bool
  * for a literal ">") but never under-rejects; rejected commands simply fall
  * back to the normal permission prompt.
  */
-export function isReadOnlyBashCommand(command: string, cwd?: string): boolean {
+export function isReadOnlyBashCommand(command: string, cwd?: string, extraRoots: readonly string[] = []): boolean {
   if (typeof command !== 'string' || command.trim() === '') return false;
   if (/[>`]|\$\(/.test(command)) return false;
   const segments = command.split(/&&|\|\||[;|&\n]/);
-  return segments.every((s) => isReadOnlySimpleCommand(s, cwd));
+  return segments.every((s) => isReadOnlySimpleCommand(s, cwd, extraRoots));
 }
 
 /** Characters that let a command run another in some shell even though bash
@@ -261,16 +267,16 @@ const NON_BASH_EXEC_CHARS = /[(){}@$%^\x00-\x1f\x7f]/;
  * of the common Windows shells could execute is refused before the bash
  * allowlist runs.
  */
-function isReadOnlyView(view: ToolView, cwd: string | undefined): boolean {
+function isReadOnlyView(view: ToolView, cwd: string | undefined, extraRoots: readonly string[]): boolean {
   if (view.kind === 'read' || view.kind === 'search') {
     const paths = [view.path, ...(view.morePaths ?? [])].filter((p): p is string => typeof p === 'string' && p !== '');
     if (paths.length === 0 || !cwd) return false;
-    return paths.every((p) => isPathInside(cwd, path.resolve(cwd, p)));
+    return paths.every((p) => insideScope(cwd, extraRoots, path.resolve(cwd, p)));
   }
   if (view.kind === 'shell') {
     const command = view.command;
     if (typeof command !== 'string' || NON_BASH_EXEC_CHARS.test(command)) return false;
-    return isReadOnlyBashCommand(command, cwd);
+    return isReadOnlyBashCommand(command, cwd, extraRoots);
   }
   return false;
 }
@@ -281,8 +287,8 @@ function isReadOnlyView(view: ToolView, cwd: string | undefined): boolean {
  * false and prompts normally. `toolView` is the adapter's description of the
  * call; without one the call is read as a Claude Code tool.
  */
-export function isReadOnlyToolCall(toolName: string, toolInput: unknown, cwd?: string, toolView?: ToolView): boolean {
-  if (toolView) return isReadOnlyView(toolView, cwd);
+export function isReadOnlyToolCall(toolName: string, toolInput: unknown, cwd?: string, toolView?: ToolView, extraRoots: readonly string[] = []): boolean {
+  if (toolView) return isReadOnlyView(toolView, cwd, extraRoots);
   if (READ_ONLY_TOOLS.has(toolName)) {
     const fields = TOOL_PATH_FIELDS[toolName];
     if (!fields) return true;
@@ -292,12 +298,12 @@ export function isReadOnlyToolCall(toolName: string, toolInput: unknown, cwd?: s
       if (value === undefined || value === null) return true; // defaults to cwd
       if (typeof value !== 'string') return false;
       if (!cwd) return false;
-      return isPathInside(cwd, path.resolve(cwd, value));
+      return insideScope(cwd, extraRoots, path.resolve(cwd, value));
     });
   }
   if (toolName === 'Bash') {
     const command = (toolInput as { command?: unknown } | null)?.command;
-    return typeof command === 'string' && isReadOnlyBashCommand(command, cwd);
+    return typeof command === 'string' && isReadOnlyBashCommand(command, cwd, extraRoots);
   }
   return false;
 }

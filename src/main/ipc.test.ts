@@ -17,19 +17,19 @@ const m = vi.hoisted(() => {
     sessionManager: fns(
       'getSessionsByRepo', 'createSession', 'getSession', 'reattachWindow', 'trackPendingSetup', 'hasPendingSetup', 'setupSettled', 'interruptQuery',
       'closeSession', 'sleepSession', 'wakeSession', 'stopTask', 'destroySession', 'listSessions', 'renameSession',
-      'setBranch', 'isMidTurn', 'turnState', 'getEventHistory', 'getEventHistoryPage', 'getEventHistoryCount', 'searchEventHistory',
+      'setBranch', 'isMidTurn', 'isLive', 'dismissCutOff', 'turnState', 'getEventHistory', 'getEventHistoryPage', 'getEventHistoryCount', 'searchEventHistory',
       'beginSearch', 'clearEventHistory', 'sendMessage', 'setMode', 'setModel', 'getControls', 'getUsage', 'setControl',
       'listMcpServers', 'getMcpContextCost', 'reconnectMcpServer', 'setMcpServerEnabled', 'authenticateMcpServer', 'reconnectDownMcpServers',
       'getSessionAdapter', 'getWorktreePath', 'analyzeSkillSuggestionsForRepo', 'respondToPermission',
       'respondToElicitation', 'rewindFiles', 'bringBackFiles', 'getCheckpointDiff', 'listCheckpoints', 'getDiffHistory',
-      'getCheckpointFiles', 'getCheckpointFileDiff', 'getCheckpointFileLines', 'threadUsage', 'getSystemInfo',
+      'getCheckpointFiles', 'getCheckpointFileDiff', 'getCheckpointFileLines', 'threadUsage', 'getSystemInfo', 'setLinked', 'unlinkStopped',
     ),
     worktreeManager: fns(
       'validateRepo', 'cleanupOrphans', 'getWorktreeOrManifest', 'registerDirect', 'create', 'getRepoConfig',
       'copyUntrackedFiles', 'getProviderSessionId', 'getModel', 'getAdapterType', 'getThreadLimits', 'remove',
       'saveDisplayName', 'getDisplayNameState', 'saveAutoDisplayName', 'renameBranch', 'switchBranch',
       'syncBranch', 'list', 'register', 'listRepos', 'getWorktree', 'whenRegistered', 'assertRemovable', 'checkoutSharers',
-      'getGoal', 'getGoals', 'saveGoal', 'setGoalHidden',
+      'getGoal', 'getGoals', 'saveGoal', 'setGoalHidden', 'threadsLinking', 'createLink', 'copyProjectFiles', 'unlinkProject',
     ),
     terminalManager: fns('killAllForSession', 'spawnPty', 'write', 'resize', 'killPty', 'isAlive', 'openTicket', 'holdsTicket'),
     previewManager: fns('close', 'closeAgentPage', 'navigate', 'command', 'setViewport', 'snapshot', 'agentFrame', 'getStates', 'clearSignIns', 'forgetProject'),
@@ -53,7 +53,13 @@ const m = vi.hoisted(() => {
 
 vi.mock('execa', () => ({ execa: vi.fn() }));
 vi.mock('./agent-session.js', () => ({ sessionManager: m.sessionManager }));
-vi.mock('./worktree-manager.js', () => ({ worktreeManager: m.worktreeManager }));
+vi.mock('./worktree-manager.js', () => ({
+  worktreeManager: m.worktreeManager,
+  // As the real one: a link asked for on a branch name the thread no longer has.
+  ThreadBranchMovedError: class ThreadBranchMovedError extends Error {
+    constructor(readonly branch: string) { super(`The thread's branch is now ${branch}`); }
+  },
+}));
 vi.mock('./terminal.js', () => ({ terminalManager: m.terminalManager }));
 vi.mock('./preview.js', () => ({ previewManager: m.previewManager }));
 vi.mock('./adapters/index.js', () => ({ adapterRegistry: m.adapterRegistry, registerClaudeAccount: m.registerClaudeAccount }));
@@ -205,6 +211,7 @@ beforeEach(() => {
     id: c.id, path: wt, branch: c.branchName, repoPath: '/repo', createdAt: 0,
   }));
   m.worktreeManager.getRepoConfig.mockResolvedValue({ copyFiles: [] });
+  m.worktreeManager.threadsLinking.mockResolvedValue([]);
   vi.mocked(detectPackageManager).mockResolvedValue('npm');
 
   vi.mocked(git.validateBranchName).mockResolvedValue(true);
@@ -257,6 +264,13 @@ describe('repos', () => {
     expect(m.worktreeManager.cleanupOrphans).not.toHaveBeenCalled();
   });
 
+  it('REPO_REMOVE refuses while a thread in another project works in it, naming the thread', async () => {
+    m.sessionManager.getSessionsByRepo.mockReturnValue([]);
+    m.worktreeManager.threadsLinking.mockResolvedValue(['Fix login']);
+    await expect(invoke(IPC.REPO_REMOVE, '/b')).rejects.toThrow('A thread in another project works in this project: Fix login. Delete it first.');
+    expect(m.appState.forgetProject).not.toHaveBeenCalled();
+  });
+
   it('REPO_REMOVE refuses while the project has live conversations', async () => {
     m.sessionManager.getSessionsByRepo.mockReturnValue([{ id: 's1' }]);
     await expect(invoke(IPC.REPO_REMOVE, '/repo')).rejects.toThrow('active threads');
@@ -271,6 +285,97 @@ describe('repos', () => {
     await invoke(IPC.REPO_REMOVE, '/repo');
     expect(m.previewManager.forgetProject).toHaveBeenCalledWith('/repo');
     expect(m.appState.forgetProject).toHaveBeenCalledWith('/repo');
+  });
+});
+
+// ─── Linking projects part way through ───
+
+describe('SESSION_LINK_PROJECT and SESSION_UNLINK_PROJECT', () => {
+  const live = { id: 's1', status: 'running' };
+  beforeEach(() => {
+    m.appState.listProjects.mockReturnValue(['/repo', '/b']);
+    m.worktreeManager.listRepos.mockResolvedValue([]);
+    m.worktreeManager.getWorktreeOrManifest.mockResolvedValue(wtInfo());
+    m.sessionManager.getSession.mockReturnValue(live);
+    m.sessionManager.isMidTurn.mockReturnValue(false);
+    m.sessionManager.getSessionAdapter.mockReturnValue({ capabilities: { additionalDirectoryInstructions: true } });
+    m.worktreeManager.createLink.mockResolvedValue({ repoPath: '/b', path: '/wt/b/s1', branch: 'feat' });
+    m.worktreeManager.getWorktree.mockImplementation((id: string) => (id === 's1' ? { ...wtInfo(), linked: [{ repoPath: '/b', path: '/wt/b/s1', branch: 'feat' }] } : undefined));
+    vi.mocked(git.branchExistsAnywhere).mockResolvedValue(false);
+    vi.mocked(git.getDefaultBranch).mockResolvedValue('main');
+  });
+
+  it("links a project on the thread's branch, then tells and restarts the agent", async () => {
+    const result = await invoke(IPC.SESSION_LINK_PROJECT, 's1', '/b');
+
+    expect(result).toEqual({ link: { repoPath: '/b', path: '/wt/b/s1', branch: 'feat' } });
+    expect(m.worktreeManager.createLink).toHaveBeenCalledWith('s1', { repoPath: '/b', branchName: 'feat', baseBranch: 'main', useExisting: false });
+    const [id, links, note] = m.sessionManager.setLinked.mock.calls[0];
+    expect(id).toBe('s1');
+    expect(links).toEqual([{ repoPath: '/b', path: '/wt/b/s1', branch: 'feat' }]);
+    expect(note).toContain('this thread now also works in b, through a git worktree made for it at /wt/b/s1');
+  });
+
+  it("sets up the linked worktree's submodules, and says what didn't work", async () => {
+    const linkDir = fs.mkdtempSync(path.join(tmp, 'linked-sub-'));
+    fs.writeFileSync(path.join(linkDir, '.gitmodules'), '[submodule "lib"]\n');
+    m.worktreeManager.createLink.mockResolvedValue({ repoPath: '/b', path: linkDir, branch: 'feat' });
+    m.settings.getSettings.mockReturnValue({ autoInstallDeps: false, submoduleSetup: 'all' });
+    vi.mocked(readSubmoduleConfig).mockResolvedValue({ active: [], sshCommand: false });
+    vi.mocked(initSubmodules).mockRejectedValueOnce(new Error('could not read Username'));
+
+    const result = await invoke(IPC.SESSION_LINK_PROJECT, 's1', '/b');
+
+    expect(initSubmodules).toHaveBeenCalledWith(linkDir, expect.arrayContaining(['submodule', 'update']), expect.anything(), expect.anything());
+    expect(result.warning).toContain("Not all of b's submodules could be set up");
+    expect(m.sessionManager.setLinked).toHaveBeenCalled();
+  });
+
+  it('refuses mid-turn, for a thread not open, in the project folder, or for its own project', async () => {
+    m.sessionManager.isMidTurn.mockReturnValueOnce(true);
+    await expect(invoke(IPC.SESSION_LINK_PROJECT, 's1', '/b')).rejects.toThrow('once the agent finishes this turn');
+    m.sessionManager.getSession.mockReturnValueOnce({ id: 's1', status: 'stopped' });
+    await expect(invoke(IPC.SESSION_LINK_PROJECT, 's1', '/b')).rejects.toThrow('Open the thread first');
+    m.worktreeManager.getWorktreeOrManifest.mockResolvedValueOnce({ ...wtInfo(), direct: true });
+    await expect(invoke(IPC.SESSION_LINK_PROJECT, 's1', '/b')).rejects.toThrow('needs this thread in its own worktree');
+    await expect(invoke(IPC.SESSION_LINK_PROJECT, 's1', '/repo')).rejects.toThrow("can't link its own project");
+    m.worktreeManager.getWorktreeOrManifest.mockResolvedValueOnce({ ...wtInfo(), linked: [{ repoPath: '/b', path: '/wt/b/s1', branch: 'feat' }] });
+    await expect(invoke(IPC.SESSION_LINK_PROJECT, 's1', '/b')).rejects.toThrow('This thread already works in b.');
+    expect(m.worktreeManager.createLink).not.toHaveBeenCalled();
+    expect(m.sessionManager.setLinked).not.toHaveBeenCalled();
+  });
+
+  it('unlinks a project with the agent stopped, deleting its branch when asked, and tells the agent', async () => {
+    m.worktreeManager.unlinkProject.mockResolvedValue({ repoPath: '/b', path: '/wt/b/s1', branch: 'feat' });
+    m.worktreeManager.getWorktree.mockImplementation((id: string) => (id === 's1' ? wtInfo() : undefined));
+    let left: { linked: unknown[]; note: string } | undefined;
+    m.sessionManager.unlinkStopped.mockImplementation(async (_id: string, remove: () => Promise<{ linked: unknown[]; note: string }>) => { left = await remove(); });
+
+    await invoke(IPC.SESSION_UNLINK_PROJECT, 's1', '/b', true);
+
+    expect(m.sessionManager.unlinkStopped).toHaveBeenCalledWith('s1', expect.any(Function));
+    expect(m.worktreeManager.unlinkProject).toHaveBeenCalledWith('s1', '/b', true);
+    expect(left?.linked).toEqual([]);
+    expect(left?.note).toContain('this thread no longer works in b. Its worktree at /wt/b/s1 was removed');
+  });
+
+  it("passes on why the worktree couldn't be removed", async () => {
+    m.worktreeManager.unlinkProject.mockRejectedValue(new Error('Files in the worktree of b are still in use'));
+    m.sessionManager.unlinkStopped.mockImplementation(async (_id: string, remove: () => Promise<unknown>) => { await remove(); });
+    await expect(invoke(IPC.SESSION_UNLINK_PROJECT, 's1', '/b', false)).rejects.toThrow('still in use');
+  });
+
+  it('links on the new branch name when the thread was renamed during the checks', async () => {
+    const { ThreadBranchMovedError } = await import('./worktree-manager.js');
+    m.worktreeManager.createLink
+      .mockRejectedValueOnce(new ThreadBranchMovedError('fix-login'))
+      .mockResolvedValueOnce({ repoPath: '/b', path: '/wt/b/s1', branch: 'fix-login' });
+
+    await invoke(IPC.SESSION_LINK_PROJECT, 's1', '/b');
+
+    expect(m.worktreeManager.createLink).toHaveBeenCalledTimes(2);
+    expect(m.worktreeManager.createLink).toHaveBeenLastCalledWith('s1', expect.objectContaining({ branchName: 'fix-login' }));
+    expect(m.sessionManager.setLinked).toHaveBeenCalled();
   });
 });
 
@@ -390,6 +495,72 @@ describe('SESSION_CREATE', () => {
       await lastSetup().promise;
       expect(result.branch).toBe('feat/free');
       expect(m.worktreeManager.create).toHaveBeenCalledWith(expect.objectContaining({ branchName: 'feat/free', useExisting: true }));
+    });
+  });
+
+  describe('working in other projects too (linkedRepos)', () => {
+    beforeEach(() => {
+      m.appState.listProjects.mockReturnValue(['/repo', '/b', '/notes']);
+      m.worktreeManager.listRepos.mockResolvedValue([]);
+      // As the real one: the thread's info gains the link.
+      let created: { linked?: unknown[] } = {};
+      m.worktreeManager.createLink.mockImplementation(async (id: string, c: { repoPath: string; branchName: string }) => {
+        const link = { repoPath: c.repoPath, path: `/wt/b/${id}`, branch: c.branchName };
+        created.linked = [link];
+        return link;
+      });
+      m.worktreeManager.create.mockImplementation(async (c: { id: string; branchName: string }) => {
+        created = { id: c.id, path: wt, branch: c.branchName, repoPath: '/repo', createdAt: 0 } as typeof created;
+        return created;
+      });
+    });
+
+    it("makes a worktree of each on the thread's branch, new from its default branch, and gives the agent them", async () => {
+      vi.mocked(git.branchExistsAnywhere).mockResolvedValue(false);
+      vi.mocked(git.getDefaultBranch).mockResolvedValue('develop');
+      await create({ id: 'abc12345', branchName: 'feat', linkedRepos: ['/b', '/repo', '/b'] });
+      await lastSetup().promise;
+
+      expect(m.worktreeManager.createLink).toHaveBeenCalledTimes(1);
+      expect(m.worktreeManager.createLink).toHaveBeenCalledWith('abc12345', { repoPath: '/b', branchName: 'feat', baseBranch: 'develop', useExisting: false });
+      expect(m.sessionManager.createSession).toHaveBeenCalledWith(expect.objectContaining({
+        linked: [{ repoPath: '/b', path: '/wt/b/abc12345', branch: 'feat' }],
+      }));
+    });
+
+    it('continues the branch where the other project has it and nothing has it checked out', async () => {
+      vi.mocked(git.branchExistsAnywhere).mockImplementation(async (cwd: string) => cwd === '/b');
+      vi.mocked(git.worktreeBranches).mockResolvedValue(new Map([['main', '/b']]));
+      await create({ id: 'abc12345', branchName: 'feat', linkedRepos: ['/b'] });
+      await lastSetup().promise;
+      expect(m.worktreeManager.createLink).toHaveBeenCalledWith('abc12345', { repoPath: '/b', branchName: 'feat', useExisting: true });
+    });
+
+    it('refuses, before any setup, a branch checked out in the other project', async () => {
+      vi.mocked(git.branchExistsAnywhere).mockImplementation(async (cwd: string) => cwd === '/b');
+      vi.mocked(git.worktreeBranches).mockResolvedValue(new Map([['feat', '/b']]));
+      await expect(create({ branchName: 'feat', linkedRepos: ['/b'] })).rejects.toThrow('feat is checked out at /b in b.');
+      expect(m.worktreeManager.create).not.toHaveBeenCalled();
+    });
+
+    it("refuses a folder that isn't an added git project, and a thread in the project folder", async () => {
+      vi.mocked(git.branchExistsAnywhere).mockResolvedValue(false);
+      await expect(create({ branchName: 'feat', linkedRepos: ['/elsewhere'] })).rejects.toThrow("elsewhere isn't one of your projects");
+      m.projectPath.projectKind.mockImplementation(async (p: string) => (p === '/notes' ? 'folder' : 'git'));
+      await expect(create({ branchName: 'feat', linkedRepos: ['/notes'] })).rejects.toThrow("notes isn't a git repository");
+      await expect(create({ direct: true, linkedRepos: ['/b'] })).rejects.toThrow('needs this thread in its own worktree');
+      expect(m.worktreeManager.create).not.toHaveBeenCalled();
+      expect(m.worktreeManager.registerDirect).not.toHaveBeenCalled();
+    });
+
+    it('starts the thread without a project it could not link, and says why', async () => {
+      vi.mocked(git.branchExistsAnywhere).mockResolvedValue(false);
+      m.worktreeManager.createLink.mockRejectedValueOnce(new Error('disk full'));
+      await create({ id: 'abc12345', branchName: 'feat', linkedRepos: ['/b'] });
+      await lastSetup().promise;
+      expect(m.sessionManager.createSession).toHaveBeenCalledWith(expect.objectContaining({ linked: [] }));
+      const sent = vi.mocked(BrowserWindow.fromWebContents).mock.results.at(-1)?.value?.webContents.send.mock.calls ?? [];
+      expect(JSON.stringify(sent)).toContain("Couldn't make a worktree of b, so this thread works without it: disk full");
     });
   });
 
@@ -1156,6 +1327,21 @@ describe('AGENT_SYSTEM_INFO', () => {
 });
 
 describe('agent I/O', () => {
+  it("passes on Continue's mark only when it's exactly true, and dismisses a cut-off turn", async () => {
+    m.sessionManager.sendMessage.mockResolvedValue(true);
+    invoke(IPC.AGENT_SEND, 's1', 'carry on', undefined, undefined, { continued: true });
+    invoke(IPC.AGENT_SEND, 's1', 'hello', undefined, undefined, { continued: 'yes' });
+    invoke(IPC.AGENT_SEND, 's1', 'hi');
+    expect(m.sessionManager.sendMessage.mock.calls.map((c: unknown[]) => c[4])).toEqual([
+      { continued: true }, { continued: false }, { continued: false },
+    ]);
+
+    m.sessionManager.dismissCutOff.mockResolvedValue(true);
+    expect(await invoke(IPC.SESSION_DISMISS_CUT_OFF, 's1')).toBe(true);
+    expect(await invoke(IPC.SESSION_DISMISS_CUT_OFF, 42)).toBe(false);
+    expect(m.sessionManager.dismissCutOff).toHaveBeenCalledTimes(1);
+  });
+
   it('tells the tab when a message could not be delivered', async () => {
     m.sessionManager.sendMessage.mockResolvedValue(false);
     invoke(IPC.AGENT_SEND, 's1', 'hello');
@@ -1297,6 +1483,18 @@ describe('history', () => {
     expect(await second).toEqual([{ eventIndex: 0, sessionId: 's1' }]);
   });
 
+  it("previews say when a thread's last turn was cut off, counting one left unfinished only with no agent running", async () => {
+    const quit = [{ type: 'user_message', text: 'Run the tests' }, { type: 'turn_cut_off', reason: 'update', at: 5 }, { type: 'process_exit' }];
+    const crashed = [{ type: 'user_message', text: 'Run the tests' }, { type: 'assistant_text', text: 'Running them' }];
+    m.sessionManager.getEventHistory.mockImplementation((id: string) => (id === 'quit' ? quit : crashed));
+    m.sessionManager.isLive.mockImplementation((id: string) => id === 'live');
+    const previews = await (invoke(IPC.SESSION_PREVIEWS, ['quit', 'crashed', 'live']) as Promise<Record<string, SessionPreview>>);
+    expect(previews.quit.cutOff).toEqual({ reason: 'update', at: 5 });
+    expect(previews.crashed.cutOff).toEqual({ reason: 'unknown' });
+    // Its turn is still running.
+    expect(previews.live.cutOff).toBeUndefined();
+  });
+
   it('previews skip a conversation whose history cannot be read', async () => {
     m.sessionManager.getEventHistory.mockImplementation((id: string) => {
       if (id === 'bad') throw new Error('corrupt log');
@@ -1362,6 +1560,39 @@ describe('file handlers', () => {
     // Over the limit or binary in the index too.
     vi.mocked(git.blobLines).mockResolvedValue(null);
     expect(await invoke(IPC.FILE_LINES, 's1', 'lines.ts', true)).toBeNull();
+  });
+
+  describe('reading a linked project for the Changes tab', () => {
+    const linkWt = () => path.join(tmp, 'linked-wt');
+    beforeEach(() => {
+      fs.mkdirSync(linkWt(), { recursive: true });
+      m.worktreeManager.getWorktree.mockImplementation((id: string) => (id === 's1'
+        ? { ...wtInfo(), linked: [{ repoPath: '/b', path: linkWt(), branch: 'feat' }] }
+        : undefined));
+    });
+
+    it("GIT_STATUS reads the linked worktree, without its stopped git operation, and nothing it doesn't link", async () => {
+      vi.mocked(git.git).mockResolvedValue(' M lib/pay.ts\0');
+      const result = await invoke(IPC.GIT_STATUS, 's1', { linkedRepo: '/b' });
+      expect(result.entries.map((e: { filePath: string }) => e.filePath)).toEqual(['lib/pay.ts']);
+      expect(vi.mocked(git.git).mock.calls.every(([, cwd]) => cwd === linkWt())).toBe(true);
+      expect(git.gitOperation).not.toHaveBeenCalled();
+      expect(await invoke(IPC.GIT_STATUS, 's1', { linkedRepo: '/elsewhere' })).toEqual({ entries: [] });
+    });
+
+    it('FILE_DIFF and FILE_LINES read files in the linked worktree, and keep to it', async () => {
+      fs.writeFileSync(path.join(linkWt(), 'pay.ts'), 'one\ntwo\n');
+      vi.mocked(git.fileDiff).mockResolvedValue('--- a/pay.ts\n+++ b/pay.ts\n@@ -1 +1 @@\n-old\n+one\n');
+      expect(await invoke(IPC.FILE_DIFF, 's1', 'pay.ts', false, { linkedRepo: '/b' })).toMatchObject({ kind: 'text' });
+      expect(git.fileDiff).toHaveBeenCalledWith(linkWt(), 'pay.ts', { staged: false });
+      expect(await invoke(IPC.FILE_LINES, 's1', 'pay.ts', false, { linkedRepo: '/b' })).toEqual({ lines: ['one', 'two'] });
+      await expect(invoke(IPC.FILE_DIFF, 's1', '../wt/secret.ts', false, { linkedRepo: '/b' })).rejects.toThrow();
+      await expect(invoke(IPC.FILE_DIFF, 's1', 'pay.ts', false, { linkedRepo: '/elsewhere' })).rejects.toThrow('Worktree not found');
+    });
+
+    it('FILE_OPEN_IN_EDITOR opens a file in the linked worktree, and nothing outside it', async () => {
+      await expect(invoke(IPC.FILE_OPEN_IN_EDITOR, 's1', '../wt/a.ts', undefined, { linkedRepo: '/b' })).rejects.toThrow('Path traversal not allowed');
+    });
   });
 
   it('FILE_DIFF: images get a thumbnail view, untracked files a synthesized diff', async () => {
@@ -1636,6 +1867,77 @@ describe('git handlers', () => {
   it('GIT_SYNC_STATUS reads as no upstream when git fails', async () => {
     vi.mocked(git.syncStatus).mockRejectedValue(new Error('boom'));
     expect(await invoke(IPC.GIT_SYNC_STATUS, 's1')).toEqual({ upstream: null, ahead: 0, behind: 0 });
+  });
+
+  describe('GIT_LINKED_STATUS', () => {
+    const linkedInfo = () => ({
+      ...wtInfo(),
+      linked: [
+        { repoPath: '/b', path: wt, branch: 'feat' },
+        { repoPath: '/c', path: path.join(tmp, 'gone'), branch: 'feat' },
+      ],
+    });
+
+    it("reads each linked worktree's branch, changes, sync, unmerged commits and, when asked, its PR", async () => {
+      m.worktreeManager.getWorktree.mockImplementation((id: string) => (id === 's1' ? linkedInfo() : undefined));
+      vi.mocked(git.currentBranch).mockResolvedValue('feat');
+      vi.mocked(git.git).mockResolvedValue(' M a.ts\0?? b.ts\0');
+      vi.mocked(git.syncStatus).mockResolvedValue({ upstream: 'origin/feat', ahead: 1, behind: 0 });
+      vi.mocked(git.getDefaultBranch).mockResolvedValue('main');
+      vi.mocked(git.branchCommits).mockResolvedValue([{ sha: 'a', subject: 'x' }, { sha: 'b', subject: 'y' }] as never);
+      vi.mocked(gh.ghLogin).mockResolvedValue('me');
+      vi.mocked(gh.prsForBranches).mockResolvedValue([{ number: 7, url: 'u', state: 'OPEN', headRefName: 'feat' }]);
+
+      const [b, c] = await invoke(IPC.GIT_LINKED_STATUS, 's1', { pr: true });
+
+      expect(b).toEqual({
+        repoPath: '/b', path: wt, branch: 'feat', uncommitted: 2, sync: { upstream: 'origin/feat', ahead: 1, behind: 0 },
+        base: 'main', unmerged: 2, pr: { number: 7, url: 'u', state: 'OPEN', headRefName: 'feat' },
+      });
+      expect(gh.prsForBranches).toHaveBeenCalledWith('/b', ['feat'], 'me');
+      // Its folder is gone: said, nothing read.
+      expect(c).toMatchObject({ repoPath: '/c', missing: true, branch: null, uncommitted: null });
+    });
+
+    it('kills git after the timeout a delete check asks for', async () => {
+      m.worktreeManager.getWorktree.mockImplementation((id: string) => (id === 's1' ? linkedInfo() : undefined));
+      vi.mocked(git.currentBranch).mockResolvedValue('feat');
+      vi.mocked(git.git).mockResolvedValue('');
+      vi.mocked(git.syncStatus).mockResolvedValue({ upstream: null, ahead: 0, behind: 0 });
+      vi.mocked(git.getDefaultBranch).mockResolvedValue('main');
+      vi.mocked(git.branchCommits).mockResolvedValue([]);
+
+      await invoke(IPC.GIT_LINKED_STATUS, 's1', { timeout: 15_000 });
+
+      expect(git.currentBranch).toHaveBeenCalledWith(wt, { timeout: 15_000 });
+      expect(git.syncStatus).toHaveBeenCalledWith(wt, { timeout: 15_000 });
+      expect(git.branchCommits).toHaveBeenCalledWith(wt, 'main', { timeout: 15_000 });
+      expect(vi.mocked(git.git).mock.calls.some(([args, cwd, o]) => args[0] === 'status' && cwd === wt && (o as { timeout?: number })?.timeout === 15_000)).toBe(true);
+    });
+
+    it("asks GitHub nothing unless asked, and reads what git can't as null", async () => {
+      m.worktreeManager.getWorktree.mockImplementation((id: string) => (id === 's1' ? linkedInfo() : undefined));
+      vi.mocked(git.currentBranch).mockResolvedValue('feat');
+      vi.mocked(git.git).mockRejectedValue(new Error('locked'));
+      vi.mocked(git.syncStatus).mockRejectedValue(new Error('boom'));
+      vi.mocked(git.getDefaultBranch).mockResolvedValue('main');
+      vi.mocked(git.branchCommits).mockRejectedValue(new Error('boom'));
+
+      const [b] = await invoke(IPC.GIT_LINKED_STATUS, 's1');
+
+      expect(b).toMatchObject({ branch: 'feat', uncommitted: null, sync: null, unmerged: null, pr: null });
+      expect(gh.prsForBranches).not.toHaveBeenCalled();
+      expect(await invoke(IPC.GIT_LINKED_STATUS, 'unknown')).toEqual([]);
+    });
+  });
+
+  it("OPEN_SESSION_FOLDER opens one of the thread's linked worktrees, and nothing it doesn't have", async () => {
+    m.worktreeManager.getWorktreeOrManifest.mockResolvedValue({ ...wtInfo(), linked: [{ repoPath: '/b', path: '/wt/b/s1', branch: 'feat' }] });
+    await invoke(IPC.OPEN_SESSION_FOLDER, 's1', '/b');
+    expect(shell.openPath).toHaveBeenCalledWith('/wt/b/s1');
+    vi.mocked(shell.openPath).mockClear();
+    await invoke(IPC.OPEN_SESSION_FOLDER, 's1', '/elsewhere');
+    expect(shell.openPath).not.toHaveBeenCalled();
   });
 });
 

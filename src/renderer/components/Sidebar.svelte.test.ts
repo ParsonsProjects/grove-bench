@@ -5,6 +5,7 @@ import { tick } from 'svelte';
 
 import Sidebar from './Sidebar.svelte';
 import { store } from '../stores/sessions.svelte.js';
+import { linkedStore } from '../stores/linked.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
 import { sessionPreviewStore } from '../stores/sessionPreviews.svelte.js';
 import { goalStore } from '../stores/goals.svelte.js';
@@ -214,6 +215,23 @@ describe('Sidebar session rows', () => {
     const focusRule = 'group-has-[:focus-visible]/session';
     expect(screen.getByTitle(/^Close thread/)).toHaveClass(`${focusRule}:opacity-100`);
     expect(screen.getByTitle(/^Created /)).toHaveClass(`${focusRule}:invisible`);
+  });
+
+  it('offers Work in Another Project for a live worktree thread while there is a git project to link', async () => {
+    store.repos = ['/repo-a', '/repo-b'];
+    store.sessions = [
+      { id: 's1', branch: 'feat-x', repoPath: '/repo-a', status: 'running', displayName: 'Sidebar revamp' },
+      { id: 'd1', branch: 'main', repoPath: '/repo-a', status: 'running', displayName: 'In the folder', direct: true },
+    ] as any;
+    render(Sidebar);
+    await fireEvent.contextMenu(screen.getByText('Sidebar revamp'));
+    await fireEvent.click(screen.getByText('Work in Another Project…'));
+    expect(linkedStore.linkDialogFor).toBe('s1');
+    linkedStore.linkDialogFor = null;
+
+    await fireEvent.contextMenu(screen.getByText('In the folder'));
+    expect(screen.queryByText('Work in Another Project…')).toBeNull();
+    store.repos = [];
   });
 
   it('has no menu item that starts a second agent in the same worktree', async () => {
@@ -1654,6 +1672,22 @@ describe('Sidebar clean-up dialog', () => {
       expect(getBranchCommits).not.toHaveBeenCalled();
     });
 
+    it("shows commits on a linked project's branch, which go with the branches, and counts them in the warning", async () => {
+      store.sessions = store.sessions.map((t) => (t.id === 'a' ? { ...t, linkedRepos: ['/repo-b'] } : t));
+      mockGroveBench.getLinkedStatus.mockImplementation(async (id: string) => (id === 'a'
+        ? [{ repoPath: '/repo-b', path: '/wt/b/a', branch: 'feat-a', uncommitted: 0, sync: null, base: 'main', unmerged: 2, pr: null }]
+        : []));
+      try {
+        const dialog = await openChecked();
+        await fireEvent.click(deleteBranchesBox(dialog));
+        expect(await within(dialog).findByTestId('cleanup-linked-commits-a')).toHaveTextContent('· 2 commits in linked projects');
+        expect(mockGroveBench.getLinkedStatus).toHaveBeenCalledWith('a', { timeout: 15_000 });
+      } finally {
+        mockGroveBench.getLinkedStatus.mockReset();
+        mockGroveBench.getLinkedStatus.mockResolvedValue([]);
+      }
+    });
+
     it('deletes their branches when asked, and says so before removing', async () => {
       const dialog = await openChecked();
       await fireEvent.click(deleteBranchesBox(dialog));
@@ -1911,6 +1945,53 @@ describe('Sidebar delete conversation', () => {
     return screen.findByRole('dialog');
   }
 
+  it("warns about uncommitted files in a linked project's worktree, which goes with it", async () => {
+    mockGroveBench.getLinkedStatus.mockResolvedValueOnce([{
+      repoPath: '/repo-b', path: '/wt/b/s2', branch: 'fix-parser', uncommitted: 2, sync: null, base: 'main', unmerged: 1, pr: null,
+    }]);
+    store.repos = ['/repo-a', '/repo-b'];
+    store.sessions = [{ id: 's2', branch: 'fix-parser', repoPath: '/repo-a', status: 'stopped', linkedRepos: ['/repo-b'] }] as any;
+    store.activeSessionId = null;
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-a': false });
+    render(Sidebar);
+    await fireEvent.click(await screen.findByTitle('Delete thread'));
+    expect(await screen.findByTestId('destroy-linked-uncommitted')).toHaveTextContent('Its worktree of repo-b goes too, and 2 files have uncommitted changes there that will be lost.');
+    // With the 15 s git timeout the thread's own checks have.
+    expect(mockGroveBench.getLinkedStatus).toHaveBeenCalledWith('s2', { timeout: 15_000 });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled());
+    store.repos = [];
+  });
+
+  it("asks for Delete anyway, once the branch is to go, when a linked branch's commits can't be checked", async () => {
+    mockGroveBench.getLinkedStatus.mockResolvedValueOnce([{
+      repoPath: '/repo-b', path: '/wt/b/s2', branch: 'fix-parser', uncommitted: 0, sync: null, base: null, unmerged: null, pr: null,
+    }]);
+    store.sessions = [{ id: 's2', branch: 'fix-parser', repoPath: '/repo-a', status: 'stopped', linkedRepos: ['/repo-b'] }] as any;
+    store.activeSessionId = null;
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-a': false });
+    render(Sidebar);
+    await fireEvent.click(await screen.findByTitle('Delete thread'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled());
+    await fireEvent.click(screen.getByLabelText('Also delete the branch'));
+    expect(await screen.findByTestId('destroy-linked-unmerged-failed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+    await fireEvent.click(screen.getByLabelText('Delete anyway'));
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+  });
+
+  it("asks for Delete anyway when a linked project's worktree can't be read", async () => {
+    mockGroveBench.getLinkedStatus.mockRejectedValueOnce(new Error('git died'));
+    store.sessions = [{ id: 's2', branch: 'fix-parser', repoPath: '/repo-a', status: 'stopped', linkedRepos: ['/repo-b'] }] as any;
+    store.activeSessionId = null;
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-a': false });
+    render(Sidebar);
+    await fireEvent.click(await screen.findByTitle('Delete thread'));
+    expect(await screen.findByTestId('destroy-linked-failed')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled());
+    await fireEvent.click(screen.getByLabelText('Delete anyway'));
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+  });
+
   it('warns about uncommitted files before deleting', async () => {
     mockGroveBench.getGitStatus.mockResolvedValueOnce({ entries: [{ filePath: 'a.ts', status: 'modified', staged: false }, { filePath: 'b.ts', status: 'untracked', staged: false }] });
     const dialog = await openDeleteDialog();
@@ -2120,6 +2201,32 @@ describe('Sidebar remove project', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Remove project repo-a' }));
     return screen.findByRole('dialog');
   }
+
+  it('refuses to remove a project a thread in another project works in, before deleting anything', async () => {
+    store.sessions = [
+      ...store.sessions,
+      { id: 'linker', branch: 'feat-y', repoPath: '/repo-b', status: 'stopped', displayName: 'Uses A too', linkedRepos: ['/repo-a'] },
+    ] as any;
+    const dialog = await openRemoveDialog();
+    expect(await within(dialog).findByTestId('remove-repo-linked')).toHaveTextContent('A thread in another project works in this project: Uses A too. Delete it first.');
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Remove' })).toBeDisabled());
+    expect(destroySession).not.toHaveBeenCalled();
+  });
+
+  it("warns about commits on its threads' linked projects' branches once the branches are to be deleted too", async () => {
+    store.sessions = store.sessions.map((t: { id: string }) => (t.id === 'w1' ? { ...t, linkedRepos: ['/repo-b'] } : t)) as any;
+    mockGroveBench.getLinkedStatus.mockImplementation(async () => [
+      { repoPath: '/repo-b', path: '/wt/b/w1', branch: 'feat-one', uncommitted: 0, sync: null, base: 'main', unmerged: 3, pr: null },
+    ]);
+    try {
+      const dialog = await openRemoveDialog();
+      await fireEvent.click(within(dialog).getByLabelText('Also delete their branches'));
+      expect(await within(dialog).findByTestId('remove-repo-linked-unmerged')).toHaveTextContent('1 thread has commits on a branch in another project they work in');
+    } finally {
+      mockGroveBench.getLinkedStatus.mockReset();
+      mockGroveBench.getLinkedStatus.mockResolvedValue([]);
+    }
+  });
 
   it('is offered while the project still has conversations, and says they go too', async () => {
     const dialog = await openRemoveDialog();

@@ -7,7 +7,9 @@
 //   nohttp   - no HTTP MCP support
 //   media    - takes audio and embedded resources in prompts too
 //   noimage  - takes nothing beyond the baseline (no images)
-// Prompt texts pick a turn: 'wait', 'titled-exec', 'env', 'unasked', 'unasked-read',
+//   roots    - takes additionalDirectories; the 'roots' turn replies with
+//              the last list a session request carried
+// Prompt texts pick a turn: 'wait', 'titled-exec', 'env', 'roots', 'unasked', 'unasked-read',
 // 'echo', 'blocks', 'mcp', 'mcp-call', 'self-mode', 'cost'; anything else runs the default turn.
 // A prompt with no text block gets its blocks back as JSON.
 import { createInterface } from 'node:readline';
@@ -20,6 +22,7 @@ const waiting = new Map();
 let cancelRequested = null;
 let model = 'm1';
 let lastMcpServers = [];
+let lastRoots = null;
 let busy = false;
 let spent = 0;
 let keySignedIn = false;
@@ -76,6 +79,10 @@ async function prompt(params) {
     update(sid, { sessionUpdate: 'tool_call', toolCallId: 'slow', kind: 'execute', title: 'Sleep', status: 'in_progress', rawInput: { command: 'sleep 100' } });
     await new Promise((resolve) => { cancelRequested = resolve; });
     return { stopReason: 'cancelled' };
+  }
+  if (text === 'roots' || text.endsWith('\n\nroots')) {
+    update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(lastRoots) } });
+    return { stopReason: 'end_turn' };
   }
   if (text === 'env' || text.endsWith('\n\nenv')) {
     // What the adapter put in this process's environment.
@@ -222,6 +229,7 @@ async function handle(msg) {
           promptCapabilities: scenario === 'media' ? { image: true, audio: true, embeddedContext: true }
             : scenario === 'noimage' ? {} : { image: true },
           mcpCapabilities: { http: scenario !== 'nohttp' },
+          ...(scenario === 'roots' ? { sessionCapabilities: { additionalDirectories: {} } } : {}),
         },
         agentInfo: { name: 'fake', version: '1' },
         authMethods: scenario === 'keyauth' ? [{ id: 'fake-api-key', name: 'API key' }] : [],
@@ -234,6 +242,7 @@ async function handle(msg) {
       if (scenario === 'auth') return fail(-32000, 'Authentication required');
       if (scenario === 'keyauth' && !keySignedIn) return fail(-32000, 'This client is no longer supported');
       lastMcpServers = params.mcpServers ?? [];
+      lastRoots = params.additionalDirectories ?? null;
       setTimeout(() => update('s1', { sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'compress', description: 'Compress' }] }), 0);
       return reply({ sessionId: 's1', modes, configOptions: configOptions() });
     case 'session/load':
@@ -242,6 +251,7 @@ async function handle(msg) {
       // An agent that answers a load with nothing.
       if (params.sessionId === 'null-answer') return reply(null);
       lastMcpServers = params.mcpServers ?? [];
+      lastRoots = params.additionalDirectories ?? null;
       update(params.sessionId, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'old question' } });
       update(params.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'old answer' } });
       // A command from the old conversation, run without asking.

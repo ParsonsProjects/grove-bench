@@ -55,6 +55,11 @@ export interface AgentCapabilities {
   structuredOutput: boolean;
   /** Supports sandbox/restricted execution */
   sandbox: boolean;
+  /** Can load the project instructions (CLAUDE.md) of the folders in
+   *  AdapterConfig.additionalDirectories itself, when
+   *  AdapterConfig.additionalDirectoryInstructions asks. Other agents are
+   *  told which files to read instead. */
+  additionalDirectoryInstructions?: boolean;
   /** The user can add other accounts with this provider, each run as its own
    *  agent (Settings > Agents, claude-accounts.ts). */
   accounts?: boolean;
@@ -196,6 +201,27 @@ export interface PreviewOperations {
 
 export interface AdapterConfig {
   cwd: string;
+  /** Folders outside cwd the agent may also work in, as absolute paths: the
+   *  "Additional working directories" setting and the thread's linked
+   *  projects' worktrees. Claude Code takes them as additionalDirectories
+   *  (--add-dir); an ACP agent gets them only when it advertises
+   *  sessionCapabilities.additionalDirectories. */
+  additionalDirectories?: string[] | null;
+  /** Load the project instructions of additionalDirectories, as a thread
+   *  with linked projects asks (capability additionalDirectoryInstructions). */
+  additionalDirectoryInstructions?: boolean;
+  /** The thread's linked projects' worktrees (also in
+   *  additionalDirectories): edits and reads there count as the thread's own
+   *  for the modes Grove applies. */
+  linkedWorktrees?: string[] | null;
+  /** What to call folders in additionalDirectories when telling the user
+   *  about them, by path: a linked project's name for its worktree (whose
+   *  own folder is named after the thread). Others go by their folder's name. */
+  folderNames?: Record<string, string> | null;
+  /** Folders the agent must not edit, as absolute paths: each linked
+   *  project's own folder, whose worktree (in additionalDirectories) it edits
+   *  instead. */
+  protectedEditRoots?: string[] | null;
   /** The folder files attached to this conversation's messages are saved in,
    *  outside cwd. Claude Code lets the agent read there without a prompt. */
   attachmentsDir?: string | null;

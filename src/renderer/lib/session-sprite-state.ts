@@ -1,3 +1,4 @@
+import { threadCutOff } from './cut-off.js';
 import type { SessionStatus } from '../../shared/types.js';
 import { store } from '../stores/sessions.svelte.js';
 import { messageStore } from '../stores/messages.svelte.js';
@@ -18,7 +19,8 @@ export function sessionSpriteState(session: { id: string; status: SessionStatus 
   return agentSpriteState({
     destroying,
     status: restoredTab ? 'sleeping' : session.status,
-    hasPending: messageStore.needsInput(session.id),
+    // A turn cut off when Grove Bench stopped waits on the user too.
+    hasPending: messageStore.needsInput(session.id) || threadCutOff(session.id) !== null,
     isRunning: messageStore.getIsRunning(session.id),
     backgroundAgent: backgroundAgentRunning(session),
     needsAttention: store.isUnread(session),

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { reviewStore } from './review.svelte.js';
+import { linkedReviewKey, reviewStore } from './review.svelte.js';
 
 const SID = 'review-session';
 
@@ -49,5 +49,34 @@ describe('reviewStore — comments', () => {
     expect(reviewStore.getComments(SID).map(c => c.body)).toEqual(['second']);
     reviewStore.clearComments(SID);
     expect(reviewStore.getComments(SID)).toEqual([]);
+  });
+});
+
+describe('reviewStore — linked projects', () => {
+  const linked = linkedReviewKey('s-linked', '/code/billing');
+
+  it("keeps a linked project's marks apart from the thread's own, for the same path", () => {
+    reviewStore.setViewed(linked, 'src/a.ts', 'h1', true);
+    expect(reviewStore.isViewed(linked, 'src/a.ts', 'h1')).toBe(true);
+    expect(reviewStore.isViewed('s-linked', 'src/a.ts', 'h1')).toBe(false);
+    reviewStore.clear('s-linked');
+  });
+
+  it("clears a deleted thread's linked projects' state with its own, stored or not", () => {
+    reviewStore.setViewed('s-linked', 'src/own.ts', 'h0', true);
+    reviewStore.setViewed(linked, 'src/a.ts', 'h1', true);
+    reviewStore.addComment(linked, { filePath: 'src/a.ts', startLine: 1, endLine: 1, side: 'new', snippet: 'x', body: 'fix' });
+    // Another thread's are kept.
+    const other = linkedReviewKey('s-other', '/code/billing');
+    reviewStore.setViewed(other, 'src/a.ts', 'h1', true);
+
+    reviewStore.clear('s-linked');
+
+    expect(reviewStore.isViewed('s-linked', 'src/own.ts', 'h0')).toBe(false);
+    expect(reviewStore.isViewed(linked, 'src/a.ts', 'h1')).toBe(false);
+    expect(reviewStore.getComments(linked)).toEqual([]);
+    expect(localStorage.getItem(`grove-bench:review:${linked}`)).toBeNull();
+    expect(reviewStore.isViewed(other, 'src/a.ts', 'h1')).toBe(true);
+    reviewStore.clear('s-other');
   });
 });
