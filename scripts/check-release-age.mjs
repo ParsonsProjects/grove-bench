@@ -11,7 +11,8 @@
  * skipped, as npm skips them.
  *
  * Usage: node scripts/check-release-age.mjs <base-ref> [lockfile...]
- * Lockfiles default to package-lock.json and landing/package-lock.json.
+ * Lockfiles default to package-lock.json, landing/package-lock.json and
+ * scripts/acp-spike/package-lock.json.
  */
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';

@@ -1,0 +1,70 @@
+name: npm audit
+
+# Fails when a package-lock.json pins a version with a high or critical
+# advisory from the npm registry (each links to github.com/advisories). Moderate
+# and low are listed in the log but don't fail it. Electron is a dev
+# dependency to npm but ships as the app's runtime, so dev dependencies are
+# audited too.
+#
+# Runs on pull requests that change dependencies, so a vulnerable version
+# can't merge; on pushes to main; and weekly, since advisories are published
+# for versions already locked. To fix a failure: npm audit fix in that folder
+# (it respects min-release-age). If the fix is less than 7 days old, wait, or
+# add the package to min-release-age-exclude[] in that folder's .npmrc.
+# Dependabot security updates open these pull requests too, when turned on.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '**/package.json'
+      - '**/package-lock.json'
+      - '**/.npmrc'
+      - .github/workflows/npm-audit.yml
+  push:
+    branches: [main]
+    paths:
+      - '**/package.json'
+      - '**/package-lock.json'
+      - '**/.npmrc'
+      - .github/workflows/npm-audit.yml
+  schedule:
+    - cron: '41 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Audit ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      # Every lockfile reports, even when one fails.
+      fail-fast: false
+      matrix:
+        include:
+          - name: app
+            directory: .
+          - name: landing
+            directory: landing
+          - name: acp-spike
+            directory: scripts/acp-spike
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      # No install: --package-lock-only audits the versions the lockfile pins.
+      - name: npm audit (fails on high or critical)
+        working-directory: ${{ matrix.directory }}
+        run: npm audit --package-lock-only --audit-level=high

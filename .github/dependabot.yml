@@ -1,0 +1,43 @@
+# Dependabot opens pull requests that update dependencies:
+# - version updates: weekly, on Mondays, from this file
+# - security updates: when an advisory affects a locked version. These need
+#   "Dependabot security updates" turned on in Settings > Advanced Security;
+#   groups below shape them, schedule and cooldown don't.
+#
+# cooldown matches min-release-age=7 in the .npmrc files, so version updates
+# only propose releases that are at least 7 days old, which is what the
+# Dependency age workflow allows. Security updates skip cooldown: a fix
+# released less than 7 days ago fails Dependency age until it's old enough.
+# Re-run that check once it is, or, if the fix can't wait, add the package to
+# min-release-age-exclude[] in the .npmrc next to the lockfile.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directories:
+      - /
+      - /landing
+      - /scripts/acp-spike
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      # One pull request per folder for minor and patch updates. Majors (a new
+      # Electron, say) get a pull request each, since they need more checking.
+      minor-and-patch:
+        update-types: [minor, patch]
+      security:
+        applies-to: security-updates
+        patterns: ['*']
+
+  - package-ecosystem: github-actions
+    # Dependabot reads .github/workflows from here. The workflows pin actions
+    # to commit SHAs with the version in a comment; Dependabot updates both.
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ['*']
