@@ -328,7 +328,9 @@
    *  once "Also delete their branches" is ticked: main force-deletes the
    *  branches Grove made, so those commits go with them unless pushed (the
    *  Delete dialog warns the same). Absent = not checked, or still checking. */
-  let cleanupUnmerged = $state<Record<string, { count: number; base: string } | null>>({});
+  /** `linked`: commits on its linked projects' branches that their default
+   *  branches don't have, which go too when Grove made those branches. */
+  let cleanupUnmerged = $state<Record<string, { count: number; base: string; linked: number } | null>>({});
   /** Candidates whose checks have started this dialog session (not reactive:
    *  read inside the effect without becoming a dependency). */
   const cleanupCheckedIds = new Set<string>();
@@ -387,7 +389,7 @@
   /** Remove waits for the commits check of every selected thread whose
    *  branch is about to go, so a quick click can't skip its warning. */
   const cleanupCommitsPending = $derived(cleanupDeleteBranches && cleanupSelectedBranchIds.some((id) => !(id in cleanupUnmerged)));
-  const cleanupSelectedUnmergedCount = $derived(cleanupSelectedBranchIds.filter((id) => (cleanupUnmerged[id]?.count ?? 0) > 0).length);
+  const cleanupSelectedUnmergedCount = $derived(cleanupSelectedBranchIds.filter((id) => (cleanupUnmerged[id]?.count ?? 0) > 0 || (cleanupUnmerged[id]?.linked ?? 0) > 0).length);
   const cleanupSelectedCommitsUnknown = $derived(cleanupSelectedBranchIds.filter((id) => cleanupUnmerged[id] === null).length);
   const cleanupMergedCount = $derived(cleanupCandidates.filter((s) => isPrMerged(cleanupPrOf(s.id))).length);
   const cleanupGhAvailable = $derived(store.prerequisites?.gh?.available === true);
@@ -512,11 +514,14 @@
     untrack(() => {
       for (const s of fresh) {
         cleanupCommitsQueue.add(async () => {
-          let answer: { count: number; base: string } | null;
+          let answer: { count: number; base: string; linked: number } | null;
           try {
             const base = await baseFor(s.repoPath);
             const result = await withTimeout(window.groveBench.getBranchCommits(s.id, base, timeout), DELETE_CHECK_GIVE_UP_MS);
-            answer = result.error ? null : { count: result.commits.length, base };
+            // Its linked projects' branches go too: one that can't be
+            // checked makes the whole answer unknown.
+            const linked = await linkedUnmerged(s);
+            answer = result.error || linked === null ? null : { count: result.commits.length, base, linked };
           } catch {
             answer = null;
           }
@@ -724,7 +729,7 @@
   /** Checks that failed or ran out of time. Each says so, and Delete then
    *  waits for "Delete anyway" rather than staying disabled: a thread whose
    *  worktree is broken or gone fails them, and still has to be deletable. */
-  let destroyCheckFailed = $state({ uncommitted: false, unmerged: false, linked: false });
+  let destroyCheckFailed = $state({ uncommitted: false, unmerged: false, linked: false, linkedUnmerged: false });
   /** The thread's linked projects, as their worktrees go with it: each
    *  one's uncommitted files and commits its default branch doesn't have.
    *  Null while unknown, or for a thread with none. */
@@ -734,7 +739,8 @@
   let destroyMissingBase = $state<string | null>(null);
   let destroyAnyway = $state(false);
   /** The commits check only matters when the branch is deleted too. */
-  let destroyNeedsAnyway = $derived(destroyCheckFailed.uncommitted || destroyCheckFailed.linked || (deleteBranchOnDestroy && destroyCheckFailed.unmerged));
+  let destroyNeedsAnyway = $derived(destroyCheckFailed.uncommitted || destroyCheckFailed.linked
+    || (deleteBranchOnDestroy && (destroyCheckFailed.unmerged || destroyCheckFailed.linkedUnmerged)));
   /** Main kills each git command a delete or remove-project check runs after
    *  this (local git has no timeout of its own), and the check fails. */
   const DELETE_CHECK_TIMEOUT_MS = 15_000;
@@ -752,7 +758,7 @@
     deleteBranchOnDestroy = false;
     destroyUncommitted = null;
     destroyUnmerged = null;
-    destroyCheckFailed = { uncommitted: false, unmerged: false, linked: false };
+    destroyCheckFailed = { uncommitted: false, unmerged: false, linked: false, linkedUnmerged: false };
     destroyLinked = null;
     destroyMissingBase = null;
     destroyAnyway = false;
@@ -785,10 +791,13 @@
     // Linked projects' worktrees go too. A link that can't be read counts
     // as a failed check: it may hold changes.
     const linked = session.linkedRepos?.length
-      ? withTimeout(window.groveBench.getLinkedStatus(id), DELETE_CHECK_GIVE_UP_MS)
+      ? withTimeout(window.groveBench.getLinkedStatus(id, timeout), DELETE_CHECK_GIVE_UP_MS)
         .then((statuses) => {
           if (statuses.some((l) => !l.missing && l.uncommitted === null)) throw new Error("couldn't read a linked worktree");
-          if (current()) destroyLinked = statuses;
+          if (!current()) return;
+          destroyLinked = statuses;
+          // Matters only when the branches go too, as for the thread's own.
+          if (statuses.some((l) => !l.missing && l.unmerged === null)) destroyCheckFailed = { ...destroyCheckFailed, linkedUnmerged: true };
         })
         .catch(failed('linked'))
       : Promise.resolve();
@@ -801,9 +810,24 @@
   async function linkedDirty(s: { id: string; linkedRepos?: string[] }): Promise<boolean | null> {
     if (!s.linkedRepos?.length) return false;
     try {
-      const statuses = await withTimeout(window.groveBench.getLinkedStatus(s.id), DELETE_CHECK_GIVE_UP_MS);
+      const statuses = await withTimeout(window.groveBench.getLinkedStatus(s.id, { timeout: DELETE_CHECK_TIMEOUT_MS }), DELETE_CHECK_GIVE_UP_MS);
       if (statuses.some((l) => !l.missing && l.uncommitted === null)) return null;
       return statuses.some((l) => (l.uncommitted ?? 0) > 0);
+    } catch {
+      return null;
+    }
+  }
+
+  /** How many commits a thread's linked projects' branches have that their
+   *  default branches don't: they go when the thread's branches are
+   *  deleted, if Grove made them. Null when one couldn't be checked; 0 for
+   *  a thread with none. */
+  async function linkedUnmerged(s: { id: string; linkedRepos?: string[] }): Promise<number | null> {
+    if (!s.linkedRepos?.length) return 0;
+    try {
+      const statuses = await withTimeout(window.groveBench.getLinkedStatus(s.id, { timeout: DELETE_CHECK_TIMEOUT_MS }), DELETE_CHECK_GIVE_UP_MS);
+      if (statuses.some((l) => !l.missing && l.unmerged === null)) return null;
+      return statuses.reduce((n, l) => n + (l.unmerged ?? 0), 0);
     } catch {
       return null;
     }
@@ -861,6 +885,9 @@
    *  their branches have commits the base branch doesn't. Null while unknown. */
   let removeRepoDirty = $state<number | null>(null);
   let removeRepoUnmerged = $state<{ count: number; base: string } | null>(null);
+  /** How many of its threads have commits on a linked project's branch that
+   *  its default branch doesn't, which go with the thread's branches. */
+  let removeRepoLinkedUnmerged = $state(0);
   /** Remove waits for both checks, as Delete does for one conversation. */
   let removeRepoChecking = $state(false);
   let removeRepoDeleteBranches = $state(false);
@@ -897,6 +924,7 @@
     removeRepoRechecked = false;
     removeRepoDirty = null;
     removeRepoUnmerged = null;
+    removeRepoLinkedUnmerged = 0;
     removeRepoCheckFailed = { uncommitted: 0, unmerged: 0 };
     removeRepoMissingBase = null;
     removeRepoAnyway = false;
@@ -937,10 +965,13 @@
             .then((r) => (r.error ? { count: null, missingBase: !!r.missingBase } : { count: r.commits.length, missingBase: false }))
             .catch(() => unknown),
       );
+      // Their linked projects' branches go with theirs (when Grove made them).
+      const linked = await mapLimit(worktreeSessions.filter((s) => s.linkedRepos?.length), REMOVE_CHECK_CONCURRENCY, (s) => linkedUnmerged(s));
       if (!current()) return;
       if (base !== null) removeRepoUnmerged = { count: answers.filter((a) => a.count !== null && a.count > 0).length, base };
+      removeRepoLinkedUnmerged = linked.filter((n) => n !== null && n > 0).length;
       removeRepoMissingBase = base !== null && answers.some((a) => a.missingBase) ? base : null;
-      removeRepoCheckFailed = { ...removeRepoCheckFailed, unmerged: answers.filter((a) => a.count === null).length };
+      removeRepoCheckFailed = { ...removeRepoCheckFailed, unmerged: answers.filter((a) => a.count === null).length + linked.filter((n) => n === null).length };
       removeRepoChecking = false;
     })();
   }
@@ -1996,6 +2027,9 @@
                     {:else if unmerged && unmerged.count > 0}
                       <span class="text-amber-500 font-medium" title="Unless you've pushed them, deleting the branch can lose them" data-testid="cleanup-commits-{session.id}">· {unmerged.count} {unmerged.count === 1 ? 'commit' : 'commits'} not on {unmerged.base}</span>
                     {/if}
+                    {#if unmerged && unmerged.linked > 0}
+                      <span class="text-amber-500 font-medium" title="On the branches this thread made in the other projects it works in. Unless you've pushed them, deleting the branches can lose them" data-testid="cleanup-linked-commits-{session.id}">· {unmerged.linked} {unmerged.linked === 1 ? 'commit' : 'commits'} in linked projects</span>
+                    {/if}
                   {/if}
                 </div>
               </div>
@@ -2155,6 +2189,11 @@
             Couldn't check this thread's worktrees of other projects for uncommitted changes. They go with it, and any changes they have will be lost.
           </p>
         {:else if destroyLinked}
+          {#if deleteBranchOnDestroy && destroyCheckFailed.linkedUnmerged}
+            <p class="text-xs text-amber-500 mt-2" role="alert" data-testid="destroy-linked-unmerged-failed">
+              Couldn't check the branches in this thread's other projects for commits that aren't on their default branch. Unless you've pushed them, deleting the branches can lose them.
+            </p>
+          {/if}
           {#each destroyLinked as link (link.repoPath)}
             {@const name = store.repoDisplayName(link.repoPath)}
             {#if link.uncommitted}
@@ -2245,6 +2284,12 @@
           <p class="text-xs text-amber-500 mt-2" role="alert">
             {removeRepoUnmerged.count} {removeRepoUnmerged.count === 1 ? "branch has commits that aren't" : "branches have commits that aren't"} on {removeRepoUnmerged.base} yet.
             Unless you've pushed them, deleting the branches can lose them.
+          </p>
+        {/if}
+        {#if removeRepoDeleteBranches && removeRepoLinkedUnmerged > 0}
+          <p class="text-xs text-amber-500 mt-2" role="alert" data-testid="remove-repo-linked-unmerged">
+            {removeRepoLinkedUnmerged} {removeRepoLinkedUnmerged === 1 ? 'thread has' : 'threads have'} commits on a branch in another project they work in that aren't on its default branch yet.
+            Those branches go too if the threads made them. Unless you've pushed them, that can lose them.
           </p>
         {/if}
         {#if removeRepoDeleteBranches && removeRepoCheckFailed.unmerged && removeRepoMissingBase}

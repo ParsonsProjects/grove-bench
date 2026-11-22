@@ -48,7 +48,8 @@ describe('StatusBarLinked', () => {
     const lozenge = await screen.findByTestId('linked-project');
     expect(groveBench().getLinkedStatus).toHaveBeenCalledWith(SID, { pr: true });
     expect(lozenge.textContent).toContain('billing');
-    expect(lozenge.textContent).toContain('fix-login');
+    // The thread's own branch name, shown beside it already.
+    expect(lozenge.textContent).not.toContain('fix-login');
     expect(lozenge.textContent).toContain('±3');
     expect(lozenge.textContent).toContain('↑2');
     expect(lozenge.textContent).toContain('#42');
@@ -57,6 +58,27 @@ describe('StatusBarLinked', () => {
     expect((await screen.findByTestId('linked-changes')).textContent).toContain('3 files changed and not committed');
     expect(screen.getByText('2 to push')).toBeInTheDocument();
     expect(screen.getByText('4 commits not on main')).toBeInTheDocument();
+  });
+
+  it('names the branch when the linked worktree has another one checked out', async () => {
+    groveBench().getLinkedStatus.mockResolvedValue([status({ branch: 'hotfix' })]);
+    render(StatusBarLinked, { sessionId: SID });
+    expect(await screen.findByTestId('linked-branch')).toHaveTextContent('hotfix');
+  });
+
+  it("drops a link main doesn't have, once the thread is set up", async () => {
+    groveBench().getLinkedStatus.mockResolvedValue([]);
+    render(StatusBarLinked, { sessionId: SID });
+    await waitFor(() => expect(store.sessions[0].linkedRepos).toBeUndefined());
+  });
+
+  it("keeps the links of a thread still being set up, which main hasn't made yet", async () => {
+    store.sessions = [{ ...store.sessions[0], status: 'starting' }];
+    groveBench().getLinkedStatus.mockResolvedValue([]);
+    render(StatusBarLinked, { sessionId: SID });
+    await waitFor(() => expect(groveBench().getLinkedStatus).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(store.sessions[0].linkedRepos).toEqual(['/code/billing']);
   });
 
   it('says when the worktree is gone, and reads nothing for a thread with no links', async () => {
@@ -91,6 +113,21 @@ describe('StatusBarLinked unlinking', () => {
     await waitFor(() => expect(groveBench().unlinkProject).toHaveBeenCalledWith(SID, '/code/billing', true));
     await waitFor(() => expect(screen.queryByTestId('linked-project')).toBeNull());
     expect(store.sessions[0].linkedRepos).toBeUndefined();
+  });
+
+  it("drops a status read that started before an unlink, so the unlinked project doesn't come back", async () => {
+    let answerOld!: (v: LinkedProjectStatus[]) => void;
+    groveBench().getLinkedStatus.mockResolvedValueOnce([status()]);
+    render(StatusBarLinked, { sessionId: SID });
+    await screen.findByTestId('linked-project');
+    // A poll that is slow to answer, started before the unlink.
+    groveBench().getLinkedStatus.mockImplementationOnce(() => new Promise((r) => { answerOld = r; }));
+    void linkedStore.refresh(SID);
+    groveBench().getLinkedStatus.mockResolvedValue([]);
+    await linkedStore.unlink(SID, '/code/billing', false);
+    answerOld([status()]);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByTestId('linked-project')).toBeNull();
   });
 
   it('keeps the link and says why when main refuses', async () => {

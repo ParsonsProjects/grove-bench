@@ -102,6 +102,13 @@ export interface DraftModelOption {
   label: string;
 }
 
+/** The linked projects a draft sends: those ticked that are still git
+ *  projects other than its own, as its control shows them. A project
+ *  removed, or found not to be git, since it was ticked is left out. */
+function linkedOf(d: Draft): string[] {
+  return (d.linkedRepos ?? []).filter((r) => r !== d.repoPath && sessionStore.repos.includes(r) && !sessionStore.isFolderProject(r));
+}
+
 const newBranchStart = (branchName = ''): DraftStart => ({ kind: 'new', branchName, baseBranch: '' });
 
 /** The draft starts a new branch named after its group's branch. Main then
@@ -559,7 +566,7 @@ class DraftStore {
       ...(Object.keys(others).length > 0 ? { controls: others } : {}),
       ...(mode ? { permissionMode: mode as CreateSessionOpts['permissionMode'] } : {}),
       // Main refuses links for a thread in the project folder.
-      ...(d.start.kind !== 'folder' && d.linkedRepos?.length ? { linkedRepos: [...d.linkedRepos] } : {}),
+      ...(d.start.kind !== 'folder' && linkedOf(d).length > 0 ? { linkedRepos: linkedOf(d) } : {}),
     };
     switch (d.start.kind) {
       case 'folder':
@@ -702,7 +709,7 @@ class DraftStore {
       // What the renderer knows of the project; main's reply settles it.
       ...(direct && sessionStore.isFolderProject(d.repoPath) ? { noGit: true } : {}),
       ...(placeholderName ? { displayName: placeholderName } : {}),
-      ...(!direct && d.linkedRepos?.length ? { linkedRepos: [...d.linkedRepos] } : {}),
+      ...(!direct && linkedOf(d).length > 0 ? { linkedRepos: linkedOf(d) } : {}),
     }, focus);
     if (sent) {
       // The chat shows the agent walking to its bench until the first reply.

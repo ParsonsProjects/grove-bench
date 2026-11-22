@@ -232,10 +232,6 @@ class SessionStore {
     );
   }
 
-  /** Fill in what main decided for a thread added before main replied
-   *  (draftStore.start): its branch, its agent and whether it has git.
-   *  `status` applies only while the row still shows 'starting', so a status
-   *  main sent meanwhile (an error, say) isn't overwritten. */
   /** The projects a thread also works in changed (linked or unlinked). */
   setLinkedRepos(id: string, repos: string[]): void {
     const entry = this.sessions.find((s) => s.id === id);
@@ -244,6 +240,10 @@ class SessionStore {
     else delete entry.linkedRepos;
   }
 
+  /** Fill in what main decided for a thread added before main replied
+   *  (draftStore.start): its branch, its agent and whether it has git.
+   *  `status` applies only while the row still shows 'starting', so a status
+   *  main sent meanwhile (an error, say) isn't overwritten. */
   confirmSession(id: string, info: { branch: string; agentType: string; noGit: boolean; status?: SessionStatus }) {
     this.sessions = this.sessions.map((s) => {
       if (s.id !== id) return s;

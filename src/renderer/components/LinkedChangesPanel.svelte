@@ -62,6 +62,20 @@
     }
   }
 
+  // The branch's PR, known only once the status is read (often after the
+  // first read here): its base is what the comparison should be against.
+  $effect(() => {
+    const prBase = link?.pr?.baseRefName;
+    if (!prBase || prBase === untrack(() => base)) return;
+    untrack(() => {
+      base = prBase;
+      if (scope === 'branch' && active) {
+        status = null;
+        void refresh();
+      }
+    });
+  });
+
   // Read when shown, and again for another scope.
   $effect(() => {
     void scope;
@@ -97,8 +111,10 @@
 
   let sourceKey = $derived(`linked:${repoPath}:${isBranchScope ? `branch:${base ?? ''}` : 'working'}`);
   /** Said with each line comment the agent gets: the files are another
-   *  project's, in the worktree the thread has of it. */
-  let where = $derived(link?.path ? `in ${name}, the worktree at ${link.path}` : `in ${name}`);
+   *  project's, in the worktree the thread has of it (the prompt says
+   *  where). Not the path, which arrives with the status after the first
+   *  read: a comment written before it would then stop showing. */
+  let where = $derived(`in ${name}, in this thread's worktree of it`);
   let commentContext = $derived(isBranchScope ? `${where}, branch vs ${base ?? status?.baseRef ?? 'base'}` : `${where}, uncommitted`);
   let emptyTitle = $derived(
     !status
@@ -147,7 +163,8 @@
 {/snippet}
 
 {#snippet sidebarFooter()}
-  <p class="border-t border-border p-2 shrink-0 text-micro text-muted-foreground" data-testid="linked-changes-note">
+  <!-- Clear of the grove the status bar's top border carries (16px). -->
+  <p class="border-t border-border px-2 pt-2 pb-5 shrink-0 text-micro text-muted-foreground" data-testid="linked-changes-note">
     Read only. Commit, push and open pull requests in {name} yourself, or ask the agent.
   </p>
 {/snippet}

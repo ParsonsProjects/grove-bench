@@ -29,6 +29,7 @@
   import { menuItem, menuPanel } from '$lib/components/ui/menu/index.js';
   import { placeInPane } from '../lib/keep-in-viewport.js';
   import XIcon from '@lucide/svelte/icons/x';
+  import CheckIcon from '@lucide/svelte/icons/check';
   import { agentsStore } from '../stores/agents.svelte.js';
 
   let pickerOpen = $state(false);
@@ -225,6 +226,8 @@
                   class={menuItem({ selected: linked.includes(repo) })}
                   title={repo}
                 >
+                  <!-- Ticks: more than one can be picked. -->
+                  <CheckIcon class="size-3 shrink-0 {linked.includes(repo) ? '' : 'invisible'}" aria-hidden="true" />
                   <span class="truncate">{store.repoDisplayName(repo)}</span>
                 </button>
               {/each}

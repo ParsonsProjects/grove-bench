@@ -20,22 +20,53 @@ class LinkedStore {
     return this.bySession[sessionId] ?? [];
   }
 
+  /** Bumped when a thread's links change (link, unlink): a read that
+   *  started before says nothing about them now. */
+  private epochs = new Map<string, number>();
+
   /** Read the thread's linked projects again, PRs and all. A read that
    *  fails keeps what was shown. */
   refresh(sessionId: string): Promise<void> {
     const running = this.inFlight.get(sessionId);
     if (running) return running;
-    const read = (async () => {
+    const epoch = this.epochs.get(sessionId) ?? 0;
+    // Its own entry: a newer read may have taken the slot by the time it ends.
+    const mine: { read?: Promise<void> } = {};
+    const read = mine.read = (async () => {
       try {
-        this.bySession[sessionId] = await window.groveBench.getLinkedStatus(sessionId, { pr: true });
+        const statuses = await window.groveBench.getLinkedStatus(sessionId, { pr: true });
+        if ((this.epochs.get(sessionId) ?? 0) !== epoch) return;
+        this.bySession[sessionId] = statuses;
+        this.reconcile(sessionId, statuses);
       } catch {
         // Kept: the next poll tries again.
       } finally {
-        this.inFlight.delete(sessionId);
+        if (this.inFlight.get(sessionId) === mine.read) this.inFlight.delete(sessionId);
       }
     })();
     this.inFlight.set(sessionId, read);
     return read;
+  }
+
+  /** The thread's links changed: reads under way are dropped, and the next
+   *  starts afresh. */
+  private changed(sessionId: string): void {
+    this.epochs.set(sessionId, (this.epochs.get(sessionId) ?? 0) + 1);
+    this.inFlight.delete(sessionId);
+  }
+
+  /**
+   * Main's links are what the thread has: one that couldn't be made when it
+   * started, or that the sweep dropped, leaves its row (so it can be linked
+   * again, and its project removed). Only once the thread is set up and its
+   * agent started, as the links made at the start exist by then.
+   */
+  private reconcile(sessionId: string, statuses: readonly LinkedProjectStatus[]): void {
+    const thread = store.sessions.find((s) => s.id === sessionId);
+    if (!thread || (thread.status !== 'running' && thread.status !== 'sleeping')) return;
+    const now = statuses.map((l) => l.repoPath);
+    const had = thread.linkedRepos ?? [];
+    if (now.length !== had.length || now.some((r) => !had.includes(r))) store.setLinkedRepos(sessionId, now);
   }
 
   /** Keep a thread's linked projects read while something shows them.
@@ -90,6 +121,7 @@ class LinkedStore {
    *  refusal. */
   async link(sessionId: string, repoPath: string): Promise<string | undefined> {
     const { warning } = await window.groveBench.linkProject(sessionId, repoPath);
+    this.changed(sessionId);
     const thread = store.sessions.find((s) => s.id === sessionId);
     store.setLinkedRepos(sessionId, [...(thread?.linkedRepos ?? []).filter((r) => r !== repoPath), repoPath]);
     void this.refresh(sessionId);
@@ -100,6 +132,7 @@ class LinkedStore {
    *  main's refusal, keeping the link. */
   async unlink(sessionId: string, repoPath: string, deleteBranch: boolean): Promise<void> {
     await window.groveBench.unlinkProject(sessionId, repoPath, deleteBranch);
+    this.changed(sessionId);
     const thread = store.sessions.find((s) => s.id === sessionId);
     store.setLinkedRepos(sessionId, (thread?.linkedRepos ?? []).filter((r) => r !== repoPath));
     this.bySession[sessionId] = this.get(sessionId).filter((l) => l.repoPath !== repoPath);

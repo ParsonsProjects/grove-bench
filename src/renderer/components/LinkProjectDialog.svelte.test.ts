@@ -10,7 +10,11 @@ import { agentsStore } from '../stores/agents.svelte.js';
 import type { GroveBenchAPI } from '../../shared/types.js';
 
 const SID = 'link-dialog-session';
-const groveBench = () => (window as any).groveBench as { linkProject: Mock<GroveBenchAPI['linkProject']> };
+const groveBench = () => (window as any).groveBench as {
+  linkProject: Mock<GroveBenchAPI['linkProject']>;
+  getLinkedStatus: Mock<GroveBenchAPI['getLinkedStatus']>;
+};
+let linkedInMain: string[] = [];
 
 beforeEach(() => {
   store.repos = ['/code/app', '/code/billing', '/code/notes', '/code/shared'];
@@ -24,11 +28,21 @@ beforeEach(() => {
   messageStore.setIsRunning(SID, false);
   linkedStore.openLinkDialog(SID);
   groveBench().linkProject.mockReset();
-  groveBench().linkProject.mockImplementation(async (_id, repoPath) => ({ link: { repoPath, path: `/wt/${repoPath}`, branch: 'fix-login' } }));
+  groveBench().linkProject.mockImplementation(async (_id, repoPath) => {
+    linkedInMain.push(repoPath);
+    return { link: { repoPath, path: `/wt/${repoPath}`, branch: 'fix-login' } };
+  });
+  // Main's links, as the status read after a link reports them.
+  linkedInMain = ['/code/shared'];
+  groveBench().getLinkedStatus.mockImplementation(async () => linkedInMain.map((repoPath) => ({
+    repoPath, path: `/wt/${repoPath}`, branch: 'fix-login', uncommitted: 0, sync: null, base: 'main', unmerged: 0, pr: null,
+  })));
 });
 
 afterEach(() => {
   cleanup();
+  groveBench().getLinkedStatus.mockReset();
+  groveBench().getLinkedStatus.mockResolvedValue([]);
   store.setFolderProject('/code/notes', false);
   linkedStore.linkDialogFor = null;
   linkedStore.forget(SID);

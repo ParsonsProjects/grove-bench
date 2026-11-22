@@ -450,6 +450,12 @@ describe('draftStore other projects the thread works in', () => {
     expect(draftStore.draft?.linkedRepos).toEqual([]);
   });
 
+  it('sends no linked project that was removed since it was ticked', () => {
+    draftStore.toggleLinkedRepo('/repo/two');
+    store.repos = ['/repo/one', '/repo/notes'];
+    expect(draftStore.buildOpts(draftStore.draft!, 'main')).not.toHaveProperty('linkedRepos');
+  });
+
   it("shows the thread's row with its linked projects from the start", async () => {
     draftStore.toggleLinkedRepo('/repo/two');
     draftStore.setText('fix the login');

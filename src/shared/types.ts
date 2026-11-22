@@ -1841,8 +1841,10 @@ export interface GroveBenchAPI {
   push(sessionId: string): Promise<void>;
   getGitSyncStatus(sessionId: string): Promise<GitSyncStatus>;
   /** The thread's linked projects as git sees them now, in the order they
-   *  were linked. `pr`: also look up each branch's pull request (GitHub). */
-  getLinkedStatus(sessionId: string, opts?: { pr?: boolean }): Promise<LinkedProjectStatus[]>;
+   *  were linked. `pr`: also look up each branch's pull request (GitHub).
+   *  `timeout`: kill each git command after this many ms (a check the user
+   *  waits on). */
+  getLinkedStatus(sessionId: string, opts?: { pr?: boolean; timeout?: number }): Promise<LinkedProjectStatus[]>;
   /** Commits on the thread's branch that `base` doesn't have. Check `error`
    *  before reading an empty list as none. `timeout`: kill each git command
    *  after this many ms. */

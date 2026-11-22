@@ -18,6 +18,7 @@ import { gitStatusStore } from '../stores/gitStatus.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { prStore } from '../stores/pr.svelte.js';
+import { linkedStore } from '../stores/linked.svelte.js';
 import type { GitStatusEntry } from '../../shared/types.js';
 
 // Counts syntax-highlight calls; otherwise the real module. The real
@@ -1351,6 +1352,27 @@ describe('ChangesReviewPanel with linked projects', () => {
     // Back to the thread's own project.
     await fireEvent.click(within(switcher).getByText('app'));
     await waitFor(() => expect(view.container.querySelector('[data-file-key="src/own.ts:false"]')).not.toBeNull());
+  });
+
+  it("compares against the linked branch's PR base once its status is read", async () => {
+    mockGroveBench.getDefaultBranch.mockResolvedValue('main');
+    mockGroveBench.getGitStatus.mockImplementation(async (_id: string, opts?: { linkedRepo?: string; base?: string }) => (
+      opts?.linkedRepo ? { entries: [entry('lib/pay.ts')], baseRef: opts.base } : { entries: [entry('src/own.ts')] }
+    ));
+    const view = render(ChangesReviewPanel, { sessionId: SID });
+    await fireEvent.click(within(await view.findByTestId('changes-project-switch')).getByText('billing'));
+    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith(SID, { scope: 'branch', base: 'main', linkedRepo: LINKED }));
+
+    // The status, with the branch's PR into develop, arrives after the first read.
+    mockGroveBench.getLinkedStatus.mockResolvedValue([{
+      repoPath: LINKED, path: '/wt/billing', branch: 'fix-login', uncommitted: 0, sync: null, base: 'main', unmerged: 0,
+      pr: { number: 9, url: 'u', state: 'OPEN', headRefName: 'fix-login', baseRefName: 'develop' },
+    }]);
+    await linkedStore.refresh(SID);
+    await waitFor(() => expect(mockGroveBench.getGitStatus).toHaveBeenCalledWith(SID, { scope: 'branch', base: 'develop', linkedRepo: LINKED }));
+    mockGroveBench.getLinkedStatus.mockReset();
+    mockGroveBench.getLinkedStatus.mockResolvedValue([]);
+    linkedStore.forget(SID);
   });
 
   it("shows no switch for a thread with no linked projects", async () => {

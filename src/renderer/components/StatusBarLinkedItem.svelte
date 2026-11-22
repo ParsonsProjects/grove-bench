@@ -60,6 +60,10 @@
     }
   }
   let name = $derived(store.repoDisplayName(s.repoPath));
+  /** The linked worktree's branch, on the button only when it isn't the
+   *  thread's own branch name (the usual case, shown beside it already). */
+  let threadBranch = $derived(store.sessions.find((t) => t.id === sessionId)?.branch ?? '');
+  let otherBranch = $derived(!!s.branch && s.branch !== threadBranch);
 
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -104,11 +108,13 @@
       data-testid="linked-project"
     >
       <Link2 class="size-3" />
-      <span class="truncate max-w-16 @2xl:max-w-24">{name}</span>
+      <span class="truncate max-w-20 @2xl:max-w-32">{name}</span>
       {#if s.missing}
         <span class="text-status-attention">gone</span>
       {:else}
-        <span class="truncate max-w-16 @4xl:max-w-32 text-muted-foreground">{s.branch ?? 'no branch'}</span>
+        {#if otherBranch || !s.branch}
+          <span class="truncate max-w-16 @4xl:max-w-32 text-muted-foreground" data-testid="linked-branch">{s.branch ?? 'no branch'}</span>
+        {/if}
         {#if s.uncommitted}<span class="text-foreground" data-testid="linked-uncommitted">±{s.uncommitted}</span>{/if}
         {#if s.sync && s.sync.ahead > 0}<span>↑{s.sync.ahead}</span>{/if}
         {#if s.sync && s.sync.behind > 0}<span>↓{s.sync.behind}</span>{/if}
