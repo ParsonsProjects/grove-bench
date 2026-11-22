@@ -232,16 +232,16 @@ describe('repos', () => {
     try {
       m.appState.lastAddedProject.mockReturnValue(path.join(parent, 'repo'));
       await invoke(IPC.REPO_SELECT);
-      expect(vi.mocked(dialog.showOpenDialog).mock.lastCall?.[1]).toMatchObject({ defaultPath: parent });
+      expect(dialog.showOpenDialog).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ defaultPath: parent }));
 
       // Its folder is gone: the home folder.
       m.appState.lastAddedProject.mockReturnValue(path.join(parent, 'gone', 'repo'));
       await invoke(IPC.REPO_SELECT);
-      expect(vi.mocked(dialog.showOpenDialog).mock.lastCall?.[1]).toMatchObject({ defaultPath: '/mock/home' });
+      expect(dialog.showOpenDialog).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ defaultPath: '/mock/home' }));
 
       m.appState.lastAddedProject.mockReturnValue(null);
       await invoke(IPC.REPO_SELECT);
-      expect(vi.mocked(dialog.showOpenDialog).mock.lastCall?.[1]).toMatchObject({ defaultPath: '/mock/home' });
+      expect(dialog.showOpenDialog).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ defaultPath: '/mock/home' }));
     } finally {
       fs.rmSync(parent, { recursive: true, force: true });
     }
