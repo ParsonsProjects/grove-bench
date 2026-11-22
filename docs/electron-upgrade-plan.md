@@ -2,7 +2,11 @@
 
 > **Status: Done on 22 Nov 2026, straight to Electron 45.3.2** (the newest 45 at least 7 days old; `npm audit` finds no advisories in it). Both PRs below went in as one: the `allowScripts` entry, the folder dialog's `defaultPath` (the folder holding the project added last, else home), the `clipboard.writeText` catch, and `.pftrace` trace files.
 >
-> **Still to do, before Electron 46:** move `credentials.ts` to the async `safeStorage` calls. The sync ones are deprecated in 45 but still work. The 46.0.0-alpha.12 typings no longer have them, so `npm run typecheck` fails on a 46 bump until this is done. Left out so the stored-key change gets its own PR and a hand test on Windows.
+> **Still to do, before Electron 46:** move `credentials.ts` to the async `safeStorage` calls. The sync ones are deprecated in 45 but still work. The 46.0.0-alpha.12 typings no longer have them, so `npm run typecheck` fails on a 46 bump until this is done. Left out so the stored-key change gets its own PR and a hand test on Windows. Decrypting every saved key into the cache once after `app.whenReady()` would keep `getApiKey`, `hasApiKey` and `canStoreApiKey` sync; only `saveApiKey` would become async.
+>
+> **Still to do, before Electron 47:** the `console-message` handler (`preview.ts`, `wc.on('console-message', ...)`) uses the positional arguments, `@deprecated` in the 45 typings. Electron's breaking-changes doc on `main` removes them in 47, when `message` would be undefined and `isElectronNoise` would throw on every console line. Read the event object instead (its `level` is already a string), then delete `consoleLevel` (`preview-log.ts`). The 45 typings also mark the positional `will-navigate` and `will-redirect` arguments `@deprecated` (`preview.ts`, `window-guard.ts`); no breaking-changes section lists that yet.
+>
+> **Correction to the plan below:** with the 45.3.2 typings, ESLint does flag the unhandled `clipboard.writeText` promise (`@typescript-eslint/no-misused-promises`).
 >
 > The hand tests below still need a run on Windows.
 >
