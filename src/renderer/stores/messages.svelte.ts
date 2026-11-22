@@ -13,7 +13,8 @@ import { store as sessionStore } from './sessions.svelte.js';
 import { settingsStore } from './settings.svelte.js';
 import { previewStore } from './preview.svelte.js';
 import { prerequisitesStore } from './prerequisites.svelte.js';
-import { base64Size, reattach, type AttachedFile } from '../lib/file-attachments.js';
+import { base64Size, formatFileSize, MAX_TOTAL_SIZE, reattach, type AttachedFile } from '../lib/file-attachments.js';
+import { forgetQueue, loadQueues, saveQueue } from '../lib/queue-storage.js';
 import { approvalRequest, toolCallSummary } from '../lib/tool-names.js';
 import { changesFiles, toolViewOf, type ToolView } from '../../shared/tool-view.js';
 import { liveEventsMissingFrom } from '../../shared/live-events.js';
@@ -91,6 +92,9 @@ export interface ChatUserMessage {
   uuid?: string;
   /** When it was sent (epoch ms). Messages from older history have none. */
   sentAt?: number;
+  /** Steered into a running turn, and shown where the agent read it. It has
+   *  no checkpoint of its own, so it offers no rewind. */
+  steer?: boolean;
 }
 
 export interface ChatSystemMessage {
@@ -255,7 +259,13 @@ export interface PromptInsert {
   nonce: number;
   replace?: boolean;
   attachments?: AttachedFile[];
+  /** `attachments` take the place of the box's own instead of joining them
+   *  (editing a queued message, and putting the draft back afterwards). */
+  replaceAttachments?: boolean;
 }
+
+/** How long Undo stays offered after a queue change (DraftUndoToast's span). */
+export const QUEUE_UNDO_MS = 5_000;
 
 export interface QueuedMessage {
   id: string;
@@ -271,6 +281,44 @@ export interface QueuedMessage {
   /** The prompt as typed and attached, so Edit can put it back as it was
    *  (displayText carries the attachment names, outgoing their contents). */
   typed?: { text: string; attachments: AttachedFile[] };
+  /** A steer the agent hadn't read when the turn stopped: it came back to
+   *  the top of the queue (the row says "not read"). */
+  notRead?: boolean;
+  /** The uuid it was steered with, while notRead: should the agent read it
+   *  after all, the message leaves the queue (steer user_message). */
+  steerUuid?: string;
+}
+
+/** How long a steer waits before it goes to the agent, so Take back works:
+ *  once Claude Code has it, the SDK offers no way to take it back. */
+export const TAKE_BACK_MS = 5_000;
+
+/** A message steered into the running turn (agents with
+ *  capabilities.steering). Held TAKE_BACK_MS first ('holding'), then sent
+ *  ('sent') until the agent reads it, when it joins the thread. */
+export interface SteerItem {
+  /** Also the uuid main sends it with. */
+  id: string;
+  displayText: string;
+  outgoing: string;
+  typed?: { text: string; attachments: AttachedFile[] };
+  phase: 'holding' | 'sent';
+  /** When a holding steer goes to the agent (epoch ms). */
+  sendAt: number;
+}
+
+/** The queued message being edited in the message box, and what the box
+ *  held before, which comes back once the edit is saved or cancelled. */
+export interface QueuedEdit {
+  id: string;
+  stash: { text: string; attachments: AttachedFile[] };
+}
+
+/** What a Remove, Clear queue or Merge replaced, for the toast's Undo. */
+export interface QueueUndo {
+  label: string;
+  queue: QueuedMessage[];
+  paused: boolean;
 }
 
 function nextId(): string {
@@ -457,12 +505,32 @@ class MessageStore {
   attachmentsBySession = $state<Record<string, AttachedFile[]>>({});
 
   /** Prompts waiting to be sent, oldest first. Dispatched one per turn once the
-   *  session is connected and idle. See submitMessage / flushQueue. */
-  queuedBySession = $state<Record<string, QueuedMessage[]>>({});
+   *  session is connected and idle. See submitMessage / flushQueue. Kept in
+   *  localStorage too (queue-storage.ts), so a restart doesn't lose them. */
+  queuedBySession = $state<Record<string, QueuedMessage[]>>(loadQueues());
 
   /** Set when the user intervened (Stop, rewind). Queued prompts stay put until
-   *  the user clicks Resume, so a stale follow-up doesn't fire right after a stop. */
-  queuePausedBySession = $state<Record<string, boolean>>({});
+   *  the user clicks Resume, so a stale follow-up doesn't fire right after a stop.
+   *  A queue brought back from the last run starts paused for the same reason. */
+  queuePausedBySession = $state<Record<string, boolean>>(
+    Object.fromEntries(Object.keys(this.queuedBySession).map((id) => [id, true])),
+  );
+
+  /** The queued message being edited in the message box, per session. */
+  queuedEditBySession = $state<Record<string, QueuedEdit>>({});
+
+  /** Messages being steered into the running turn, oldest first. */
+  steersBySession = $state<Record<string, SteerItem[]>>({});
+  /** A holding steer's hand-over timer, by steer id. */
+  private steerTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Steers handed to main and not answered yet, by session. */
+  private steersInFlight = new Map<string, number>();
+
+  /** The last Remove, Clear queue or Merge, while its Undo is offered. */
+  queueUndoBySession = $state<Record<string, QueueUndo>>({});
+  private queueUndoTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Ids of messages the change made (a merge's), which Undo takes out. */
+  private queueUndoAdded = new Map<string, Set<string>>();
 
   /** Preserved edit history after conversation-only rewind (keyed by session) */
   preservedEditHistory = $state<Record<string, { filePath: string; toolName: string; toolInput: unknown; edits: ChatToolCallMessage[] }[]>>({});
@@ -1108,6 +1176,14 @@ class MessageStore {
     return this.queuedBySession[sessionId] ?? [];
   }
 
+  /** Every change to a queue goes through here, so it is saved for the next
+   *  run (queue-storage.ts). An empty queue has nothing left to pause. */
+  private setQueue(sessionId: string, items: QueuedMessage[]) {
+    this.queuedBySession = { ...this.queuedBySession, [sessionId]: items };
+    if (items.length === 0) delete this.queuePausedBySession[sessionId];
+    saveQueue(sessionId, $state.snapshot<QueuedMessage[]>(items));
+  }
+
   isQueuePaused(sessionId: string): boolean {
     return this.queuePausedBySession[sessionId] ?? false;
   }
@@ -1139,37 +1215,348 @@ class MessageStore {
   }
 
   private submitOrQueue(sessionId: string, item: Omit<QueuedMessage, 'id'>): 'sent' | 'queued' {
+    // A queued message open in the box: Enter saves it in its place.
+    const edit = this.queuedEditBySession[sessionId];
+    if (edit) {
+      const queue = this.getQueue(sessionId);
+      if (queue.some((m) => m.id === edit.id)) {
+        this.setQueue(sessionId, queue.map((m) => (m.id === edit.id ? { ...item, id: m.id } : m)));
+        this.closeQueuedEdit(sessionId);
+        this.flushQueue(sessionId);
+        return 'queued';
+      }
+      // It went meanwhile (sent or removed): this is a message of its own.
+      delete this.queuedEditBySession[sessionId];
+    }
     if (this.canSendNow(sessionId)) {
       // A paused queue stays paused: the held items only go out on Resume.
       this.dispatch(sessionId, item);
       return 'sent';
     }
-    this.queuedBySession = {
-      ...this.queuedBySession,
-      [sessionId]: [...this.getQueue(sessionId), { ...item, id: nextId() }],
-    };
+    this.setQueue(sessionId, [...this.getQueue(sessionId), { ...item, id: nextId() }]);
     return 'queued';
   }
 
+  /** Remove one queued message. Undo brings it back for a few seconds. */
   removeQueuedMessage(sessionId: string, id: string) {
-    const remaining = this.getQueue(sessionId).filter((m) => m.id !== id);
-    this.queuedBySession = { ...this.queuedBySession, [sessionId]: remaining };
-    if (remaining.length === 0) delete this.queuePausedBySession[sessionId];
+    const queue = this.getQueue(sessionId);
+    if (!queue.some((m) => m.id === id)) return;
+    this.offerQueueUndo(sessionId, 'Message removed.');
+    const editing = this.queuedEditBySession[sessionId]?.id === id;
+    this.setQueue(sessionId, queue.filter((m) => m.id !== id));
+    if (editing) this.closeQueuedEdit(sessionId);
+    // It may have been holding the queue (see flushQueue).
+    this.flushQueue(sessionId);
   }
 
+  /** Remove every queued message. Undo brings them back for a few seconds. */
   clearQueue(sessionId: string) {
-    this.queuedBySession = { ...this.queuedBySession, [sessionId]: [] };
-    delete this.queuePausedBySession[sessionId];
+    if (this.getQueue(sessionId).length === 0) return;
+    this.offerQueueUndo(sessionId, 'Queue cleared.');
+    this.setQueue(sessionId, []);
+    this.closeQueuedEdit(sessionId);
   }
 
-  /** Put a queued item's text back into the input (and drop it from the queue)
-   *  so it can be edited before sending. Returns false for nothing to edit. */
+  /** Open a queued message in the message box to edit it. It keeps its
+   *  place: Enter saves it there (see submitOrQueue), and Cancel or Esc
+   *  leaves it as it was. Whatever the box held comes back afterwards.
+   *  Returns false for nothing to edit. */
   editQueuedMessage(sessionId: string, id: string): boolean {
     const item = this.getQueue(sessionId).find((m) => m.id === id);
     if (!item) return false;
-    this.removeQueuedMessage(sessionId, id);
-    this.appendToPrompt(sessionId, item.typed?.text ?? item.displayText, item.typed?.attachments);
+    // Moving from one queued message to another keeps the first one's stash:
+    // the box held the other message, not the user's draft.
+    const stash = this.queuedEditBySession[sessionId]?.stash
+      ?? { text: this.getDraft(sessionId), attachments: [...this.getAttachments(sessionId)] };
+    this.queuedEditBySession = { ...this.queuedEditBySession, [sessionId]: { id, stash } };
+    this.putInPrompt(sessionId, item.typed?.text ?? item.displayText, item.typed?.attachments ?? []);
+    // Moving the edit off the next message lets that one go.
+    this.flushQueue(sessionId);
     return true;
+  }
+
+  /** Leave the queued message being edited as it was. */
+  cancelQueuedEdit(sessionId: string) {
+    if (!this.queuedEditBySession[sessionId]) return;
+    this.closeQueuedEdit(sessionId);
+    // It was held while it was open (see flushQueue).
+    this.flushQueue(sessionId);
+  }
+
+  /** The queued message open in the box, with its place in the queue
+   *  (1 = next), or null. */
+  getQueuedEdit(sessionId: string): { id: string; position: number } | null {
+    const edit = this.queuedEditBySession[sessionId];
+    if (!edit) return null;
+    const index = this.getQueue(sessionId).findIndex((m) => m.id === edit.id);
+    return index < 0 ? null : { id: edit.id, position: index + 1 };
+  }
+
+  /** End an edit and put back what the box held before it. */
+  private closeQueuedEdit(sessionId: string) {
+    const edit = this.queuedEditBySession[sessionId];
+    if (!edit) return;
+    delete this.queuedEditBySession[sessionId];
+    this.putInPrompt(sessionId, edit.stash.text, edit.stash.attachments);
+  }
+
+  /** Make the box hold exactly `text` and `attachments`, mounted or not. */
+  private putInPrompt(sessionId: string, text: string, attachments: AttachedFile[]) {
+    this.setDraft(sessionId, text);
+    this.setAttachments(sessionId, attachments);
+    this.requestPromptInsert(sessionId, text, { replace: true, attachments, replaceAttachments: true });
+  }
+
+  /** Move a queued message one place earlier (-1) or later (1). */
+  moveQueuedMessage(sessionId: string, id: string, delta: -1 | 1) {
+    const queue = [...this.getQueue(sessionId)];
+    const from = queue.findIndex((m) => m.id === id);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= queue.length) return;
+    [queue[from], queue[to]] = [queue[to], queue[from]];
+    this.setQueue(sessionId, queue);
+    // The message being edited may no longer be next (see flushQueue).
+    this.flushQueue(sessionId);
+  }
+
+  /** Why the queue can't be merged into one message, or null when it can. */
+  queueMergeBlocker(sessionId: string): string | null {
+    const queue = this.getQueue(sessionId);
+    if (queue.length < 2) return 'There is only one message';
+    if (queue.some((m) => m.isCommand)) return "Commands can't be merged with other messages";
+    const size = queue.reduce((n, m) => n + m.outgoing.length
+      + (m.images ?? []).reduce((k, img) => k + base64Size(img.data), 0)
+      + (m.files ?? []).reduce((k, f) => k + base64Size(f.data), 0), 0);
+    if (size > MAX_TOTAL_SIZE) return `Together they are over ${formatFileSize(MAX_TOTAL_SIZE)}, the most one message can take`;
+    return null;
+  }
+
+  /** Merge the queued messages into one, so they go in a single turn, in
+   *  queue order with a blank line between them. Undo splits them again. */
+  mergeQueue(sessionId: string): boolean {
+    if (this.queueMergeBlocker(sessionId) !== null) return false;
+    const queue = this.getQueue(sessionId);
+    const join = (parts: string[]) => parts.filter((p) => p.trim()).join('\n\n');
+    const images = queue.flatMap((m) => m.images ?? []);
+    const files = queue.flatMap((m) => m.files ?? []);
+    const merged: QueuedMessage = {
+      id: nextId(),
+      displayText: join(queue.map((m) => m.displayText)),
+      outgoing: join(queue.map((m) => m.outgoing)),
+      ...(images.length > 0 ? { images } : {}),
+      ...(files.length > 0 ? { files } : {}),
+      typed: {
+        text: join(queue.map((m) => m.typed?.text ?? m.displayText)),
+        attachments: queue.flatMap((m) => m.typed?.attachments ?? []),
+      },
+      ...(queue.some((m) => m.notRead) ? { notRead: true } : {}),
+    };
+    this.offerQueueUndo(sessionId, `${queue.length} messages merged into one.`, [merged.id]);
+    this.closeQueuedEdit(sessionId);
+    this.setQueue(sessionId, [merged]);
+    this.flushQueue(sessionId);
+    return true;
+  }
+
+  /** Send one queued message now, ahead of the others. With the agent idle
+   *  it starts the next turn; a paused queue stays paused for the rest.
+   *  Returns false when it can't go now (the agent is working). */
+  sendQueuedNow(sessionId: string, id: string): boolean {
+    if (this.getIsRunning(sessionId)) return false;
+    const queue = this.getQueue(sessionId);
+    const item = queue.find((m) => m.id === id);
+    if (!item) return false;
+    if (this.queuedEditBySession[sessionId]?.id === id) this.closeQueuedEdit(sessionId);
+    this.setQueue(sessionId, queue.filter((m) => m.id !== id));
+    this.forgetInQueueUndo(sessionId, id);
+    this.dispatch(sessionId, item);
+    return true;
+  }
+
+  getQueueUndo(sessionId: string): QueueUndo | null {
+    return this.queueUndoBySession[sessionId] ?? null;
+  }
+
+  /** Remember the queue before a change, for Undo. `added`: ids of messages
+   *  the change made (a merge's), which Undo takes out again. */
+  private offerQueueUndo(sessionId: string, label: string, added: string[] = []) {
+    this.queueUndoBySession = {
+      ...this.queueUndoBySession,
+      [sessionId]: { label, queue: this.getQueue(sessionId), paused: this.isQueuePaused(sessionId) },
+    };
+    this.queueUndoAdded.set(sessionId, new Set(added));
+    clearTimeout(this.queueUndoTimers.get(sessionId));
+    this.queueUndoTimers.set(sessionId, setTimeout(() => this.dismissQueueUndo(sessionId), QUEUE_UNDO_MS));
+  }
+
+  dismissQueueUndo(sessionId: string) {
+    clearTimeout(this.queueUndoTimers.get(sessionId));
+    this.queueUndoTimers.delete(sessionId);
+    this.queueUndoAdded.delete(sessionId);
+    delete this.queueUndoBySession[sessionId];
+  }
+
+  /** A message that has gone to the agent isn't brought back by Undo. One
+   *  the change made (a merge's) carries the others with it: undoing would
+   *  send them again, so Undo is withdrawn. */
+  private forgetInQueueUndo(sessionId: string, id: string) {
+    if (this.queueUndoAdded.get(sessionId)?.has(id)) {
+      this.dismissQueueUndo(sessionId);
+      return;
+    }
+    const undo = this.queueUndoBySession[sessionId];
+    if (!undo || !undo.queue.some((m) => m.id === id)) return;
+    this.queueUndoBySession = { ...this.queueUndoBySession, [sessionId]: { ...undo, queue: undo.queue.filter((m) => m.id !== id) } };
+  }
+
+  /** Put the queue back as it was before the last Remove, Clear queue or
+   *  Merge. Messages queued since stay, after the ones that come back. */
+  undoQueueChange(sessionId: string) {
+    const undo = this.queueUndoBySession[sessionId];
+    if (!undo) return;
+    const added = this.queueUndoAdded.get(sessionId) ?? new Set<string>();
+    this.dismissQueueUndo(sessionId);
+    // An edit of a message Undo takes out (a merge's) has nothing to save to.
+    const edit = this.queuedEditBySession[sessionId];
+    if (edit && added.has(edit.id)) this.closeQueuedEdit(sessionId);
+    const back = new Set(undo.queue.map((m) => m.id));
+    const since = this.getQueue(sessionId).filter((m) => !back.has(m.id) && !added.has(m.id));
+    this.setQueue(sessionId, [...undo.queue, ...since]);
+    if (undo.paused && undo.queue.length > 0) {
+      this.queuePausedBySession = { ...this.queuePausedBySession, [sessionId]: true };
+    }
+    this.flushQueue(sessionId);
+  }
+
+  getSteers(sessionId: string): SteerItem[] {
+    return this.steersBySession[sessionId] ?? [];
+  }
+
+  private setSteers(sessionId: string, steers: SteerItem[]) {
+    this.steersBySession = { ...this.steersBySession, [sessionId]: steers };
+  }
+
+  /** Steer a message into the running turn. It waits TAKE_BACK_MS, which
+   *  Take back can use, then goes to the agent (handOverSteer). With no turn
+   *  running, or a queued message open in the box, it is an ordinary message.
+   *  The caller checks the agent can steer and that it is text only. */
+  submitSteer(sessionId: string, msg: Pick<QueuedMessage, 'displayText' | 'outgoing' | 'typed'>): 'steering' | 'sent' | 'queued' {
+    if (this.queuedEditBySession[sessionId] || !this.getIsRunning(sessionId)) {
+      return this.submitMessage(sessionId, msg);
+    }
+    const id = crypto.randomUUID();
+    const steer: SteerItem = {
+      id,
+      displayText: msg.displayText,
+      outgoing: msg.outgoing,
+      ...(msg.typed ? { typed: msg.typed } : {}),
+      phase: 'holding',
+      sendAt: Date.now() + TAKE_BACK_MS,
+    };
+    this.setSteers(sessionId, [...this.getSteers(sessionId), steer]);
+    this.steerTimers.set(id, setTimeout(() => void this.handOverSteer(sessionId, id), TAKE_BACK_MS));
+    return 'steering';
+  }
+
+  /** Whether a queued message could be steered (Send now while the agent
+   *  works): text only, and not a command. */
+  canSteerQueued(item: QueuedMessage): boolean {
+    return !item.isCommand && !item.images?.length && !item.files?.length;
+  }
+
+  /** Send now on a queued message while the agent works: steer it into
+   *  this turn instead of waiting for the next. */
+  steerQueued(sessionId: string, id: string): boolean {
+    if (!this.getIsRunning(sessionId)) return this.sendQueuedNow(sessionId, id);
+    const queue = this.getQueue(sessionId);
+    const item = queue.find((m) => m.id === id);
+    if (!item || !this.canSteerQueued(item)) return false;
+    if (this.queuedEditBySession[sessionId]?.id === id) this.closeQueuedEdit(sessionId);
+    this.setQueue(sessionId, queue.filter((m) => m.id !== id));
+    this.forgetInQueueUndo(sessionId, id);
+    this.submitSteer(sessionId, { displayText: item.displayText, outgoing: item.outgoing, ...(item.typed ? { typed: item.typed } : {}) });
+    return true;
+  }
+
+  /** Take a steer back into the message box before it goes to the agent. */
+  takeBackSteer(sessionId: string, id: string): boolean {
+    const steer = this.getSteers(sessionId).find((s) => s.id === id && s.phase === 'holding');
+    if (!steer) return false;
+    clearTimeout(this.steerTimers.get(id));
+    this.steerTimers.delete(id);
+    this.setSteers(sessionId, this.getSteers(sessionId).filter((s) => s.id !== id));
+    this.appendToPrompt(sessionId, steer.typed?.text ?? steer.displayText, steer.typed?.attachments);
+    return true;
+  }
+
+  /** The hold is over: send the steer to the agent. One that can't go (the
+   *  turn ended meanwhile) is queued to go next instead. */
+  private async handOverSteer(sessionId: string, id: string) {
+    this.steerTimers.delete(id);
+    const steer = this.getSteers(sessionId).find((s) => s.id === id && s.phase === 'holding');
+    if (!steer) return;
+    // Sent from here on: Take back can no longer work.
+    this.setSteers(sessionId, this.getSteers(sessionId).map((s) => (s.id === id ? { ...s, phase: 'sent' as const } : s)));
+    // Until main answers, the queue waits (flushQueue): should the turn end
+    // meanwhile, this steer goes next, ahead of the queued messages.
+    this.steersInFlight.set(sessionId, (this.steersInFlight.get(sessionId) ?? 0) + 1);
+    let outcome: 'steered' | 'not-running' | 'unsupported';
+    try {
+      outcome = await window.groveBench.steerMessage(sessionId, steer.outgoing, id);
+    } catch (e) {
+      console.warn(`[steer] couldn't steer a message into ${sessionId}, so it is queued instead:`, e);
+      outcome = 'not-running';
+    } finally {
+      const left = (this.steersInFlight.get(sessionId) ?? 1) - 1;
+      if (left > 0) this.steersInFlight.set(sessionId, left);
+      else this.steersInFlight.delete(sessionId);
+    }
+    if (outcome !== 'steered') this.steersToQueue(sessionId, [steer], { notRead: false });
+    else this.flushQueue(sessionId);
+  }
+
+  /** Steers that didn't reach the agent, or that it never read, go to the
+   *  front of the queue in their order. `pause`: hold the queue (a stop). */
+  private steersToQueue(sessionId: string, steers: SteerItem[], opts: { notRead: boolean; pause?: boolean }) {
+    if (steers.length === 0) return;
+    const ids = new Set(steers.map((s) => s.id));
+    for (const id of ids) {
+      clearTimeout(this.steerTimers.get(id));
+      this.steerTimers.delete(id);
+    }
+    this.setSteers(sessionId, this.getSteers(sessionId).filter((s) => !ids.has(s.id)));
+    const items: QueuedMessage[] = steers.map((s) => ({
+      id: nextId(),
+      displayText: s.displayText,
+      outgoing: s.outgoing,
+      ...(s.typed ? { typed: s.typed } : {}),
+      ...(opts.notRead ? { notRead: true, steerUuid: s.id } : {}),
+    }));
+    this.setQueue(sessionId, [...items, ...this.getQueue(sessionId)]);
+    if (opts.pause) this.pauseQueue(sessionId);
+    this.flushQueue(sessionId);
+  }
+
+  /** The turn ended (or stopped) before a held steer went: queue it. */
+  private queueHeldSteers(sessionId: string, opts: { pause?: boolean } = {}) {
+    this.steersToQueue(sessionId, this.getSteers(sessionId).filter((s) => s.phase === 'holding'), { notRead: false, ...opts });
+  }
+
+  /** The agent read a steer: it leaves the waiting rows (and the queue, for
+   *  one given back unread before). */
+  private steerRead(sessionId: string, uuid: string) {
+    const steers = this.getSteers(sessionId);
+    if (steers.some((s) => s.id === uuid)) this.setSteers(sessionId, steers.filter((s) => s.id !== uuid));
+    const queue = this.getQueue(sessionId);
+    if (queue.some((m) => m.steerUuid === uuid)) this.setQueue(sessionId, queue.filter((m) => m.steerUuid !== uuid));
+  }
+
+  /** Main gave back steers the agent never read (steer_returned). */
+  private onSteersReturned(sessionId: string, event: Extract<AgentEvent, { type: 'steer_returned' }>) {
+    const steers = this.getSteers(sessionId);
+    const back = event.steers.map((r): SteerItem =>
+      steers.find((s) => s.id === r.uuid) ?? { id: r.uuid, displayText: r.text, outgoing: r.text, phase: 'sent', sendAt: 0 });
+    this.steersToQueue(sessionId, back, { notRead: true, pause: event.stopped === true });
   }
 
   /** Lift a pause set by Stop/rewind or a usage limit and send the next
@@ -1196,6 +1583,8 @@ class MessageStore {
     // Never fire from replayed history: those results are old news.
     if (this._replayBuffer !== null) return;
     if (this.getIsRunning(sessionId) || this.isQueuePaused(sessionId)) return;
+    // A steer on its way to main may come back to go first (handOverSteer).
+    if (this.steersInFlight.has(sessionId)) return;
     const queue = this.getQueue(sessionId);
     if (queue.length === 0) return;
     if (!opts?.resumed && this.isRateLimited(sessionId)) {
@@ -1203,7 +1592,11 @@ class MessageStore {
       return;
     }
     const [next, ...rest] = queue;
-    this.queuedBySession = { ...this.queuedBySession, [sessionId]: rest };
+    // The message open in the box waits until it is saved or cancelled, and
+    // the ones behind it wait too, so the order holds.
+    if (this.queuedEditBySession[sessionId]?.id === next.id) return;
+    this.setQueue(sessionId, rest);
+    this.forgetInQueueUndo(sessionId, next.id);
     this.dispatch(sessionId, next);
   }
 
@@ -1484,6 +1877,17 @@ class MessageStore {
    *  draft sync then writes the same combined text back, so the two paths
    *  never double up. */
   appendToPrompt(sessionId: string, text: string, attachments?: AttachedFile[]) {
+    // The box holds a queued message being edited: this is for the draft
+    // put aside meanwhile, which comes back when the edit ends.
+    const edit = this.queuedEditBySession[sessionId];
+    if (edit) {
+      const stashed = edit.stash.text;
+      this.queuedEditBySession = { ...this.queuedEditBySession, [sessionId]: { ...edit, stash: {
+        text: stashed && text ? `${stashed}\n${text}` : stashed || text,
+        attachments: [...edit.stash.attachments, ...(attachments ?? [])],
+      } } };
+      return;
+    }
     const draft = this.getDraft(sessionId);
     // No text (a queued image-only prompt) adds no new line.
     this.setDraft(sessionId, draft && text ? `${draft}\n${text}` : draft || text);
@@ -1496,6 +1900,14 @@ class MessageStore {
    *  store too for a box that isn't showing, which reads them when it mounts.
    *  One request for both: the box only sees the latest. */
   replacePrompt(sessionId: string, text: string, attachments: AttachedFile[] = []) {
+    // As appendToPrompt: during an edit, it replaces the draft put aside.
+    const edit = this.queuedEditBySession[sessionId];
+    if (edit) {
+      this.queuedEditBySession = { ...this.queuedEditBySession, [sessionId]: { ...edit, stash: {
+        text, attachments: [...edit.stash.attachments, ...attachments],
+      } } };
+      return;
+    }
     this.setDraft(sessionId, text);
     if (attachments.length > 0) this.setAttachments(sessionId, [...this.getAttachments(sessionId), ...attachments]);
     this.requestPromptInsert(sessionId, text, { replace: true, ...(attachments.length > 0 ? { attachments } : {}) });
@@ -1598,6 +2010,9 @@ class MessageStore {
     // Stop is an intervention: hold queued follow-ups until the user resumes,
     // rather than firing the next one into the restarted query.
     this.pauseQueue(sessionId);
+    // A steer still in its hold never went: it waits in the queue too. Sent
+    // ones come back from main (steer_returned).
+    this.queueHeldSteers(sessionId, { pause: true });
 
     // Resolve any pending tool calls and prompts so spinners/buttons don't linger
     const msgs = this.messagesBySession[sessionId] ?? [];
@@ -1859,6 +2274,10 @@ class MessageStore {
 
       case 'user_message':
         this.onUserMessage(sessionId, event);
+        break;
+
+      case 'steer_returned':
+        this.onSteersReturned(sessionId, event);
         break;
 
       case 'process_exit':
@@ -2440,11 +2859,21 @@ class MessageStore {
     // an old turn played back from history isn't new activity).
     if (this.sideEffects && this._replayBuffer === null) sessionStore.updateLastActive(sessionId);
 
-    // Turn finished — the agent is free for the next queued prompt.
+    // Turn finished — the agent is free for the next queued prompt. A steer
+    // still in its hold missed the turn, so it goes next. Not for a result
+    // replayed from history: the steer belongs to the turn running now.
+    if (this._replayBuffer === null) this.queueHeldSteers(sessionId);
     this.flushQueue(sessionId);
   }
 
   private onUserMessage(sessionId: string, event: Extract<AgentEvent, { type: 'user_message' }>) {
+    // A steer the agent read: it leaves the waiting rows and joins the
+    // thread here, where it was read. Never stamped onto a sent prompt.
+    if (event.steer) {
+      if (event.uuid) this.steerRead(sessionId, event.uuid);
+      this.pushMessage(sessionId, { ...userMessage(event.text, event.images, event.files, event.at), uuid: event.uuid, steer: true });
+      return;
+    }
     // When replay-user-messages is enabled, the SDK replays user messages
     // with UUIDs. We stamp the UUID onto the most recent user message
     // that doesn't already have one. Text matching is unreliable because
@@ -2784,7 +3213,8 @@ class MessageStore {
     const points: { uuid: string; text: string; index: number }[] = [];
     for (let i = 0; i < msgs.length; i++) {
       const m = msgs[i];
-      if (m.kind === 'user' && m.uuid) {
+      // A steer has no checkpoint to rewind to.
+      if (m.kind === 'user' && m.uuid && !m.steer) {
         points.push({
           uuid: m.uuid,
           text: userMessageLabel(m),
@@ -2863,6 +3293,12 @@ class MessageStore {
    *  deletes every per-session entry so nothing leaks for the app's lifetime. */
   destroySession(sessionId: string) {
     this.unsubscribe(sessionId);
+    clearTimeout(this.queueUndoTimers.get(sessionId));
+    for (const steer of this.getSteers(sessionId)) {
+      clearTimeout(this.steerTimers.get(steer.id));
+      this.steerTimers.delete(steer.id);
+    }
+    forgetQueue(sessionId);
 
     // Delete every per-session entry. Reassign each $state record so Svelte
     // reliably drops derived subscriptions referencing this session.
@@ -2897,14 +3333,14 @@ class MessageStore {
       this.activeTabBySession, this.viewModeBySession,
       this.draftBySession, this.attachmentsBySession, this.preservedEditHistory, this.paginationBySession,
       this.rewindDialogOpen, this.rewindDialogTarget, this.pendingJumpBySession, this.promptInsertBySession,
-      this.queuedBySession, this.queuePausedBySession,
+      this.queuedBySession, this.queuePausedBySession, this.queuedEditBySession, this.queueUndoBySession, this.steersBySession,
       // Plain (non-reactive) bookkeeping
       this.pendingMessageAfterClear, this.stoppingSession, this.awaitingResponse, this.userExplicitMode,
     ] as Record<string, unknown>[];
   }
 
   private perSessionMaps(): Map<string, unknown>[] {
-    return [this.sourceIndexBySession, this.orphanReplayEvents, this.olderLoads, this.streamBuf, this.turnsStarted, this.userStops];
+    return [this.sourceIndexBySession, this.orphanReplayEvents, this.olderLoads, this.streamBuf, this.turnsStarted, this.userStops, this.queueUndoTimers, this.queueUndoAdded, this.steersInFlight];
   }
 
   /** Live events that arrived while a pane was loading the history page,
@@ -2955,6 +3391,8 @@ class MessageStore {
     // never has it.
     const suggestion = page && held.findLast((e) => e.type === 'prompt_suggestion');
     if (suggestion) this.ingestEvent(sessionId, suggestion);
+    // So are steers main gave back: they are queued nowhere else.
+    if (page) for (const e of held) if (e.type === 'steer_returned') this.ingestEvent(sessionId, e);
   }
 
   /** Unsubscribe from session events */

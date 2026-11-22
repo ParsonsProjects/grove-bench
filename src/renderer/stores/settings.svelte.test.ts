@@ -40,6 +40,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   diffViewMode: 'unified',
   defaultActivityView: 'summary',
   spellcheck: true,
+  steerOnEnter: false,
   notifyOnTurnComplete: true,
   notifyOnPermission: true,
   notifyOnPrAlert: true,

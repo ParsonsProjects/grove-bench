@@ -3,6 +3,7 @@
   import { store } from '../../stores/sessions.svelte.js';
   import { DEFAULT_REPO_COLORS } from '../../lib/repo-colors.js';
   import * as Select from '$lib/components/ui/select/index.js';
+  import * as Segmented from '$lib/components/ui/segmented/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { VIEW_MODE_DESCRIPTIONS, VIEW_MODE_LABELS } from '$lib/message-view.js';
@@ -183,6 +184,20 @@
     description="Check spelling in the prompt editor."
     bind:checked={settingsStore.draft.spellcheck}
   />
+  <SettingRow
+    setting="enter-while-working"
+    label="While the agent works, Enter (steering is alpha)"
+    description="Queue sends your message when the turn ends. Steer gives it to the agent in this turn, after its current tool call, and you have 5 seconds to take it back. Alt+Enter does the other one. Only Claude can be steered so far: other agents always queue."
+  >
+    <Segmented.Root
+      bind:value={() => (draft.steerOnEnter ? 'steer' : 'queue'), (v) => { settingsStore.draft.steerOnEnter = v === 'steer'; }}
+      class="self-start"
+      aria-label="While the agent works, Enter"
+    >
+      <Segmented.Item value="queue">Queues the message</Segmented.Item>
+      <Segmented.Item value="steer">Steers it into this turn</Segmented.Item>
+    </Segmented.Root>
+  </SettingRow>
 </SettingsGroup>
 
 <SettingsGroup title="Updates">

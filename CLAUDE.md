@@ -55,6 +55,7 @@ src/
       types.ts         # Adapter interfaces
       registry.ts      # Adapter registry
       claude-code.ts   # Claude Code adapter implementation
+      claude-steers.ts # Steers: messages sent into a running Claude turn, and when Claude reads them
       claude-accounts.ts # Other Claude accounts: one adapter each, with its own CLAUDE_CONFIG_DIR
       acp/             # Agent Client Protocol adapter (Gemini CLI, Copilot CLI, OpenCode, custom agents)
       file-attachments.ts # How attached files reach each agent (by path; audio inline for ACP agents that take it)

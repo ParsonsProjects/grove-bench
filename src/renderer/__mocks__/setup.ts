@@ -24,6 +24,9 @@ const localStorageMock = (() => {
     setItem: vi.fn((key: string, value: string) => { store[key] = value; }),
     removeItem: vi.fn((key: string) => { delete store[key]; }),
     clear: vi.fn(() => { store = {}; }),
+    // As Storage has them, for code that walks every key (queue-storage.ts).
+    get length() { return Object.keys(store).length; },
+    key: vi.fn((index: number) => Object.keys(store)[index] ?? null),
   };
 })();
 Object.defineProperty(globalThis, 'localStorage', { value: localStorageMock });
@@ -149,6 +152,7 @@ const mockGroveBench = {
   openInEditor: vi.fn(() => Promise.resolve()),
   getFileLines: vi.fn((_sessionId: string, _filePath: string, _staged?: boolean) => Promise.resolve(null as import('../../shared/types.js').FileLinesResult)),
   sendMessage: vi.fn(),
+  steerMessage: vi.fn(async (_sessionId: string, _content: string, _uuid: string): Promise<'steered' | 'not-running' | 'unsupported'> => 'steered'),
   openAttachedFile: vi.fn(() => Promise.resolve(true)),
   readAttachedFile: vi.fn((): Promise<string | null> => Promise.resolve(null)),
   openWorktreeFile: vi.fn((): Promise<OpenWorktreeFileResult> => Promise.resolve({ kind: 'opened' })),

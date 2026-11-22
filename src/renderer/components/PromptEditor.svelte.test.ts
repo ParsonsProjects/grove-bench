@@ -144,10 +144,47 @@ describe('PromptEditor: editing a queued prompt', () => {
 
     expect(container.querySelector('textarea')!.value).toBe('read this');
     expect(getByText('notes.txt')).toBeInTheDocument();
-    expect(messageStore.getQueue(SID)).toEqual([]);
+    // It stays in the queue, in its place, while it is edited.
+    expect(messageStore.getQueue(SID)).toHaveLength(1);
+    expect(getByText(/queued message 1\. Enter saves it in its place\./)).toBeInTheDocument();
   });
 
-  it('adds no new line when an image-only prompt comes back to a box with text in it', async () => {
+  it('Enter saves the edit in its place; the queue keeps its order', async () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first', typed: { text: 'first', attachments: [] } });
+    messageStore.submitMessage(SID, { displayText: 'second', outgoing: 'second', typed: { text: 'second', attachments: [] } });
+    const { container, getAllByText, getByLabelText } = render(PromptEditor, { sessionId: SID });
+    const el = container.querySelector('textarea')!;
+
+    await fireEvent.click(getAllByText('Edit')[0]);
+    await tick();
+    expect(getByLabelText('Save queued message')).toBeInTheDocument();
+    await fireEvent.input(el, { target: { value: 'first, changed' } });
+    await fireEvent.keyDown(el, { key: 'Enter' });
+    await tick();
+
+    expect(messageStore.getQueue(SID).map((m) => m.outgoing)).toEqual(['first, changed', 'second']);
+    expect(messageStore.getQueuedEdit(SID)).toBeNull();
+    expect(el.value).toBe('');
+  });
+
+  it('Esc leaves the queued message as it was', async () => {
+    messageStore.setIsRunning(SID, true);
+    messageStore.submitMessage(SID, { displayText: 'first', outgoing: 'first', typed: { text: 'first', attachments: [] } });
+    const { container, getByText } = render(PromptEditor, { sessionId: SID });
+    const el = container.querySelector('textarea')!;
+
+    await fireEvent.click(getByText('Edit'));
+    await tick();
+    await fireEvent.input(el, { target: { value: 'not this' } });
+    await fireEvent.keyDown(el, { key: 'Escape' });
+    await tick();
+
+    expect(messageStore.getQueue(SID).map((m) => m.outgoing)).toEqual(['first']);
+    expect(messageStore.getQueuedEdit(SID)).toBeNull();
+  });
+
+  it('puts what the box held aside while a queued message is edited, and back afterwards', async () => {
     messageStore.setIsRunning(SID, true);
     messageStore.submitMessage(SID, {
       displayText: '[shot.png]',
@@ -162,9 +199,15 @@ describe('PromptEditor: editing a queued prompt', () => {
     await fireEvent.click(getByText('Edit'));
     await tick();
 
+    // The box holds the queued message, exactly: no "hello", no new line.
+    expect(el.value).toBe('');
+    expect(getByText('shot.png')).toBeInTheDocument();
+
+    await fireEvent.click(getByText('Cancel'));
+    await tick();
+
     expect(el.value).toBe('hello');
     expect(messageStore.getDraft(SID)).toBe('hello');
-    expect(getByText('shot.png')).toBeInTheDocument();
   });
 });
 

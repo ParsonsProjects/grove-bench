@@ -29,6 +29,7 @@ import { decideToolCall, groveServersOf, type PolicyDecision } from '../tool-pol
 import { categoryForView, claudeToolView } from '../../shared/tool-view.js';
 import { nonNegative } from '../../shared/limits.js';
 import { attachedFilesNote } from './file-attachments.js';
+import { SteerTracker, STEER_HOLD_MS, type SteerObservation } from './claude-steers.js';
 import { checkKeyWithGet, type KeyCheckFetch } from './key-check.js';
 import { createMemoryMcpServer } from './memory-mcp-server.js';
 import { createPreviewMcpServer } from './preview-mcp-server.js';
@@ -1741,6 +1742,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     skills: true,
     usage: true,
     compact: true,
+    steering: true,
     imageAttachments: true,
     structuredOutput: true,
     sandbox: true,
@@ -2183,28 +2185,70 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     };
 
     // Create the async event generator
+    // Steers sent into the running turn, and the result held while one is
+    // unread (claude-steers.ts).
+    const steers = new SteerTracker();
+
+    function* handleMessage(message: SDKMessage): Generator<AdapterEvent> {
+      // Capture session ID from system_init
+      if (message.type === 'system' && message.subtype === 'init') {
+        sessionId = message.session_id;
+      }
+
+      // The conversation to resume is gone. Say so instead of passing on
+      // the error result, so the session manager can start a new one.
+      const missing = config.resumeSessionId ? missingConversationError(message) : null;
+      if (missing) throw new ResumeNotFoundError(missing);
+
+      yield* transformMessage(message, ctx);
+    }
+
+    function* handleObservation(seen: SteerObservation): Generator<AdapterEvent> {
+      yield* seen.events;
+      for (const message of seen.pass) yield* handleMessage(message);
+    }
+
     async function* eventGenerator(): AsyncGenerator<AdapterEvent> {
-      for await (const message of q) {
-        if (abortController.signal.aborted) break;
+      const messages = q[Symbol.asyncIterator]();
+      // A read still waiting for the next message: kept across a hold that
+      // ran out, asked for afresh after each message is handled.
+      let pending: Promise<IteratorResult<SDKMessage>> | null = null;
+      // When a held result goes out anyway: STEER_HOLD_MS from when it was
+      // held, however many other messages (a subagent's) arrive meanwhile.
+      let holdUntil: number | null = null;
+      try {
+        for (;;) {
+          pending ??= messages.next();
+          if (!steers.holding) holdUntil = null;
+          else holdUntil ??= Date.now() + STEER_HOLD_MS;
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const step = await (holdUntil !== null
+            ? Promise.race([pending, new Promise<'hold-over'>((resolve) => { timer = setTimeout(() => resolve('hold-over'), Math.max(0, holdUntil! - Date.now())); })])
+            : pending);
+          clearTimeout(timer);
+          if (step === 'hold-over') {
+            holdUntil = null;
+            yield* handleObservation(steers.holdOver());
+            continue;
+          }
+          pending = null;
+          if (step.done) break;
+          const message = step.value;
+          if (abortController.signal.aborted) break;
 
-        // A subagent's token stream makes no events (see transformMessage):
-        // skip it before any other work. The SDK has parsed it already.
-        if (message.type === 'stream_event' && message.parent_tool_use_id) continue;
+          // A subagent's token stream makes no events (see transformMessage):
+          // skip it before any other work. The SDK has parsed it already.
+          if (message.type === 'stream_event' && message.parent_tool_use_id) continue;
 
-        // Capture session ID from system_init
-        if (message.type === 'system' && message.subtype === 'init') {
-          sessionId = message.session_id;
+          yield* handleObservation(steers.observe(message));
         }
-
-        // The conversation to resume is gone. Say so instead of passing on
-        // the error result, so the session manager can start a new one.
-        const missing = config.resumeSessionId ? missingConversationError(message) : null;
-        if (missing) throw new ResumeNotFoundError(missing);
-
-        const agentEvents = transformMessage(message, ctx);
-        for (const event of agentEvents) {
-          yield event;
-        }
+        // A result still held when the stream ends goes out with it.
+        if (!abortController.signal.aborted) yield* handleObservation(steers.release());
+      } finally {
+        // As for await does on an early exit: close the query. Not waited on
+        // while a read is still out, which would wait for that message.
+        if (pending) void messages.return?.();
+        else await messages.return?.();
       }
     }
 
@@ -2228,6 +2272,24 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           message: { role: 'user', content: userMessageContent(message) },
           parent_tool_use_id: null,
         } as SDKUserMessage);
+      },
+
+      steer(message: UserMessage, uuid: string) {
+        // Thrown, so the session manager queues it for the next turn rather
+        // than waiting on a read that can't come.
+        if (!inputController) throw new Error("the agent's input is closed");
+        // 'next': read once the tool calls in flight finish. 'now' would
+        // cancel them and report them refused (claude-steers.ts). Tracked
+        // only once it is in the stream.
+        inputController.enqueue({
+          type: 'user',
+          uuid,
+          priority: 'next',
+          session_id: sessionId ?? '',
+          message: { role: 'user', content: userMessageContent(message) },
+          parent_tool_use_id: null,
+        } as SDKUserMessage);
+        steers.add(uuid);
       },
 
       abort() {

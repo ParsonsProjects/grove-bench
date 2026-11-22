@@ -5,6 +5,9 @@ import type { AgentEvent, AgentSystemInfo } from './types.js';
  *  shouldn't offer one from days ago. */
 export const TRANSIENT_EVENT_TYPES: ReadonlySet<AgentEvent['type']> = new Set<AgentEvent['type']>([
   'partial_text', 'partial_thinking', 'activity', 'tool_progress', 'usage', 'prompt_suggestion',
+  // Hands unread steers back to the live window's queue; a reopened thread
+  // has its queue from localStorage instead.
+  'steer_returned',
 ]);
 
 /**

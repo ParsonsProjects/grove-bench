@@ -63,6 +63,7 @@ const DEFAULT_SETTINGS: GroveBenchSettings = {
   diffViewMode: 'unified',
   defaultActivityView: 'summary',
   spellcheck: true,
+  steerOnEnter: false,
 
   // Notifications
   notifyOnTurnComplete: true,
@@ -279,6 +280,7 @@ const settingsSchema = z.object({
   diffViewMode: z.enum(['unified', 'side-by-side']).catch(DEFAULT_SETTINGS.diffViewMode),
   defaultActivityView: z.enum(['detailed', 'summary', 'focus']).catch(DEFAULT_SETTINGS.defaultActivityView),
   spellcheck: z.boolean().catch(DEFAULT_SETTINGS.spellcheck),
+  steerOnEnter: z.boolean().catch(DEFAULT_SETTINGS.steerOnEnter),
 
   notifyOnTurnComplete: z.boolean().catch(DEFAULT_SETTINGS.notifyOnTurnComplete),
   notifyOnPermission: z.boolean().catch(DEFAULT_SETTINGS.notifyOnPermission),

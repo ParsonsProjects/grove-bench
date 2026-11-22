@@ -30,6 +30,7 @@ const toSdkMcpServer = vi.hoisted(() => vi.fn((server: { name: string }) => Prom
 vi.mock('./sdk-mcp.js', () => ({ toSdkMcpServer }));
 
 import { ClaudeCodeAdapter, CONTEXT_1M_BETA, LIMIT_STOP_REASON, THINKING_LEVEL_TOKENS, setSdkForTests } from './claude-code.js';
+import { STEER_HOLD_MS } from './claude-steers.js';
 import { ResumeNotFoundError, type AdapterConfig, type AdapterEvent, type AgentQueryHandle, type PermissionResponse } from './types.js';
 import type { ClaudeAccount } from './claude-accounts.js';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
@@ -504,6 +505,74 @@ describe('ClaudeCodeAdapter.start(): the handle', () => {
     await events.next();
     handle.sendMessage({ text: 'again' });
     expect((await prompts.next()).value).toMatchObject({ session_id: 'sess-1', message: { content: 'again' } });
+  });
+
+  it('steers a message into the running turn: its uuid and priority next', async () => {
+    const { handle, prompt } = await start();
+    const prompts = prompt[Symbol.asyncIterator]();
+    handle.steer!({ text: 'use date-fns' }, 'steer-1');
+    expect((await prompts.next()).value).toEqual({
+      type: 'user', uuid: 'steer-1', priority: 'next', session_id: '', message: { role: 'user', content: 'use date-fns' }, parent_tool_use_id: null,
+    });
+  });
+
+  it('reports a steer read, and keeps one turn when Claude answers it after the result', async () => {
+    const { handle, fake } = await start();
+    fake.send(init('sess-1'));
+    handle.steer!({ text: 'use date-fns' }, 'steer-1');
+    // The turn ends with the steer unread, then Claude runs it.
+    fake.send({ type: 'result', subtype: 'success', is_error: false, total_cost_usd: 0.01 });
+    fake.send({ type: 'assistant', message: { content: [{ type: 'text', text: 'Switching.' }] }, parent_tool_use_id: null, uuid: 'a2', user_message_uuid: 'steer-1', user_message_uuids: ['steer-1'] });
+    fake.send({ type: 'result', subtype: 'success', is_error: false, total_cost_usd: 0.02 });
+    fake.end();
+
+    const events = await drain(handle);
+
+    expect(events.filter((e) => e.type === 'steer_read')).toEqual([{ type: 'steer_read', uuid: 'steer-1' }]);
+    expect(events.filter((e) => e.type === 'result')).toHaveLength(1);
+    const read = events.findIndex((e) => e.type === 'steer_read');
+    expect(events.findIndex((e) => e.type === 'assistant_text')).toBeGreaterThan(read);
+  });
+
+  it('lets a held result go 15 s after it was held, however much else arrives, and keeps the steer pending', async () => {
+    vi.useFakeTimers();
+    try {
+      const { handle, fake } = await start();
+      fake.send(init('sess-1'));
+      handle.steer!({ text: 'use date-fns' }, 'steer-1');
+      fake.send({ type: 'result', subtype: 'success', is_error: false });
+      const events: AdapterEvent[] = [];
+      const reading = (async () => { for await (const e of handle.events) events.push(e); })();
+
+      await vi.advanceTimersByTimeAsync(STEER_HOLD_MS / 2);
+      // A background subagent streaming doesn't put the deadline back.
+      fake.send({ type: 'stream_event', parent_tool_use_id: 'task-1', event: { type: 'message_start' } });
+      await vi.advanceTimersByTimeAsync(STEER_HOLD_MS / 2 - 1);
+      expect(events.some((e) => e.type === 'result')).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(events.some((e) => e.type === 'result')).toBe(true);
+      expect(events.some((e) => e.type === 'steer_dropped')).toBe(false);
+
+      // Claude runs the steer after all: still reported as read.
+      fake.send({ type: 'assistant', message: { content: [{ type: 'text', text: 'Switching.' }] }, parent_tool_use_id: null, uuid: 'a2', user_message_uuid: 'steer-1', user_message_uuids: ['steer-1'] });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(events.filter((e) => e.type === 'steer_read')).toEqual([{ type: 'steer_read', uuid: 'steer-1' }]);
+
+      fake.end();
+      await reading;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a steer the closed input could not take throws, and holds up nothing', async () => {
+    const { handle, fake } = await start();
+    handle.closeInput!();
+    expect(() => handle.steer!({ text: 'late' }, 'steer-2')).toThrow();
+
+    fake.send({ type: 'result', subtype: 'success', is_error: false });
+    fake.end();
+    expect((await drain(handle)).map((e) => e.type)).toEqual(['result']);
   });
 
   it('close ends the prompts and closes the query', async () => {

@@ -163,6 +163,14 @@ export interface ManagedSession {
    *  comes first. The thread counts as mid-turn meanwhile, as its history
    *  says it is. Each leaves once turnHandle takes over or the send gives up. */
   unsentPrompts?: Set<string>;
+  /** Steers sent into the running turn that the agent hasn't read yet, by
+   *  uuid (steerMessage). One joins the history as a user_message only once
+   *  it is read, where it was read. */
+  pendingSteers?: Map<string, { text: string; sentAt: number; handle: AgentQueryHandle }>;
+  /** Steers given back to the renderer unread (a stop, or the agent let
+   *  them go). A late read of one is still recorded, so the renderer can
+   *  take it off the queue. */
+  returnedSteers?: Map<string, { text: string; sentAt: number }>;
   /** Set from a result's arrival until it is in the history (the files its
    *  turn made go first), and settles then. The turn counts as in flight
    *  meanwhile, and a close waits on it before deciding whether it ended. */

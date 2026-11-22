@@ -45,6 +45,10 @@ export interface AgentCapabilities {
    *  summary to free context. The UI offers it only for these agents, or one
    *  that lists a `compact` command itself. */
   compact?: boolean;
+  /** Takes a message into a turn that is already running, read once its
+   *  current tool calls finish (AgentQueryHandle.steer). Other agents queue
+   *  it for the next turn. */
+  steering?: boolean;
   /** Supports image attachments in messages */
   imageAttachments: boolean;
   /** Supports structured JSON output */
@@ -270,7 +274,11 @@ export interface ToolImageData {
  *  images and passes the event on with references instead (attachments.ts). */
 export type AdapterEvent =
   | Exclude<AgentEvent, { type: 'tool_result' }>
-  | (Omit<Extract<AgentEvent, { type: 'tool_result' }>, 'images'> & { imageData?: ToolImageData[] });
+  | (Omit<Extract<AgentEvent, { type: 'tool_result' }>, 'images'> & { imageData?: ToolImageData[] })
+  // A steer (AgentQueryHandle.steer) the agent has read, or let go of
+  // unread. Only the session manager sees these (claude-steers.ts).
+  | { type: 'steer_read'; uuid: string }
+  | { type: 'steer_dropped'; uuid: string };
 
 /** Thrown by a handle's `events` when the agent no longer has the conversation
  *  it was asked to resume (e.g. its transcript was deleted). The session
@@ -288,6 +296,11 @@ export interface AgentQueryHandle {
   events: AsyncIterable<AdapterEvent>;
   /** Send a follow-up user message into the conversation */
   sendMessage(message: UserMessage): void;
+  /** Send a message into the turn that is running now, for the agent to
+   *  read once its current tool calls finish. `uuid` names it in the
+   *  steer_read / steer_dropped events that follow. Only for adapters with
+   *  capabilities.steering. */
+  steer?(message: UserMessage, uuid: string): void;
   /** Abort the current query */
   abort(): void;
   /** Close the query gracefully */

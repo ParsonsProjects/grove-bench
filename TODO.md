@@ -1,6 +1,6 @@
 # Grove Bench — Gap Analysis
 
-Feature gaps identified by comparing against [Toad](https://github.com/batrachianai/toad) and [T3 Code](https://github.com/pingdotgg/t3code), plus gaps found by auditing the codebase against DESIGN.md and docs/user-stories.md.
+Feature gaps identified by comparing against [Toad](https://github.com/batrachianai/toad) and other agent tools, plus gaps found by auditing the codebase against DESIGN.md and docs/user-stories.md.
 
 ## Priority 1 — High Impact
 
@@ -11,6 +11,11 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Per-agent background tasks — memory notes, compaction, commit messages and skill suggestions run on the conversation's own agent with its background model (`adapter.backgroundModel`, `settings.backgroundModels`, schema v6 migration from `memoryModel`); the manifest records each conversation's agent so restarts resume on it
 - [ ] Codex adapter: implement `getControls`, `getModels`, `start`, `setControl`, and `getUsage` against the Codex app-server protocol and register it; attach a `toolView` (shared/tool-view.ts) to tool events so the thread, permission prompts and Read-safe mode understand Codex's tools. Until then Codex runs through the ACP adapter with `codex-acp` as a custom agent
 - [ ] Grok Build adapter
+- [x] Steer a running turn (alpha, Claude only): Alt+Enter, or **Send now** on a queued message, gives a message to the running turn, read once its current tool call finishes (`steerMessage` in `agent-session.ts`, `claude-steers.ts`, sent with `priority: 'next'` and a uuid). It waits 5 seconds first with **Take back**, as the SDK can't take back a message Claude Code has (no method for the CLI's `cancel_async_message`, checked in 0.3.281 and 0.3.330). The thread shows it only once read (`user_message` with `steer`, no checkpoint, no rewind); a result is held while one is unread. Stop with one unread ends the agent process, since a plain interrupt leaves it to run, and it goes back to the paused queue marked not read. Settings > The grove can make Enter steer. ACP agents queue only (ACP has no mid-turn input). Left to do: a run in the packaged Windows app with a real Claude sign-in, to confirm reads are seen live (`user_message_uuids` on a typed turn may only arrive with the result) and the held-result timing; longer Take back once the SDK can cancel a queued message
+- [x] Queue: saved across restarts in localStorage (`queue-storage.ts`, back paused), Edit in place (Enter saves, Esc cancels, the draft comes back), up/down to reorder, click to show a whole message, **Merge** and **Clear queue** for two or more (Button `subtle` / `outline-destructive`), **Send** one now while idle, and an Undo toast for 5 seconds after Remove, Clear queue or Merge (`MessageQueue.svelte`, `messages.svelte.ts`)
+- [ ] Handoff sized to the new agent: when switching agent mid-thread, size the transcript to the new model's context window instead of a fixed 32,000 characters with 2,000 per message (`agent-handoff.ts`), keep whole messages, and give the agent a tool to read the messages left out. Switching back to an agent the thread used before should resume that agent's own session and send only what happened since; today `switchAgent` clears `providerSessionId`, so it always starts a new one
+- [ ] More built-in ACP presets (Kiro CLI, Antigravity, fx) with their launch arguments and sign-in steps, and an `env` field on `AcpAgentSetting` (`shared/types.ts`) so a custom agent can be given keys such as `KIRO_API_KEY`
+- [ ] Text generation without a coding agent: an opt-in choice per task (titles, commit messages, PR text, memory notes) to use a plain model API instead (Anthropic, OpenAI, OpenRouter, or an OpenAI-compatible endpoint such as Ollama or LM Studio). Today every background task runs through the thread's agent (`background-tasks.ts`, `background-text.ts`). Keep the rule that a thread's content only goes to a provider the user picked
 - [x] Open models through OpenCode (alpha, off until enabled in Settings > Agents): built-in ACP preset (`adapters/acp/opencode.ts`) that makes OpenCode ask before it acts and locks its local server; an OpenRouter key saved in Grove starts conversations on DeepSeek V4.1 Flash. Left to do (a Windows run with a real key, OpenCode's retried replies and subagents, to-do lists, cost) in `docs/open-model-harnesses-plan.md`
 - [x] Per-adapter defaults in Settings — `adapterDefaults` (adapter id → control id → value) replaces `defaultThinkingLevel` (settings schema v2 migration); the Agent tab lists every registered adapter's declared controls for the default model via `getAdapterControls`, and `initialControls` overlays the saved values that the adapter actually offers
 - [x] Neutral form for tool allow/deny rules — rules are `<tool>` / `<tool>(<glob>)` with adapter-neutral keywords (`shell`, `edit`, `read`, `web`, `agent`, `question`, `mcp`) matched by tool category; adapters build the call specifier with `toolCallSpecifier` (command, file path, URL, ...). Provider tool names (`Bash(...)`) keep working, so no migration
@@ -23,6 +28,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Persistent shell state (env vars, directory changes across commands)
 - [x] Per-session PTY terminals (split, toggle, resize, clear, restart)
 - [x] Attach terminal output as context to AI messages — "To prompt" in the terminal toolbar inserts the selection (or the last 200 lines of scrollback) into the prompt as a fenced block and switches to Activity
+- [ ] Choose the terminal's shell (PowerShell, cmd, Git Bash, WSL) in Settings; today it always starts `COMSPEC` (`terminal.ts`)
 
 ### Checkpointing & Revert
 - [x] Git-based snapshots at each agent turn
@@ -58,12 +64,16 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Sidebar sections renamed: Conversations (live working set) and Projects (each repo with all its sessions)
 - [x] Persist the unread flag across restarts — `unreadSessionIds` in app-state.json, restored after worktree restore
 - [x] Follow-ups: any agent (Claude Code and ACP agents) adds work for a later thread with Grove's `grove-followups` tools (`followup_add`, `followup_list`, `followup_done`, run without a prompt like memory). Saved per project in `follow-ups.json` (userData), so every thread sees a new one at once whatever its branch; new threads get the open titles in their system prompt. The Follow-ups drawer (sidebar footer, docked like Bookmarks) starts a thread from one by filling the New thread draft, links the thread that started, and keeps done ones with the agent's note (`main/follow-ups.ts`, `FollowUpsDrawer.svelte`, `docs/help/follow-ups.md`). Left to do: a run in the packaged Windows app with each agent, and adding a follow-up by hand
+- [ ] Sidebar thread lifecycle: pin a thread to the top, drag to reorder, snooze a thread until a chosen time, optionally close threads idle for 7 days or whose PR merged, and Undo (`Ctrl+Z`) after closing or removing one. Today there is the To do flag, Name/Age sort and a manual Close; undo exists only for a discarded draft (`DraftUndoToast.svelte`)
 - [x] Agent monitor: every open thread in every project in one dialog, with what its agent is doing now, its running subagents (Claude Code) and the shells and monitors it left running; Interrupt a turn, Stop a background subagent, shell or monitor, or jump to the thread. Opened from the title bar's needs-you and working counts (counted as the chips are) or Ctrl+Shift+A (`AgentMonitorDialog.svelte`, `lib/agent-monitor.ts`). Left to do (processes and memory, ACP agents' subagents) in `docs/agent-monitor-plan.md`
 
 ### Robustness
 - [x] Global error handling — `crash-handling.ts` installs `uncaughtException` / `unhandledRejection` handlers in main (file log + forwarded to the renderer as a toast); `error-handling.ts` hooks `window.onerror` / `unhandledrejection` in the renderer (toast + file log via IPC); `<svelte:boundary>` around the sidebar and each session pane with a Reload view button
 - [x] Opt-in crash reporting — "Send crash reports" toggle under Privacy (requires analytics on); uncaught errors from either process go to PostHog `captureException` with message, stack, source and kind only
 - [x] Schema versioning + migration for persisted state — `persisted-state.ts` (top-level `schemaVersion`, ordered migration table, newer-file handling); settings.json and app-state.json are migrated on load, then validated field by field with Zod so one corrupt value resets to its default instead of dropping the file. Worktree manifest still unversioned.
+- [ ] Close to tray: keep agents running with the window closed, with a tray icon (Open, Quit) and a setting for what closing the window does. Decided: Quit stays the default, and the first time the window closes with threads working a notice offers the tray. Design on the steering canvas. Today `window-all-closed` quits the app and `shutdown()` stops every agent and shell (`src/main/index.ts`)
+- [ ] Continue turns that were cut off: after a crash, an update or a restart, offer to continue a turn that was running when the app stopped, instead of leaving the thread idle
+- [ ] Code signing for the Windows installer (Azure Trusted Signing or a certificate). Installers are unsigned, so SmartScreen warns on first run and antivirus tools can flag them (`electron-builder.yml`; options in "Code signing" in `docs/electron-install.md`)
 
 ## Priority 2 — Notable Gaps
 
@@ -84,6 +94,10 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] New-failure / new-comment detection with pulsing alert chips (baseline seeded on startup, one alert per pushed commit)
 - [x] Opt-in auto mode per thread: auto-fix CI and auto-address reviews (sent while idle, or queued until the thread is free, dropped on Stop; ticking auto-fix acts on checks already failing, and ticking it again after "needs human" gives 2 more tries; max 2 fix attempts per PR until CI goes green, then "needs human"; collaborator-authored comments only)
 - [x] Commit & Push and one-click push (↑n) from the Changes panel / status bar
+- [ ] PR actions in the app: merge (merge, squash or rebase), mark ready for review or back to draft, turn auto-merge on or off, close and reopen, update the branch, and delete the branch after merging. Today `gh.ts` only creates, views and lists PRs, and the ship track sends the user to GitHub to mark a draft ready and to merge (`ship-track.ts`, `merge-on-github`)
+- [ ] PR conversation in the app: read review threads, reply, resolve, request reviewers, set labels, and sync viewed-file marks with GitHub. Today the user can post one review on the thread's own PR (`pr-review.ts`, `PrReviewDialog.svelte`) and viewed marks are local only (`review.svelte.ts`)
+- [ ] PR tools for agents: Grove tools to read and update the thread's PR, read CI logs, reply to reviews, and watch the PR so the agent wakes when it starts to conflict, required checks pass or an approval is needed. Today auto-fix CI and auto-address reviews are user toggles, and a conflicting PR never starts a turn
+- [ ] Link any PR to a thread, including one from another repository or a fork. Today PRs are found from the thread's branch and its reflog only (`sessionPrBranches` in `ipc.ts`), and fork PRs are filtered out of the start picker (`DraftStartPicker.svelte`)
 
 ### Session Search
 - [x] Fuzzy search to find and resume past conversations (Ctrl+R)
@@ -102,6 +116,8 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Usage across threads and models (Settings > The harvest, and **All usage** in the Activity popup, `UsageReport.svelte`): cost, tokens, agent time and turns over Today, 7 days, 30 days or All time, by model and by thread, removed threads included. Each result carries `at` and `models` (the turn split by model: `RunningModels` in `adapters/running-cost.ts` from Claude Code's per-model `modelUsage`, ACP agents' current model), and main appends every turn to `usage-ledger.jsonl` (`usage-ledger.ts`), so removing, rewinding or clearing a thread doesn't lower the totals. Older turns are added once from threads' event logs, with no model and dated by their prompt
 - [ ] Usage: keep the ledger small by rolling turns older than about 90 days into daily totals (it grows about 250 bytes a turn and is read whole on first open)
 - [ ] Usage: cost per day as a chart, open a thread from its row, export as CSV, and show **All usage** in the Activity popup before a thread's first turn ends
+- [ ] Usage: plan limits for agents other than Claude (only `claude-code.ts` implements `getUsage`), and custom prices per model for agents that don't report cost
+- [ ] Resume at reset: when a plan limit pauses the queue, offer to send the next message automatically when the window resets. `rateLimitStore` already has `resetsAt`, but today the queue waits for a manual Resume
 
 ### Session Export
 - [ ] Markdown transcript per session written to disk (`.grove-wt/<id>/thread.md` or under the repo's memory dir) with an "Open in editor" action
@@ -112,6 +128,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Validate IPC inputs at the boundary with Zod (a dependency, not used for IPC yet). This is robustness more than security: the renderer can already run any command through the terminal (`PTY_WRITE` in `ipc.ts`), so the CSP and the sandbox are what stop injected script, not argument checks. Most of the 184 handlers type their arguments without checking them at run time; a few check by hand (`typeof`). If done, start with the handlers that take objects, or pass paths and branch names on to git or the file system
 - [x] Electron sandbox for the app window: on by default since Electron 20 unless `nodeIntegration: true` or `sandbox: false` is set, and the main window sets neither (`src/main/index.ts`). The preload only uses `contextBridge` and `ipcRenderer`, which work sandboxed. The Preview pages set `sandbox: true` themselves
 - [x] Content-Security-Policy for the renderer: a `<meta>` tag added at build time by `scripts/vite-csp.mjs` (only the app's own scripts, no inline scripts or eval, local images only)
+- [ ] Secrets: secret references (such as 1Password `op://` paths) in any key field, and a way for an agent to ask for a secret in a private prompt so the value never enters the thread. Today `credentials.ts` keeps one API key per agent with safeStorage
 
 ### Onboarding
 - [ ] First-launch welcome/tour surfacing the existing `docs/help/` content (currently only the git notice, the API key step in New Conversation, and analytics consent)
@@ -121,10 +138,18 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 ### Deployment Options
 - [ ] Web mode — serve as browser-accessible app (`npx grove` / `grove-bench serve`)
 - [ ] Standalone CLI mode without full Electron app
-- [ ] Zero-install entry point via npx (like t3code's `npx t3`)
+- [ ] Zero-install entry point via npx
+- [ ] Remote access from another machine or a phone (LAN pairing, Tailscale, SSH), with phone alerts when a thread needs you. Needs web mode first: today all state lives in Electron main and the window reaches it only through `preload.ts`
+- [ ] Agents outside Grove (Claude Code in a terminal, other MCP clients) list, start and message Grove threads over MCP, with an access level the user picks. Today Grove's MCP server listens on loopback only and serves Grove's own agents (`grove-mcp-http.ts`)
 
 ### Platform
 - [ ] Native Linux/macOS support and testing (currently Windows-focused)
+- [ ] WSL: run a project's agents, git and terminals inside a WSL distro when the project lives there. There is no WSL support in `src/main` today
+- [ ] winget and Scoop packages for the installer
+
+### Updates & Policy
+- [ ] Update channels: a Stable / Beta choice in Settings. Today there is one weekly train, and an alpha install follows pre-releases only implicitly (`docs/auto-update-plan.md`, `auto-updater.ts`)
+- [ ] Managed policy for teams: settings an admin locks through Group Policy (HKLM) or a JSON file, such as the broadest permission mode, which agents are allowed, analytics and the update feed
 
 ### Clipboard
 - [x] Copy buttons on code blocks, bash output, diffs, file ops, thinking blocks
@@ -133,6 +158,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] ARIA roles/labels on app components (80 of 122 app components have `aria-*` or `role` attributes; the other 42 have none)
 - [x] `prefers-reduced-motion` support: `globals.css` stops the pulses, the tooltip and the empty-state animation, and animated components check it themselves (`GroveWalk`, `AgentSprite`, `StatusDot`, `PixelMeter` and others). Loading spinners still turn
 - [ ] i18n framework (all UI strings hardcoded English; spellchecker pinned to `en-US`)
+- [ ] Screen-reader announcements when a background thread finishes or needs you, and the thread's status in the window title (today `aria-live` is used only in settings and popovers)
 
 ### Maintenance & Hygiene
 - [x] ESLint (typed rules, run in CI; errors it found at the start are listed in `eslint-suppressions.json` and fixed over time) and knip for unused files, exports and dependencies
@@ -144,6 +170,8 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Measure live conversation memory: a running conversation keeps every non-streaming event in memory for its whole life (`SessionEventStore.append`); log history size per conversation, and if it's large, keep only recent events in memory and read older ones from the JSONL log
 - [ ] Purge userData on uninstall (NSIS currently leaves settings/logs/worktrees behind)
 - [ ] CHANGELOG.md and SECURITY.md
+- [ ] `findSiblingNodeModules` in `worktree-manager.ts` is never called: use it for the `node_modules` copying item below, or remove it
+- [ ] Performance budgets in CI: comment on or fail a PR when startup time, IPC payload sizes or bundle size grow past a budget. CI runs typecheck, tests, build, lint and knip today
 - [x] Fetch Claude model list dynamically — the adapter reads `Query.supportedModels()` when a conversation starts (once per run), keeps the concrete model ids, caches the list in app-state for the next launch and falls back to `FALLBACK_MODELS` before the first read; the SDK's effort levels, adaptive thinking, fast mode and auto mode override the static rules in `claudeControlsFor()` (default effort and thinking-off still come from the table)
 - [x] Demo harness (`/demo.html`) console errors: the duplicate keyed-each id in the Sidebar demo data and the missing mock bridge methods (`checkPrerequisites`, update listeners) are fixed; the page now loads on the dev server with no console errors
 
@@ -151,7 +179,7 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [ ] Docker-based sandboxing of agent sessions
 - [ ] Shared CLAUDE.md / agent instructions per worktree
 - [ ] Per-repo agent instructions field in Settings (writes to `CLAUDE.md` or a memory `conventions/` note); today only the global system-prompt append exists
-- [ ] Agent-to-agent communication (one agent's output feeds another)
+- [ ] Agent-to-agent communication (one agent's output feeds another). A concrete first step: Grove tools that let an agent start a thread on any agent and model (in its own worktree if asked), wait for it, check on it or cancel it. Today Grove's tools cover memory, follow-ups and Preview only (`adapters/grove-tools.ts`)
 - [ ] Orchestration engine (goal decomposition → parallel tasks → integration merge agent) — prototyped and removed; see user stories 20–28 in `docs/user-stories.md`
 - [ ] Worktree dependency optimizations: copying `node_modules` from another worktree when the lockfile matches, `node_modules` symlinking from main checkout (DESIGN.md §6.1)
 
@@ -163,10 +191,20 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Context length indicator (token usage / remaining)
 - [x] Drag and drop (files, images into prompt)
 - [x] Image attachments in messages (paste/drop, up to 8 per turn, pass as base64)
+- [ ] Prompt history: ArrowUp in an empty prompt brings back earlier prompts (`PromptEditor.svelte` uses ArrowUp only inside its pickers)
+- [ ] Large pastes (32 KB or more) become a text file attachment instead of filling the prompt (`handlePaste` in `PromptEditor.svelte` only handles images)
+- [ ] Prompt stash: put a draft aside and bring it back later (`Ctrl+S` already saves a skill, so it needs another key)
+- [ ] Thread and PR references in the prompt: `@thread` or `#PR` adds that thread's summary or the PR's details as context, and dropping a sidebar thread on the prompt does the same. Today `@` picks files only (`lib/file-picker.ts`)
+- [ ] Send one prompt to several agents or models, each in its own thread and worktree, and start a thread in the background without switching to it. Today a draft starts one thread on one model (`draft.svelte.ts`)
+- [ ] Voice dictation in the prompt
+- [ ] Attach files to an answer to the agent's question (`QuestionBlock.svelte` has no attach)
+- [ ] Find (`Ctrl+F`) in diffs and on Preview pages. Today it works only in the thread (`OutputPanel.svelte`), and main has no `findInPage`
 - [x] Any file as an attachment: saved with the thread and given by path (Claude Code: a note, and reads in that folder allowed without a prompt; ACP: `resource_link`). Only audio goes inline, to ACP agents that take it (listed formats, 5 MB a clip, 10 MB per conversation counted from the thread's history). PDFs go by path: inline ones stay in the history and count toward every later request's size and page limits. 50 MB per message
 
 ### Markdown Preview Panel
 - [x] Focus panel rendering markdown, docked beside the thread between its tab bar and bottom bar so the message box stays usable (reuses the marked + highlight.js + DOMPurify pipeline; Esc from inside it or × to close, drag to resize, copy button). The Subagent panel and Bookmarks dock the same way (`SideDock`)
+- [ ] Mermaid diagrams in messages, and maths (KaTeX) as an opt-in setting. Markdown goes through marked only today
+- [ ] HTML replies drawn in a sandboxed frame in the thread, and MCP Apps. Today an HTML file in Files made opens in the Preview tab
 - [x] Hover "Focus" button on in-turn assistant responses with document-like markdown (≥2 headings, a table, ≥3 code fences, or structure + length) — works in both Detailed and Summary view modes
 - [x] "Focus" on plan-approval blocks so a proposed plan can be read in the Focus panel before approving
 - [x] Secondary: preview `.md` files the agent writes: **preview** on an edit block, **Preview** in the Changes tab, and links to `.md` files in replies open the file as it is now in the Focus panel (`openWorktreeFile` returns its text, up to 1 MB; `isMarkdownFile`). Markdown stays out of "Files made", which lists output, not files edited as source. Not done: a preview in the @ file picker
@@ -184,10 +222,21 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - [x] Branch → PR link (create PR from session branch)
 - [x] Branch without worktree (use existing checkout, no worktree creation)
 - [ ] Stacked branch workflows (dependent branch chains)
+- [ ] Initialise submodules in new worktrees (recursive, top level only, or skip, per project), and optional sparse-checkout patterns. `create()` in `worktree-manager.ts` runs a plain `git worktree add`, so repositories with submodules get incomplete worktrees
+- [ ] Worktree cleanup rules per project: remove a worktree after N idle days, after its PR merges, or when it holds nothing new, with a choice of which local changes protect it. Recreate a thread's missing worktree on its next turn instead of removing the thread (`cleanupOrphans()`). Related: "Worktree disk-usage reporting" under Maintenance
+- [ ] Review one commit at a time in the Changes tab (today only Branch and Uncommitted), and leave files a pull, merge or rebase brought in out of a turn's diff. `checkpoints.ts` diffs one checkpoint against the next, so a turn that merges main shows all of main's changes
+- [ ] Issue trackers: an Issues view (GitHub first, then Linear and GitLab), link an issue to a thread, start a thread from one, and agent tools to create, link and close issues. Today follow-ups are a local list only (`follow-ups.ts`)
+- [ ] Git hosts other than GitHub (GitLab, Bitbucket, Azure DevOps, Forgejo/Gitea). PR and CI features work only through `gh` today
+- [ ] Projects with several repositories: a worktree per repository on one branch, with diffs and git actions per repository (Goal 2 in `docs/projects-plan.md`)
+- [ ] New project from scratch or from a clone URL, and publish a local project to GitHub. There is no clone or `gh repo create` in `src` today
+- [ ] Keep the base branch current: an optional fetch and fast-forward of the default branch on a timer. Today `pullBaseBranch` runs only when a worktree is created
 
 ### Configuration
 - [ ] Customizable keybindings (`~/.grove-bench/keybindings.json`)
-- [ ] Project scripts (user-defined scripts bound to keyboard shortcuts)
+- [ ] Command palette (`Ctrl+K`) that runs actions (new thread, switch tab, open a setting, git actions), not just finding threads; `ui/command/command-dialog.svelte` is in the kit but unused. `Ctrl+R` stays as thread search
+- [ ] Keyboard navigation: `Ctrl+1` to `Ctrl+9` to jump to a thread, `F6` to move between areas, arrow keys, `F2` and `Shift+F10` in the sidebar, and back/forward between threads
+- [ ] Project scripts (user-defined scripts bound to keyboard shortcuts, and optionally run when a worktree is created or a thread is closed)
+- [ ] Settings per project: base branch, branch naming, default permission mode, and the files copied to new worktrees (today `DEFAULT_COPY_PATTERNS` in `worktree-manager.ts` is fixed and can't be edited in the app). Settings are global today except `repoColors` (`settings.ts`)
 
 ### Dev & Preview
 - ~~Localhost run (start/preview dev server from worktree)~~ — implemented, then removed; run dev servers from the session terminal instead
@@ -207,12 +256,13 @@ Feature gaps identified by comparing against [Toad](https://github.com/batrachia
 - Event history replay after reload
 - Orphan worktree cleanup
 
-## Advantages Over T3 Code
+## Strengths to Keep
 
-- **Project Memory System** — persistent markdown notes (repo, conventions, architecture, sessions); t3code has none
+- **Project Memory System** — persistent markdown notes (repo, conventions, architecture, sessions)
 - **Orphan Worktree Detection & Cleanup** — auto-detect on startup + 15-min background sweeps
 - **Auto-Copy `.env` Files** — automatically copies `.env`, `.npmrc`, etc. to new worktrees
 - **Auto-Install Dependencies** — optional install in new worktrees with the project's package manager (npm, pnpm, Yarn, Bun), from the user's own cache
-- **Tool Visibility Control** — allow/deny rules with glob patterns (more granular than t3's sandbox modes)
+- **Tool Visibility Control** — allow/deny rules with glob patterns, matched by tool category across agents
+- **Conflict Handling Between Threads**: rebase, squash and cherry-pick between threads (`GitOpsDialog`), and Mark resolved in the review panel (`ReviewDiffPanel.svelte`)
 - **Power Monitoring** — flush state on suspend, health-check on resume
 - **Changes Review Panel** — dedicated panel with file staging/unstaging, revert individual files
