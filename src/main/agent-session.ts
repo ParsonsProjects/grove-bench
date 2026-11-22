@@ -2968,6 +2968,14 @@ class AgentSessionManager {
   get closingCount(): number {
     return this.closing.size;
   }
+
+  /** Threads in a turn now (turnInFlight): what closing the window would
+   *  stop, and what the tray menu counts. */
+  get workingCount(): number {
+    let n = 0;
+    for (const session of this.sessions.values()) if (turnInFlight(session)) n++;
+    return n;
+  }
 }
 
 export const sessionManager = new AgentSessionManager();

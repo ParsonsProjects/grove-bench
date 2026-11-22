@@ -57,6 +57,7 @@ import {
   loadConversationGroups, saveConversationGroups,
   loadTodoSessionIds, saveTodoSessionIds,
   loadSkillSchedules, saveSkillSchedules, updateSkillSchedules,
+  loadTrayIntroduced, saveTrayIntroduced,
   appStateSaved, resetAppStateForTests,
 } from './app-state.js';
 
@@ -296,6 +297,16 @@ describe('saving', () => {
     expect(syncWrites()).toBe(1);
     await vi.advanceTimersByTimeAsync(500);
     expect(asyncWrites()).toBe(0);
+  });
+
+  it('remembers that the tray was introduced', async () => {
+    useDisk(undefined);
+    expect(loadTrayIntroduced()).toBe(false);
+    saveTrayIntroduced();
+    vi.advanceTimersByTime(500);
+    await appStateSaved();
+    resetAppStateForTests(); // the next launch
+    expect(loadTrayIntroduced()).toBe(true);
   });
 
   it('round-trips unread session ids', async () => {

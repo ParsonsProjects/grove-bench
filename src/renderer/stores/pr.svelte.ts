@@ -11,6 +11,7 @@ import type { PrWatchState, PrWatchEvent } from '../lib/pr-watch.js';
 import { stripIpcErrorPrefix } from '../lib/mcp-errors.js';
 import { shipTrack, type ShipTrack } from '../lib/ship-track.js';
 import { markdownPreviewStore } from './markdownPreview.svelte.js';
+import { settingsStore } from './settings.svelte.js';
 
 const POLL_MS = 60_000;
 /** Conversations the user hasn't looked at for a while are refreshed this
@@ -144,6 +145,14 @@ export interface BranchShip {
  *  PR is watched — alerts, auto-fix, and the agent actions target it. The
  *  primary is the first entry of the (main-sorted) list: open before
  *  merged/closed, newest first — unless the user picks another one. */
+/** Whether PR checks wait: the window is hidden, so a minimised app does no
+ *  gh calls and comes back to a fresh sweep. Not when the user keeps Grove
+ *  Bench running in the tray (close-to-tray.ts): there it stays hidden for
+ *  hours, and PR alerts and auto turns have to go on. */
+function checksPaused(): boolean {
+  return typeof document !== 'undefined' && document.hidden && settingsStore.current.closeWindow !== 'tray';
+}
+
 class PrStore {
   prsBySession = $state<Record<string, PrInfo[]>>({});
   /** User-chosen primary PR number per session; falls back to the list head
@@ -430,8 +439,9 @@ class PrStore {
    *  pollsEverySweep) — started once from App.
    *  Self-scheduling so a slow sweep never overlaps the next one, and spaced
    *  out while refreshes are slow (SLOW_REFRESH_MS). Sweeps are
-   *  skipped while the window is hidden and one runs as soon as it is shown
-   *  again, so a minimised app doesn't come back to minute-old checks. */
+   *  skipped while the window is hidden, unless it's in the tray
+   *  (checksPaused), and one runs as soon as it is shown again, so a
+   *  minimised app doesn't come back to minute-old checks. */
   startGlobalPolling(getSessionIds: () => string[]): void {
     if (this.getPolledSessionIds) return;
     this.getPolledSessionIds = getSessionIds;
@@ -486,8 +496,9 @@ class PrStore {
     this.sweeping = true;
     try {
       // Each refresh is a `gh` network call plus two git processes per
-      // session; skip the sweep entirely while the window is hidden.
-      if (typeof document === 'undefined' || !document.hidden) {
+      // session; skip the sweep entirely while the window is hidden
+      // (checksPaused).
+      if (!checksPaused()) {
         let refreshed = false;
         let slow = false;
         for (const id of this.getPolledSessionIds()) {
@@ -851,7 +862,7 @@ class PrStore {
   /** AUTO_SETTLE_MS from now, mark the queued turn settled if no turn
    *  started meanwhile, then fetch: that fetch's detection sends it. While
    *  the window is hidden the sweep pauses, so this does too, and the sweep
-   *  as the window shows again sends it. */
+   *  as the window shows again sends it (checksPaused: not in the tray). */
   private settleThenRefresh(sessionId: string): void {
     if (this.settleTimers.has(sessionId)) return;
     this.settleTimers.set(sessionId, setTimeout(() => {
@@ -859,7 +870,7 @@ class PrStore {
       const free = this.pendingAuto.get(sessionId)?.free;
       if (!free) return;
       if (free.turn === messageStore.turnCount(sessionId)) free.settled = true;
-      if (typeof document !== 'undefined' && document.hidden) return;
+      if (checksPaused()) return;
       void this.refresh(sessionId, true);
     }, AUTO_SETTLE_MS));
   }

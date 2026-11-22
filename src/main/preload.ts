@@ -451,6 +451,13 @@ const api: GroveBenchAPI = {
   getSettings: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
   saveSettings: (s: import('../shared/types.js').GroveBenchSettings) =>
     ipcRenderer.invoke(IPC.SETTINGS_SAVE, s),
+  onSettingsChanged: (callback: (patch: Partial<import('../shared/types.js').GroveBenchSettings>) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, patch: Partial<import('../shared/types.js').GroveBenchSettings>) => callback(patch);
+    ipcRenderer.on(IPC.SETTINGS_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.SETTINGS_CHANGED, handler);
+    };
+  },
 
   // App state persistence
   getOpenTabs: () => ipcRenderer.invoke(IPC.APP_STATE_GET_OPEN_TABS) as Promise<string[]>,
@@ -564,8 +571,8 @@ const api: GroveBenchAPI = {
   showPerformanceFile: (which: 'log' | 'trace') => ipcRenderer.invoke(IPC.PERF_SHOW_FILE, which),
 
   // Taskbar attention badge
-  setAttentionBadge: (count: number, dataUrl: string | null) =>
-    ipcRenderer.send(IPC.WIN_SET_ATTENTION_BADGE, count, dataUrl),
+  setAttentionBadge: (count: number, dataUrl: string | null, attention?: number) =>
+    ipcRenderer.send(IPC.WIN_SET_ATTENTION_BADGE, count, dataUrl, attention),
 
   // Window controls
   winMinimize: () => ipcRenderer.send(IPC.WIN_MINIMIZE),

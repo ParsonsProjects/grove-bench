@@ -80,6 +80,10 @@ export interface AppState {
   dailySpend?: DailySpend;
   /** Skills run on a schedule (skill-schedules.ts). Absent until the first. */
   skillSchedules?: SkillSchedule[];
+  /** The user has been told the window can close to the tray: offered it on
+   *  closing with threads working, or shown the notice the first time the
+   *  window went to the tray (close-to-tray.ts). Absent until then. */
+  trayIntroduced?: boolean;
 }
 
 export interface DailySpend {
@@ -192,6 +196,7 @@ const appStateSchema = z.object({
     allowanceUsd: z.number().finite().nonnegative().optional(),
   }).optional().catch(undefined),
   skillSchedules: skillSchedulesSchema.optional().catch(undefined),
+  trayIntroduced: z.boolean().optional().catch(undefined),
 }) satisfies z.ZodType<AppState, unknown>;
 
 /** Normalize a raw object into a valid AppState. Never throws. */
@@ -661,6 +666,16 @@ let dailySpend: DailySpend | null | undefined;
 export function loadDailySpend(): DailySpend | null {
   if (dailySpend === undefined) dailySpend = pick((state) => state.dailySpend ?? null);
   return dailySpend;
+}
+
+/** Whether the user has been told about closing to the tray (trayIntroduced). */
+export function loadTrayIntroduced(): boolean {
+  return pick((state) => state.trayIntroduced === true);
+}
+
+/** Saved within SAVE_DELAY_MS; quitting writes what is pending. */
+export function saveTrayIntroduced(): void {
+  setSoon('trayIntroduced', true);
 }
 
 /** Saved within SAVE_DELAY_MS: a turn ends in every thread that is running. */

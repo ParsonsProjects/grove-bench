@@ -239,7 +239,33 @@ describe('App unread flag', () => {
     store.needsAttention = { open: true, closed: true };
     flushSync();
 
-    expect(mockGroveBench.setAttentionBadge).toHaveBeenLastCalledWith(1, null);
+    expect(mockGroveBench.setAttentionBadge).toHaveBeenLastCalledWith(1, null, 1);
+  });
+
+  it('still tells the tray how many threads need attention with the badge turned off', async () => {
+    const before = JSON.parse(JSON.stringify(settingsStore.current)) as typeof settingsStore.current;
+    const draftBefore = JSON.parse(JSON.stringify(settingsStore.draft)) as typeof settingsStore.draft;
+    // The draft too: startup's load saves a draft that differs from current.
+    const off = { ...before, notifyTaskbarBadge: false };
+    settingsStore.current = off;
+    settingsStore.draft = JSON.parse(JSON.stringify(off)) as typeof settingsStore.draft;
+    mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(off)));
+    try {
+      mockGroveBench.listRepos.mockResolvedValue([]);
+      getOpenTabs.mockResolvedValue([]);
+      render(App);
+      await screen.findByText('Add a project to get started.', {}, { timeout: 5000 });
+
+      store.sessions = [{ id: 'open', branch: 'feat-a', repoPath: '/repo', status: 'running' }] as any;
+      store.needsAttention = { open: true };
+      flushSync();
+
+      expect(mockGroveBench.setAttentionBadge).toHaveBeenLastCalledWith(0, null, 1);
+    } finally {
+      settingsStore.current = before;
+      settingsStore.draft = draftBefore;
+      mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(before)));
+    }
   });
 
   it('does not mark it unread when it is closed mid-turn', async () => {

@@ -456,6 +456,7 @@ const api: Record<string, unknown> = {
   saveSettings: async (next: typeof SETTINGS) => {
     Object.assign(SETTINGS, next);
   },
+  onSettingsChanged: () => () => {},
   listSkills: async () => DEMO_SKILLS,
   listAgentSkills: async () => DEMO_SKILLS,
   addSkill: async (_sid: string, _fallback: string, def: { name: string; description: string; scope: string }) => {
