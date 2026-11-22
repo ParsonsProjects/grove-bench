@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -60,9 +60,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-submodules-'));
 });
+/** Remove a folder of the test's; on Windows, retried while a git that
+ *  just ended still holds a file in it. */
+const remove = (dir: string) => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 afterEach(() => {
   vi.useRealTimers();
-  fs.rmSync(tmp, { recursive: true, force: true });
+  remove(tmp);
 });
 
 describe('hasSubmodules', () => {
@@ -187,12 +190,18 @@ describe('initSubmodules', () => {
   });
 });
 
-describe('with real git', () => {
+// Each git command can take a few hundred ms to start on Windows (CI), so
+// the project is made once, and each test only adds a worktree of it.
+describe('with real git', { timeout: 30_000 }, () => {
   const run = (cwd: string, ...args: string[]) => execFileSync('git', args, {
     cwd,
     env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' },
     stdio: 'pipe',
   }).toString();
+
+  let root: string;
+  let app: string;
+  let worktrees = 0;
 
   /** A repo with one commit holding `file`. */
   function repo(dir: string, file: string): string {
@@ -204,28 +213,33 @@ describe('with real git', () => {
     return dir;
   }
 
-  /** A project with a submodule at vendor/lib, by a relative URL, which has
-   *  one of its own at deep; its clone's .git/config with no submodule in
-   *  it; and a new worktree of it, at wt. */
-  function project() {
+  // A project with a submodule at vendor/lib, by a relative URL, which has
+  // one of its own at deep; cloned without --recurse-submodules, so its
+  // .git/config names no submodule.
+  beforeAll(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'grove-submodules-project-'));
     // A submodule at a local path needs the file protocol allowed (git
     // refuses it by default since 2.38.1); a real project's are URLs.
     const g = (cwd: string, ...args: string[]) => run(cwd, '-c', 'protocol.file.allow=always', ...args);
-    const lib = repo(path.join(tmp, 'lib'), 'index.ts');
-    g(lib, 'submodule', '--quiet', 'add', repo(path.join(tmp, 'inner'), 'deep.ts'), 'deep');
+    const lib = repo(path.join(root, 'lib'), 'index.ts');
+    g(lib, 'submodule', '--quiet', 'add', repo(path.join(root, 'inner'), 'deep.ts'), 'deep');
     run(lib, 'commit', '-qm', 'deep');
-    run(tmp, 'clone', '-q', '--bare', lib, 'lib.git');
-    const origin = repo(path.join(tmp, 'origin'), 'README');
-    run(tmp, 'clone', '-q', '--bare', origin, 'app.git');
-    run(tmp, 'clone', '-q', 'app.git', 'app');
-    const app = path.join(tmp, 'app');
+    run(root, 'clone', '-q', '--bare', lib, 'lib.git');
+    run(root, 'clone', '-q', '--bare', repo(path.join(root, 'origin'), 'README'), 'app.git');
+    run(root, 'clone', '-q', 'app.git', 'app');
+    app = path.join(root, 'app');
     g(app, 'submodule', '--quiet', 'add', '../lib.git', 'vendor/lib');
     run(app, 'commit', '-qm', 'submodule');
-    // As if cloned without --recurse-submodules.
     run(app, 'config', '--remove-section', 'submodule.vendor/lib');
-    const wt = path.join(tmp, 'wt');
-    run(app, 'worktree', 'add', '-q', '-b', 'feat', wt);
-    return { app, wt };
+  }, 60_000);
+  afterAll(() => remove(root));
+
+  /** A new worktree of the project, in the test's folder. */
+  function worktree(): { wt: string; name: string } {
+    const name = `wt${++worktrees}`;
+    const wt = path.join(tmp, name);
+    run(app, 'worktree', 'add', '-q', '-b', name, wt);
+    return { wt, name };
   }
 
   async function setUp(wt: string, mode: 'all' | 'top') {
@@ -235,36 +249,40 @@ describe('with real git', () => {
     await initSubmodules(wt, submoduleArgs(mode, config.active), env, new AbortController().signal);
   }
 
-  const submoduleConfig = (app: string) => run(app, 'config', '--local', '--list').split('\n').filter((l) => l.startsWith('submodule.'));
+  const submoduleConfig = () => run(app, 'config', '--local', '--list').split('\n').filter((l) => l.startsWith('submodule.'));
 
   it("fills the empty folders git worktree add leaves, every level, without changing the project's config", async () => {
-    const { app, wt } = project();
+    const { wt, name } = worktree();
     expect(fs.readdirSync(path.join(wt, 'vendor/lib'))).toEqual([]);
-    expect(submoduleConfig(app)).toEqual([]);
+    expect(submoduleConfig()).toEqual([]);
 
     await setUp(wt, 'all');
 
     expect(fs.readdirSync(path.join(wt, 'vendor/lib'))).toContain('index.ts');
     expect(fs.readdirSync(path.join(wt, 'vendor/lib/deep'))).toContain('deep.ts');
-    expect(submoduleConfig(app)).toEqual([]);
+    expect(submoduleConfig()).toEqual([]);
     // Its clone is the worktree's own.
-    expect(fs.existsSync(path.join(app, '.git/worktrees/wt/modules/vendor/lib'))).toBe(true);
+    expect(fs.existsSync(path.join(app, '.git/worktrees', name, 'modules/vendor/lib'))).toBe(true);
   });
 
   it('checks out the top level only, when asked', async () => {
-    const { wt } = project();
+    const { wt } = worktree();
     await setUp(wt, 'top');
     expect(fs.readdirSync(path.join(wt, 'vendor/lib'))).toContain('index.ts');
     expect(fs.readdirSync(path.join(wt, 'vendor/lib/deep'))).toEqual([]);
   });
 
   it("leaves out what the project's submodule.active leaves out", async () => {
-    const { app, wt } = project();
+    const { wt } = worktree();
     run(app, 'config', 'submodule.active', ':(exclude)vendor/lib');
     run(app, 'config', 'core.sshCommand', 'ssh -i key');
-    expect(await readSubmoduleConfig(wt)).toEqual({ active: [':(exclude)vendor/lib'], sshCommand: true });
-
-    await setUp(wt, 'all');
-    expect(fs.readdirSync(path.join(wt, 'vendor/lib'))).toEqual([]);
+    try {
+      expect(await readSubmoduleConfig(wt)).toEqual({ active: [':(exclude)vendor/lib'], sshCommand: true });
+      await setUp(wt, 'all');
+      expect(fs.readdirSync(path.join(wt, 'vendor/lib'))).toEqual([]);
+    } finally {
+      run(app, 'config', '--unset', 'submodule.active');
+      run(app, 'config', '--unset', 'core.sshCommand');
+    }
   });
 });
