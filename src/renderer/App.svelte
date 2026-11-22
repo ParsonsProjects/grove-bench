@@ -251,20 +251,22 @@
 
   // Taskbar badge: sessions blocked on input or finished while unfocused.
   // Reads the same signals as the sidebar's triage so the numbers agree.
-  let lastBadgeCount = -1;
+  // The tray's menu (close-to-tray.ts) gets the count whatever the badge
+  // setting says.
+  let lastBadge = '';
   $effect(() => {
     const enabled = settingsStore.current.notifyTaskbarBadge;
-    const count = enabled
-      ? attentionCount(
-        store.sessions,
-        (s) => messageStore.needsInput(s.id),
-        (s) => store.isUnread(s),
-      )
-      : 0;
-    if (count === lastBadgeCount) return;
-    lastBadgeCount = count;
+    const attention = attentionCount(
+      store.sessions,
+      (s) => messageStore.needsInput(s.id),
+      (s) => store.isUnread(s),
+    );
+    const count = enabled ? attention : 0;
+    const key = `${count}/${attention}`;
+    if (key === lastBadge) return;
+    lastBadge = key;
     try {
-      window.groveBench.setAttentionBadge(count, renderBadgeDataUrl(count));
+      window.groveBench.setAttentionBadge(count, renderBadgeDataUrl(count), attention);
     } catch { /* badge is cosmetic */ }
   });
 

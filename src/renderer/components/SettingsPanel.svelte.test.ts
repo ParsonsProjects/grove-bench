@@ -32,7 +32,7 @@ function settings(adapterDefaults: GroveBenchSettings['adapterDefaults'] = {}): 
     defaultModels: {}, adapterDefaults, showThinkingSummaries: true, cavemanMode: 'off', workingDirectories: [], defaultSystemPromptAppend: '', acpAgents: [], claudeAccounts: [], enabledAlphaAgents: [], defaultAgent: '',
     memoryAutoSave: true, memoryCompactTimeoutSeconds: 300, backgroundModels: {},
     autoInstallDeps: false, submoduleSetup: 'off', worktreeFolder: '', previewAgentTools: true, idleSleepMinutes: 30, defaultBaseBranch: '', branchNamingRule: '', theme: 'system', alwaysOnTop: false, autoDownloadUpdates: true,
-    repoColors: {}, groveCharacters: true, boardView: false, diffViewMode: 'unified', defaultActivityView: 'summary', spellcheck: true, steerOnEnter: false,
+    repoColors: {}, groveCharacters: true, boardView: false, diffViewMode: 'unified', defaultActivityView: 'summary', spellcheck: true, steerOnEnter: false, closeWindow: 'quit',
     notifyOnTurnComplete: true, notifyOnPermission: true, notifyOnPrAlert: true, notifyTaskbarFlash: true, notifyTaskbarBadge: true, notifyOnPlanUsage: true,
     planUsageAlertPercent: 80, threadSpendLimitUsd: 0, dailySpendLimitUsd: 0, turnToolCallLimit: 0, turnMinutesLimit: 0,
     analyticsEnabled: false, analyticsPrompted: false, crashReportsEnabled: false, onlineCatalogs: true,

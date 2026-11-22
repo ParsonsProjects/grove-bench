@@ -1861,6 +1861,16 @@ describe('renderer input checks', () => {
     expect(m.logger.debug).toHaveBeenCalledTimes(2);
   });
 
+  it("tells the tray how many threads need attention, even with the badge off", async () => {
+    const { closeToTray } = await import('./close-to-tray.js');
+    const noted = vi.spyOn(closeToTray, 'noteAttention');
+    invoke(IPC.WIN_SET_ATTENTION_BADGE, 0, null, 3);
+    invoke(IPC.WIN_SET_ATTENTION_BADGE, 2, 'data:x');
+    expect(noted.mock.calls).toEqual([[3], [2]]);
+    expect(vi.mocked(applyAttentionBadge).mock.calls[0][1]).toBe(0);
+    noted.mockRestore();
+  });
+
   it('attention badge counts are whole, non-negative numbers', () => {
     invoke(IPC.WIN_SET_ATTENTION_BADGE, -3, 'data:x');
     invoke(IPC.WIN_SET_ATTENTION_BADGE, 2.7, 42);

@@ -4,6 +4,7 @@ import { mockGroveBench } from '../__mocks__/setup.js';
 import { prStore } from './pr.svelte.js';
 import { store as sessionStore } from './sessions.svelte.js';
 import { messageStore } from './messages.svelte.js';
+import { settingsStore } from './settings.svelte.js';
 import type { PrInfo, SessionStatus } from '../../shared/types.js';
 import { CI_RERUN_UNANSWERED } from '../../shared/ci-log.js';
 
@@ -375,6 +376,19 @@ describe('global sweep', () => {
     expect(prStore.getPr(A)?.number).toBe(9);
   });
 
+  it('keeps sweeping while the window is hidden in the tray', async () => {
+    mockGroveBench.getPrs.mockResolvedValue([pr({ number: 9 })]);
+    settingsStore.current = { ...settingsStore.current, closeWindow: 'tray' };
+    try {
+      prStore.startGlobalPolling(() => [A]);
+      hidden = true;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockGroveBench.getPrs).toHaveBeenCalledWith(A);
+    } finally {
+      settingsStore.current = { ...settingsStore.current, closeWindow: 'quit' };
+    }
+  });
+
   const fetchesOf = (id: string) => mockGroveBench.getPrs.mock.calls.filter(([s]) => s === id).length;
 
   it('refreshes a conversation nobody has looked at only every 5 minutes', async () => {
@@ -735,6 +749,29 @@ describe('auto turns: checks already failing, and a thread that was busy', () =>
       await refreshWith(failing('sha-2')); // the sweep as the window shows
       expect(turns()).toHaveLength(1);
     } finally {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+    }
+  });
+
+  it("doesn't wait while the window is hidden in the tray", async () => {
+    let hidden = false;
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+    settingsStore.current = { ...settingsStore.current, closeWindow: 'tray' };
+    try {
+      prStore.setAuto(SID, { fixCi: true });
+      await refreshWith(running('sha-2'));
+      busy();
+      await refreshWith(failing('sha-2'));
+      free();
+      await refreshWith(failing('sha-2'));
+      hidden = true;
+      mockGroveBench.getPrs.mockClear();
+      await settle();
+      // The settle's own fetch, with the window still hidden, sends it.
+      expect(mockGroveBench.getPrs).toHaveBeenCalled();
+      expect(turns()).toHaveLength(1);
+    } finally {
+      settingsStore.current = { ...settingsStore.current, closeWindow: 'quit' };
       Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
     }
   });

@@ -39,6 +39,7 @@ export const SETTINGS_INDEX: readonly SettingsEntry[] = [
   { id: 'always-on-top', section: 'general', label: 'Always on top', keywords: 'window' },
   { id: 'spellcheck', section: 'general', label: 'Spell checking', keywords: 'spelling prompt editor' },
   { id: 'enter-while-working', section: 'general', label: 'While the agent works, Enter', keywords: 'steer steering queue message box send alt enter turn' },
+  { id: 'close-window', section: 'general', label: 'When you close the window', keywords: 'tray system tray icon close quit background minimize keep running hide' },
   { id: 'updates', section: 'general', label: 'Updates', keywords: 'version check for updates releases' },
   { id: 'auto-download-updates', section: 'general', label: 'Download updates automatically', keywords: 'install background restart' },
 
