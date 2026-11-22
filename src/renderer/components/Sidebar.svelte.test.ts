@@ -1992,6 +1992,16 @@ describe('Sidebar delete conversation', () => {
     expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
   });
 
+  it('opens the same confirmation when asked from outside the sidebar (a merged PR)', async () => {
+    store.sessions = [{ id: 's2', branch: 'fix-parser', repoPath: '/repo-a', status: 'stopped' }] as any;
+    store.activeSessionId = null;
+    mockGroveBench.getCollapsedRepos.mockResolvedValue({ '/repo-a': false });
+    render(Sidebar);
+    store.destroyRequest = 's2';
+    expect(await screen.findByRole('dialog')).toHaveTextContent('Delete thread?');
+    expect(store.destroyRequest).toBeNull();
+  });
+
   it('warns about uncommitted files before deleting', async () => {
     mockGroveBench.getGitStatus.mockResolvedValueOnce({ entries: [{ filePath: 'a.ts', status: 'modified', staged: false }, { filePath: 'b.ts', status: 'untracked', staged: false }] });
     const dialog = await openDeleteDialog();

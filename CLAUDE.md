@@ -47,6 +47,7 @@ src/
     freeze-log.ts      # Main-process stalls, slow window frames (100 ms+), process launches, timed work, GC pauses, agent output, process CPU
     perf-*.ts          # performance.log, step timings (new/resume/wake), health line, traces
     git-status-parser.ts
+    pr-actions.ts      # PR actions from the branch popup: merge (or bypass), auto-merge, ready/draft, close/reopen, update branch, delete branch
     preview.ts         # Preview tab: your page (WebContentsView) + the agent's (offscreen)
     preview-*.ts       # Preview URL rules, console log, in-page scripts, keys
     attachments.ts     # Attached files and images tools return, served over grove-attachment://

@@ -6,7 +6,7 @@ import { git, excludeFromGit, FETCH_TIMEOUT_MS, isGitRepo, renameBranch as gitRe
 import { logger } from './logger.js';
 import { removeDirectory, removeDirectoryWithRetry, pathExists, readFileWithRetry, writeFileAtomic } from './fs-utils.js';
 import { removeTree } from './remove-tree.js';
-import type { BranchSwitchResult, BranchSyncResult, ConversationGoal, ConversationGoalSource, LinkedCheckout, WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
+import type { BranchSwitchResult, BranchSyncResult, PrUpdateResult, ConversationGoal, ConversationGoalSource, LinkedCheckout, WorktreeConfig, WorktreeInfo, WorktreeRepoConfig } from '../shared/types.js';
 import { adapterRegistry } from './adapters/index.js';
 import type { AutoNameDecision, DisplayNameSource, DisplayNameState } from './session-auto-name.js';
 import type { SavedThreadLimits } from './session-limits.js';
@@ -1533,6 +1533,72 @@ export class WorktreeManager {
 
       await this.recordBranch(sharers, name, { created: create });
       return { success: true, branch: name, sessionIds: sharers };
+    });
+  }
+
+  /** The commit `branch` points at on origin, from the thread's checkout;
+   *  null when it isn't there or origin can't be reached. */
+  async remoteHead(id: string, branch: string): Promise<string | null> {
+    const info = this.worktrees.get(id);
+    if (!info) return null;
+    try {
+      const out = await git(['ls-remote', 'origin', `refs/heads/${branch}`], info.path, { timeout: FETCH_TIMEOUT_MS });
+      return /^([0-9a-f]{40,64})\s/i.exec(out)?.[1].toLowerCase() ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Bring a thread's checkout up to date once its PR's branch was updated
+   * on GitHub (Update branch, in the branch popup). `from` is where the
+   * branch was on origin before.
+   *
+   * GitHub can move the branch a moment after gh returns, so this waits for
+   * it to move first. Then, under the repo lock, it changes the checkout
+   * only when nobody is working in it (`isBusy`, for every thread sharing
+   * it), it is on `branch`, and it holds exactly `from`: nothing unpushed,
+   * nothing missing. So nothing local is lost: a merge update
+   * fast-forwards, and a rebase update, whose commits are all new, moves the
+   * branch to GitHub's with `reset --keep`, which keeps uncommitted changes
+   * and stops rather than overwrite them.
+   */
+  async catchUpWithRemote(id: string, opts: {
+    branch: string;
+    from: string | null;
+    rebase: boolean;
+    isBusy: (sessionId: string) => boolean;
+    /** How long to wait for GitHub to move the branch, and how often to look. */
+    waitMs?: number;
+    pollMs?: number;
+  }): Promise<PrUpdateResult> {
+    const info = this.worktrees.get(id);
+    if (!info) return { pulled: false, skipped: 'other-branch' };
+    const deadline = Date.now() + (opts.waitMs ?? 15_000);
+    let to: string | null;
+    for (;;) {
+      to = await this.remoteHead(id, opts.branch);
+      if (to && to !== opts.from) break;
+      if (Date.now() >= deadline) return { pulled: false, skipped: 'not-yet' };
+      await new Promise((resolve) => setTimeout(resolve, opts.pollMs ?? 1000));
+    }
+    const target = to;
+
+    return this.withRepoLock(info.repoPath, async (): Promise<PrUpdateResult> => {
+      const cwd = info.path;
+      if (this.worktrees.get(id) !== info) return { pulled: false, skipped: 'other-branch' };
+      if ((await this.checkoutSharers(id)).some((s) => opts.isBusy(s))) return { pulled: false, skipped: 'busy' };
+      if ((await currentBranch(cwd)) !== opts.branch) return { pulled: false, skipped: 'other-branch' };
+      try {
+        const head = (await git(['rev-parse', 'HEAD'], cwd)).trim().toLowerCase();
+        if (!opts.from || head !== opts.from) return { pulled: false, skipped: 'diverged' };
+        await git(['fetch', 'origin', `refs/heads/${opts.branch}`], cwd, { timeout: FETCH_TIMEOUT_MS });
+        await git(opts.rebase ? ['reset', '--keep', target] : ['merge', '--ff-only', target], cwd);
+        return { pulled: true };
+      } catch (e) {
+        const err = e as { stderr?: string; message?: string };
+        return { pulled: false, pullError: (err.stderr || err.message || String(e)).trim().split('\n').slice(-3).join('\n') };
+      }
     });
   }
 

@@ -858,6 +858,90 @@ export interface PrInfo {
   runningChecks?: string[];
 }
 
+/** How a PR merges into its base: one squashed commit, a merge commit, or
+ *  its commits rebased onto the base. */
+export type MergeMethod = 'squash' | 'merge' | 'rebase';
+export const MERGE_METHODS: readonly MergeMethod[] = ['squash', 'merge', 'rebase'];
+
+/** Which PR an action is for. Its URL names the repository and host, so gh
+ *  acts there, not on whatever repository the folder's remotes point to. */
+export interface PrRef {
+  number: number;
+  url: string;
+}
+
+/** What the branch popup may offer for a PR (pr-actions.ts): the
+ *  repository's merge settings, and what the gh account may do to it. */
+export interface PrActionOptions {
+  /** The merge methods the repository allows, in MERGE_METHODS order. */
+  methods: MergeMethod[];
+  /** The repository deletes a merged PR's branch itself. */
+  deleteBranchOnMerge: boolean;
+  /** Auto-merge can be turned on for PRs in this repository. */
+  autoMergeAllowed: boolean;
+  /** The base branch has a merge queue: a merge adds the PR to it, and the
+   *  queue merges it later, its own way. */
+  mergeQueue: boolean;
+  /** The account may bypass the base branch's rules and merge now (gh pr
+   *  merge --admin), the merge queue too. */
+  canMergeAsAdmin: boolean;
+  canEnableAutoMerge: boolean;
+  canDisableAutoMerge: boolean;
+  /** The branch is behind its base, and the account may bring it up to date. */
+  canUpdateBranch: boolean;
+  /** The account may push to this repository and the PR's branch is in it
+   *  (not a fork's), so it may delete the branch after the merge. */
+  canDeleteBranch: boolean;
+  /** Open PRs based on this PR's branch: deleting it would pull their base
+   *  from under them, so it's kept. */
+  stackedPrs: number;
+}
+
+/** A merge the user confirmed in the branch popup. */
+export interface PrMergeRequest extends PrRef {
+  method: MergeMethod;
+  /** The head commit the confirm showed: GitHub refuses the merge if the
+   *  branch has moved since (gh pr merge --match-head-commit). */
+  headSha: string;
+  /** Bypass the base branch's rules (gh pr merge --admin). */
+  admin?: boolean;
+  /** Then delete the PR's branch on GitHub. Never the local one: the
+   *  thread's worktree has it checked out. */
+  deleteBranch?: boolean;
+}
+
+/** What a merge, or a branch delete, came to. */
+export interface PrActionResult {
+  /** GitHub merged it (rather than adding it to a merge queue, say). */
+  merged?: boolean;
+  /** The branch was deleted on GitHub (or was already gone). */
+  branchDeleted?: boolean;
+  /** What the user should know: it went to the merge queue, or the branch
+   *  was kept and why. */
+  note?: string;
+}
+
+/** Why Update branch left the thread's copy as it was. */
+export type PrUpdateSkip =
+  /** An agent is working in the checkout. */
+  | 'busy'
+  /** The checkout is on another branch. */
+  | 'other-branch'
+  /** The checkout's branch isn't what GitHub had before (commits not
+   *  pushed, or not pulled): changing it could lose work. */
+  | 'diverged'
+  /** GitHub hadn't moved the branch yet when we looked. */
+  | 'not-yet';
+
+/** What Update branch did to the thread's copy, once GitHub had updated the
+ *  PR's branch. */
+export interface PrUpdateResult {
+  pulled: boolean;
+  skipped?: PrUpdateSkip;
+  /** git's reason, when bringing the copy up to date failed. */
+  pullError?: string;
+}
+
 export type PrReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
 
 /** A line comment from the Changes tab, to post with a PR review. Lines are
@@ -1903,6 +1987,23 @@ export interface GroveBenchAPI {
   /** Open PRs in a project, newest first. Throws when gh can't list them. */
   listOpenPrs(repoPath: string): Promise<OpenPrSummary[]>;
   createPr(sessionId: string, opts: PrCreateOpts): Promise<PrInfo>;
+  // PR actions from the branch popup (pr-actions.ts). Each throws with
+  // GitHub's reason when it refuses.
+  /** What the popup may offer for one of the thread's PRs, from `head`. */
+  getPrActionOptions(sessionId: string, pr: PrRef, head: string): Promise<PrActionOptions>;
+  /** Merge it; `head` is its branch, deleted on GitHub after if asked. */
+  mergePr(sessionId: string, req: PrMergeRequest, head?: string): Promise<PrActionResult>;
+  /** Delete a merged PR's branch on GitHub, if nothing still needs it. */
+  deletePrBranch(sessionId: string, pr: PrRef, branch: string): Promise<PrActionResult>;
+  setPrAutoMerge(sessionId: string, pr: PrRef, on: boolean, method?: MergeMethod): Promise<void>;
+  /** Back to draft (`true`) or ready for review (`false`). */
+  setPrDraft(sessionId: string, pr: PrRef, draft: boolean): Promise<void>;
+  /** Reopen (`true`) or close (`false`). */
+  setPrOpen(sessionId: string, pr: PrRef, open: boolean): Promise<void>;
+  /** Update its branch (`head`) from the base on GitHub, then the thread's
+   *  copy too, unless one of `busySessionIds` (or a turn main knows of) is
+   *  working in the checkout. */
+  updatePrBranch(sessionId: string, pr: PrRef, rebase: boolean, head: string, busySessionIds: string[]): Promise<PrUpdateResult>;
   getPrReviewComments(sessionId: string, prNumber: number): Promise<PrReviewComment[]>;
   /** Post a review (approve, request changes or comment) on one of the
    *  session's PRs, with line comments placed inline where GitHub can take them. */
@@ -2761,6 +2862,13 @@ export const IPC = {
   PR_LIST: 'pr:list',
   PR_LIST_OPEN: 'pr:listOpen',
   PR_CREATE: 'pr:create',
+  PR_ACTION_OPTIONS: 'pr:actionOptions',
+  PR_MERGE: 'pr:merge',
+  PR_DELETE_BRANCH: 'pr:deleteBranch',
+  PR_SET_AUTO_MERGE: 'pr:setAutoMerge',
+  PR_SET_DRAFT: 'pr:setDraft',
+  PR_SET_OPEN: 'pr:setOpen',
+  PR_UPDATE_BRANCH: 'pr:updateBranch',
   PR_REVIEW_COMMENTS: 'pr:reviewComments',
   PR_SUBMIT_REVIEW: 'pr:submitReview',
   PR_JOB_LOG: 'pr:jobLog',

@@ -2,12 +2,13 @@ import { app, ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import { isSkipped, runProcess } from './process-host.js';
 import { inBackground } from './background-work.js';
 import { IPC, isPermissionMode } from '../shared/types.js';
-import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, EventHistoryPage, ThreadUsage, OpenPrSummary, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, SkillReach, WorktreeInfo, LinkedCheckout } from '../shared/types.js';
+import type { BranchSwitchResult, ClaudeAccountPreview, ClaudeAccountSetting, BranchSyncResult, ConversationGoal, CreateSessionOpts, EventHistoryPage, ThreadUsage, OpenPrSummary, PrerequisiteStatus, PermissionDecision, RegistryAgentSummary, SessionInfo, SkillDefinition, SkillReach, WorktreeInfo, LinkedCheckout, PrActionResult, PrMergeRequest, PrUpdateResult } from '../shared/types.js';
 import { errorMessage } from '../shared/error-message.js';
 import { linkedProjectNotes } from './linked-projects.js';
 import { linkChangeNote } from './session-config.js';
 import { sessionManager } from './agent-session.js';
 import { todaySpend } from './session-limits.js';
+import { deletePrBranch, isCommitSha, isMergeMethod, prActionOptions, prMerge, prSetAutoMerge, prSetDraft, prSetOpen, prTarget, prUpdateBranch, type PrTarget } from './pr-actions.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
 import { openCutOff } from '../shared/cut-off.js';
 import { decideAutoName } from './session-auto-name.js';
@@ -2235,6 +2236,88 @@ export function registerHandlers() {
     // The branch must exist on origin before gh can open a PR for it.
     await push(worktree.path, worktree.branch);
     return prCreate(worktree.repoPath, worktree.branch, opts);
+  });
+
+  // ─── PR actions from the branch popup (pr-actions.ts) ───
+
+  /** The thread's project folder, for a PR action. */
+  function prRepo(sessionId: string): { repoPath: string; worktree: WorktreeInfo } {
+    const worktree = worktreeManager.getWorktree(sessionId);
+    if (!worktree || worktree.noGit) throw new Error(THREAD_FOLDER_GONE);
+    return { repoPath: worktree.repoPath, worktree };
+  }
+
+  /** A branch this thread's PRs come from (sessionPrBranches): the only
+   *  ones the popup may delete. */
+  async function threadBranch(worktree: WorktreeInfo, branch: unknown): Promise<string> {
+    if (typeof branch !== 'string' || !(await sessionPrBranches(worktree)).includes(branch)) {
+      throw new Error('That branch isn\'t one of this thread\'s');
+    }
+    return branch;
+  }
+
+  /** The PR a call names ({ number, url }), or why it can't be acted on. */
+  function needTarget(pr: unknown): PrTarget {
+    const target = prTarget(pr);
+    if (!target) throw new Error('Not a PR the popup showed');
+    return target;
+  }
+
+  ipcMain.handle(IPC.PR_ACTION_OPTIONS, async (_event, sessionId: string, pr: unknown, head: unknown) => {
+    const { repoPath, worktree } = prRepo(sessionId);
+    return prActionOptions(repoPath, needTarget(pr), await threadBranch(worktree, head));
+  });
+
+  ipcMain.handle(IPC.PR_MERGE, async (_event, sessionId: string, req: unknown, head: unknown): Promise<PrActionResult> => {
+    const { repoPath, worktree } = prRepo(sessionId);
+    const r = (req ?? {}) as Partial<PrMergeRequest>;
+    const target = prTarget(r);
+    if (!target || !isMergeMethod(r.method) || !isCommitSha(r.headSha)) throw new Error('Not a merge the popup asked for');
+    const merge: PrMergeRequest = {
+      number: target.number, url: r.url as string, method: r.method, headSha: r.headSha,
+      ...(r.admin === true ? { admin: true } : {}),
+      ...(r.deleteBranch === true ? { deleteBranch: true } : {}),
+    };
+    return prMerge(repoPath, target, merge, merge.deleteBranch ? await threadBranch(worktree, head) : undefined);
+  });
+
+  ipcMain.handle(IPC.PR_DELETE_BRANCH, async (_event, sessionId: string, pr: unknown, branch: unknown): Promise<PrActionResult> => {
+    const { repoPath, worktree } = prRepo(sessionId);
+    return deletePrBranch(repoPath, needTarget(pr), await threadBranch(worktree, branch));
+  });
+
+  ipcMain.handle(IPC.PR_SET_AUTO_MERGE, async (_event, sessionId: string, pr: unknown, on: unknown, method: unknown) => {
+    const { repoPath } = prRepo(sessionId);
+    await prSetAutoMerge(repoPath, needTarget(pr), on === true, isMergeMethod(method) ? method : 'squash');
+  });
+
+  ipcMain.handle(IPC.PR_SET_DRAFT, async (_event, sessionId: string, pr: unknown, draft: unknown) => {
+    const { repoPath } = prRepo(sessionId);
+    await prSetDraft(repoPath, needTarget(pr), draft === true);
+  });
+
+  ipcMain.handle(IPC.PR_SET_OPEN, async (_event, sessionId: string, pr: unknown, open: unknown) => {
+    const { repoPath } = prRepo(sessionId);
+    await prSetOpen(repoPath, needTarget(pr), open === true);
+  });
+
+  /** Update the PR's branch on GitHub, then bring the thread's copy up to
+   *  date too (worktreeManager.catchUpWithRemote), unless someone is
+   *  working in it: the threads the renderer counts as working (background
+   *  agents too) and any in a turn when it gets there, which may be long
+   *  after the click. That part not happening doesn't fail the update:
+   *  the result says what happened. */
+  ipcMain.handle(IPC.PR_UPDATE_BRANCH, async (_event, sessionId: string, pr: unknown, rebase: unknown, head: unknown, busySessionIds: unknown): Promise<PrUpdateResult> => {
+    const { repoPath, worktree } = prRepo(sessionId);
+    const target = needTarget(pr);
+    const branch = await threadBranch(worktree, head);
+    const from = await worktreeManager.remoteHead(sessionId, branch);
+    await prUpdateBranch(repoPath, target, rebase === true);
+    const busy = new Set(Array.isArray(busySessionIds) ? busySessionIds.filter((s): s is string => typeof s === 'string') : []);
+    return worktreeManager.catchUpWithRemote(sessionId, {
+      branch, from, rebase: rebase === true,
+      isBusy: (id) => busy.has(id) || sessionManager.isMidTurn(id),
+    });
   });
 
   // ─── Plugins ───

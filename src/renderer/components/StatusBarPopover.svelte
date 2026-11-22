@@ -11,7 +11,8 @@
    * meant for what is on screen). Only when focus was inside does it keep the
    * key, in the capture phase, and give focus back to the trigger: Escape
    * pressed in a dialog opened over it (Ctrl+,), the conversation finder or
-   * the prompt must still reach them.
+   * the prompt must still reach them. A menu over it (DropdownMenu,
+   * ContextMenu) takes Escape first: the key closes that, not the panel.
    *
    * Closes when it unmounts too: a chip that goes away and comes back (the
    * pending tools count, say) must not reopen its popover by itself.
@@ -76,6 +77,12 @@
     };
     const onKeydown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || !(root?.checkVisibility?.() ?? true)) return;
+      // A menu listens on window in the capture phase too, so its
+      // stopPropagation can't keep the key from this one. It marks the key
+      // handled; and if this runs first, the menu is still open in here.
+      // (Not only the mark: the page runs pending updates between listeners
+      // on a real key press, so the menu may be gone by the time this looks.)
+      if (e.defaultPrevented || root?.querySelector('[role="menu"]')) return;
       open = false;
       const focused = document.activeElement;
       if (focused && focused !== document.body && !root?.contains(focused)) return;
