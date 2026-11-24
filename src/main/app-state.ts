@@ -758,6 +758,13 @@ export function rememberProject(repoPath: string): void {
   }, 0);
 }
 
+/** The last project in the list, or null: the folder picker opens next to
+ *  it. Usually the one added most recently, but listProjects also appends
+ *  projects only the worktree manifest knows. */
+export function lastAddedProject(): string | null {
+  return pick((state) => state.projects)?.at(-1) ?? null;
+}
+
 export function forgetProject(repoPath: string): void {
   change((state) => {
     if (state.projects) state.projects = state.projects.filter((p) => p !== repoPath);

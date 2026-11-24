@@ -34,13 +34,13 @@ function fakeDeps(over: Partial<TraceDeps> = {}, bytes = 2048) {
 
 describe('recordTrace', () => {
   it('keeps the trace it just saved even when the clock went back', async () => {
-    for (let i = 0; i < 5; i++) fs.writeFileSync(path.join(dir, `trace-2026-11-0${i + 1}T00-00-00-000Z.json`), '{}');
+    for (let i = 0; i < 5; i++) fs.writeFileSync(path.join(dir, `trace-2026-11-0${i + 1}T00-00-00-000Z.pftrace`), 'x');
     const { deps } = fakeDeps(); // saves trace-2026-10-01...
     const result = await recordTrace(10, deps);
 
     expect(fs.existsSync(path.join(dir, result.name))).toBe(true);
     expect(fs.readdirSync(dir)).toHaveLength(5);
-    expect(fs.existsSync(path.join(dir, 'trace-2026-11-01T00-00-00-000Z.json'))).toBe(false);
+    expect(fs.existsSync(path.join(dir, 'trace-2026-11-01T00-00-00-000Z.pftrace'))).toBe(false);
   });
 
   it('records for the given time, then saves the trace in the traces folder', async () => {
@@ -49,11 +49,11 @@ describe('recordTrace', () => {
 
     expect(tracing.startRecording).toHaveBeenCalledWith(TRACE_CONFIG);
     expect(deps.wait).toHaveBeenCalledWith(10_000);
-    const file = path.join(dir, 'trace-2026-10-01T12-34-56-789Z.json');
+    const file = path.join(dir, 'trace-2026-10-01T12-34-56-789Z.pftrace');
     expect(tracing.stopRecording).toHaveBeenCalledWith(file);
-    expect(result).toEqual({ name: 'trace-2026-10-01T12-34-56-789Z.json', sizeBytes: 3 * 1024 * 1024, seconds: 10 });
+    expect(result).toEqual({ name: 'trace-2026-10-01T12-34-56-789Z.pftrace', sizeBytes: 3 * 1024 * 1024, seconds: 10 });
     expect(lastTracePath()).toBe(file);
-    expect(lines).toEqual(['recording for 10 s', 'saved trace-2026-10-01T12-34-56-789Z.json (3.0 MB)']);
+    expect(lines).toEqual(['recording for 10 s', 'saved trace-2026-10-01T12-34-56-789Z.pftrace (3.0 MB)']);
   });
 
   it('runs one recording at a time', async () => {
@@ -77,8 +77,9 @@ describe('recordTrace', () => {
     await expect(recordTrace(10, again.deps)).resolves.toMatchObject({ seconds: 10 });
   });
 
-  it('keeps the newest five traces', async () => {
-    for (let i = 0; i < 6; i++) fs.writeFileSync(path.join(dir, `trace-2026-09-0${i + 1}T00-00-00-000Z.json`), '{}');
+  it('keeps the newest five traces, counting the .json ones saved before Electron 45', async () => {
+    for (let i = 0; i < 3; i++) fs.writeFileSync(path.join(dir, `trace-2026-09-0${i + 1}T00-00-00-000Z.json`), '{}');
+    for (let i = 3; i < 6; i++) fs.writeFileSync(path.join(dir, `trace-2026-09-0${i + 1}T00-00-00-000Z.pftrace`), 'x');
     fs.writeFileSync(path.join(dir, 'notes.txt'), 'kept');
     const { deps } = fakeDeps();
     await recordTrace(10, deps);
@@ -86,10 +87,10 @@ describe('recordTrace', () => {
     expect(fs.readdirSync(dir).sort()).toEqual([
       'notes.txt',
       'trace-2026-09-03T00-00-00-000Z.json',
-      'trace-2026-09-04T00-00-00-000Z.json',
-      'trace-2026-09-05T00-00-00-000Z.json',
-      'trace-2026-09-06T00-00-00-000Z.json',
-      'trace-2026-10-01T12-34-56-789Z.json',
+      'trace-2026-09-04T00-00-00-000Z.pftrace',
+      'trace-2026-09-05T00-00-00-000Z.pftrace',
+      'trace-2026-09-06T00-00-00-000Z.pftrace',
+      'trace-2026-10-01T12-34-56-789Z.pftrace',
     ]);
   });
 });

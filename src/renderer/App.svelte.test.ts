@@ -474,6 +474,11 @@ describe('App board (alpha)', () => {
 
   it('closes when its setting is turned off', async () => {
     withBoard();
+    // No threads, whatever the test before left in these mocks, so the
+    // board's empty state shows.
+    mockGroveBench.listRepos.mockResolvedValue([]);
+    mockGroveBench.listWorktrees.mockResolvedValue([]);
+    getOpenTabs.mockResolvedValue([]);
     render(App);
     boardStore.show();
     expect(await screen.findByText('No open threads', {}, { timeout: 5000 })).toBeInTheDocument();

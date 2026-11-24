@@ -535,7 +535,9 @@ export class PreviewManager {
         if (/^https?:/i.test(params.linkURL)) {
           items.push({ label: 'Open Link in System Browser', click: () => { shell.openExternal(params.linkURL).catch(() => {}); } });
         }
-        items.push({ label: 'Copy Link Address', click: () => clipboard.writeText(params.linkURL) }, { type: 'separator' });
+        // writeText returns a promise since Electron 44: a failed copy
+        // mustn't become an unhandled rejection.
+        items.push({ label: 'Copy Link Address', click: () => { clipboard.writeText(params.linkURL).catch(() => {}); } }, { type: 'separator' });
       }
       if (params.isEditable) {
         items.push(

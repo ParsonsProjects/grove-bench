@@ -1,7 +1,9 @@
 /**
  * Performance traces: record what every part of the app does for a few
  * seconds (Chromium's tracing, through Electron's contentTracing) and save
- * it as a file to open in Perfetto (ui.perfetto.dev) or chrome://tracing.
+ * it as a file to open in Perfetto (ui.perfetto.dev). Since Electron 45 the
+ * file is Perfetto's protobuf format, not JSON, so it's named .pftrace (as
+ * Perfetto's docs name traces) and chrome://tracing can't open it.
  * Settings → Diagnostics starts one; the user then does the slow thing.
  *
  * Traces go to logs/traces and only the newest few are kept. They stay on
@@ -61,9 +63,10 @@ export function lastTracePath(): string | null {
 
 /** Keep `saved` and the newest `keep - 1` other traces, deleting the rest.
  *  Names sort by the time they were saved at; `saved` is kept whatever its
- *  name, in case the clock was moved back since the others. */
+ *  name, in case the clock was moved back since the others. Counts the .json
+ *  traces saved before Electron 45 too, so they're pruned in turn. */
 async function prune(dir: string, keep: number, saved: string): Promise<void> {
-  const others = (await fs.readdir(dir)).filter((n) => /^trace-.*\.json$/.test(n) && n !== saved).sort();
+  const others = (await fs.readdir(dir)).filter((n) => /^trace-.*\.(pftrace|json)$/.test(n) && n !== saved).sort();
   const old = others.slice(0, Math.max(0, others.length - (keep - 1)));
   await Promise.all(old.map((n) => fs.rm(path.join(dir, n), { force: true })));
 }
@@ -76,7 +79,7 @@ export function recordTrace(seconds = TRACE_SECONDS, deps: TraceDeps = defaultDe
   recording ??= (async () => {
     const dir = deps.dir();
     await fs.mkdir(dir, { recursive: true });
-    const file = path.join(dir, `trace-${deps.date().toISOString().replace(/[:.]/g, '-')}.json`);
+    const file = path.join(dir, `trace-${deps.date().toISOString().replace(/[:.]/g, '-')}.pftrace`);
     await deps.tracing.startRecording(TRACE_CONFIG);
     deps.write(`recording for ${seconds} s`);
     try {

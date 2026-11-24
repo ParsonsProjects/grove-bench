@@ -32,7 +32,7 @@
   <SettingRow
     setting="performance-trace"
     label="Record a performance trace"
-    description="Records what every part of the app does for {PERFORMANCE_TRACE_SECONDS} seconds and saves it as a file. Start it, then do the slow thing, such as starting a new thread. Open the file at ui.perfetto.dev or in chrome://tracing. It stays on this computer; it holds timings, file paths and page addresses, not thread text. The newest 5 are kept."
+    description="Records what every part of the app does for {PERFORMANCE_TRACE_SECONDS} seconds and saves it as a file. Start it, then do the slow thing, such as starting a new thread. Open the file at ui.perfetto.dev. It stays on this computer; it holds timings, file paths and page addresses, not thread text. The newest 5 are kept."
   >
     <div class="flex flex-wrap items-center gap-2">
       <Button size="sm" variant="subtle" onclick={() => perfTraceStore.record()} disabled={perfTraceStore.state === 'recording'}>
