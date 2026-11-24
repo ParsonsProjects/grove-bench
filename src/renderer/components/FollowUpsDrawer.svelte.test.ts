@@ -1,12 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, fireEvent, screen, within } from '@testing-library/svelte';
+import { render, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/svelte';
 
 import FollowUpsDrawer from './FollowUpsDrawer.svelte';
 import { followUpsStore } from '../stores/followUps.svelte.js';
 import { draftStore } from '../stores/draft.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
+import { mockGroveBench } from '../__mocks__/setup.js';
 import type { FollowUp } from '../../shared/follow-ups.js';
+
+// bits-ui scrolls the highlighted option into view; jsdom has no layout.
+Element.prototype.scrollIntoView ??= function scrollIntoView() {};
 
 function fu(extra: Partial<FollowUp> = {}): FollowUp {
   return { id: 'a1b2c3', repoPath: '/repo-a', title: 'Add tests for refresh', details: 'Cover the expired token path.', createdAt: Date.now(), ...extra };
@@ -33,6 +37,27 @@ afterEach(() => {
 });
 
 describe('FollowUpsDrawer', () => {
+  it('lists open ones highest priority first, and changes one from its card', async () => {
+    followUpsStore.list = [
+      fu({ id: 'aaaaaa', title: 'Tidy names', priority: 'low' }),
+      fu({ id: 'bbbbbb', title: 'Add tests' }),
+      fu({ id: 'cccccc', title: 'Fix token check', priority: 'high' }),
+    ];
+    render(FollowUpsDrawer);
+    const titles = screen.getAllByRole('article').map((a) => a.getAttribute('aria-label'));
+    expect(titles).toEqual(['Fix token check', 'Add tests', 'Tidy names']);
+
+    const trigger = screen.getByRole('button', { name: /Priority of Add tests: Normal/ });
+    // jsdom has no pointer capture, so pick from the keyboard.
+    trigger.focus();
+    await fireEvent.keyDown(trigger, { key: 'Enter' });
+    const option = await screen.findByRole('option', { name: 'Low' });
+    option.focus();
+    await fireEvent.pointerMove(option);
+    await fireEvent.keyDown(document.activeElement ?? option, { key: 'Enter' });
+    await waitFor(() => expect(mockGroveBench.setFollowUpPriority).toHaveBeenCalledWith('bbbbbb', 'low'));
+  });
+
   it('renders nothing when the drawer is closed', () => {
     followUpsStore.drawerOpen = false;
     render(FollowUpsDrawer);

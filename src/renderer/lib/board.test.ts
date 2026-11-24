@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { boardStage, boardLanes, boardFollowUps, matchesBoardQuery, prSummary, BOARD_STAGES, type LaneSource } from './board.js';
+import {
+  boardStage, boardLanes, boardFollowUps, matchesBoardQuery, prSummary, prNeedsYou, sortBoardThreads, BOARD_STAGES, type LaneSource,
+} from './board.js';
 import type { FollowUp } from '../../shared/follow-ups.js';
 import { AGENT_SPRITES, type AgentSpriteState } from './agent-sprite.js';
 
@@ -102,6 +104,55 @@ describe('prSummary', () => {
     expect(prSummary({ state: 'OPEN', checks: null })).toEqual({ label: 'Open', tone: 'neutral' });
     expect(prSummary({ state: 'OPEN', checks: checks(0, 0, 0) }).label).toBe('Open');
   });
+
+  it('names conflicts after failing checks, ahead of how it stands', () => {
+    expect(prSummary({ state: 'OPEN', mergeState: 'dirty', checks: checks(1, 0) }).label).toBe('Checks failing');
+    expect(prSummary({ state: 'OPEN', mergeState: 'dirty', reviewDecision: 'APPROVED' })).toEqual({ label: 'Conflicts', tone: 'warning' });
+    expect(prSummary({ state: 'OPEN', mergeState: 'behind', reviewDecision: 'APPROVED' }).label).toBe('Approved');
+  });
+});
+
+describe('prNeedsYou', () => {
+  const failing = { total: 2, passed: 1, failed: 1, pending: 0 };
+
+  it('is true for an open one with changes asked for, failing checks or conflicts', () => {
+    expect(prNeedsYou({ state: 'OPEN', reviewDecision: 'CHANGES_REQUESTED' })).toBe(true);
+    expect(prNeedsYou({ state: 'OPEN', checks: failing })).toBe(true);
+    expect(prNeedsYou({ mergeState: 'dirty' })).toBe(true);
+  });
+
+  it('is false for none, one that ended, a draft, or one with nothing in its way', () => {
+    expect(prNeedsYou(null)).toBe(false);
+    expect(prNeedsYou({ state: 'MERGED', checks: failing })).toBe(false);
+    expect(prNeedsYou({ state: 'CLOSED', mergeState: 'dirty' })).toBe(false);
+    expect(prNeedsYou({ state: 'OPEN', isDraft: true, checks: failing })).toBe(false);
+    expect(prNeedsYou({ state: 'OPEN', reviewDecision: 'APPROVED', mergeState: 'behind', checks: { total: 2, passed: 1, failed: 0, pending: 1 } })).toBe(false);
+  });
+});
+
+describe('sortBoardThreads', () => {
+  const card = (id: string, lastActiveAt: number, extra: { unread?: boolean; prNeedsYou?: boolean } = {}) =>
+    ({ id, lastActiveAt, unread: false, prNeedsYou: false, ...extra });
+  const cards = [
+    card('old-pr', 1, { prNeedsYou: true }),
+    card('recent', 9),
+    card('old-unread', 2, { unread: true }),
+    card('new-unread-pr', 5, { unread: true, prNeedsYou: true }),
+    card('mid', 4),
+  ];
+
+  it('puts unread first, then a pull request that needs you, most recently active first inside each', () => {
+    expect(sortBoardThreads(cards, 'unread-first').map((c) => c.id)).toEqual(['new-unread-pr', 'old-unread', 'old-pr', 'recent', 'mid']);
+  });
+
+  it('goes by last active alone when asked, and leaves the list it was given as it was', () => {
+    expect(sortBoardThreads(cards, 'last-active').map((c) => c.id)).toEqual(['recent', 'new-unread-pr', 'mid', 'old-unread', 'old-pr']);
+    expect(cards[0]?.id).toBe('old-pr');
+  });
+
+  it('keeps the order cards came in when they tie', () => {
+    expect(sortBoardThreads([card('a', 3), card('b', 3)], 'last-active').map((c) => c.id)).toEqual(['a', 'b']);
+  });
 });
 
 describe('matchesBoardQuery', () => {
@@ -126,6 +177,11 @@ describe('boardFollowUps', () => {
   it('keeps open follow-ups in known projects, oldest first', () => {
     const list = [f('a'), f('b', { doneAt: 1 }), f('c', { repoPath: '/removed' }), f('d')];
     expect(boardFollowUps(list, ['/web'], (id) => open.has(id)).map((x) => x.followUp.id)).toEqual(['a', 'd']);
+  });
+
+  it('puts high priority first and low last, oldest first inside each', () => {
+    const list = [f('low', { priority: 'low' }), f('old'), f('high', { priority: 'high' }), f('new', { priority: 'normal' })];
+    expect(boardFollowUps(list, ['/web'], () => false).map((x) => x.followUp.id)).toEqual(['high', 'old', 'new', 'low']);
   });
 
   it('leaves out one whose thread is open, and brings back one whose thread closed', () => {

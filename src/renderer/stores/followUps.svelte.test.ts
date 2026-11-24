@@ -94,6 +94,18 @@ describe('followUpsStore.byProject', () => {
     expect(projects[0].open.map((f) => f.id)).toEqual(['a1', 'a2']);
     expect(projects[0].done.map((f) => f.id)).toEqual(['a-new', 'a-old']);
   });
+
+  it('puts open ones highest priority first, as they came inside each', () => {
+    followUpsStore.list = [fu('low', '/a', { priority: 'low' }), fu('n1', '/a'), fu('high', '/a', { priority: 'high' }), fu('n2', '/a', { priority: 'normal' })];
+    expect(followUpsStore.byProject(['/a'])[0].open.map((f) => f.id)).toEqual(['high', 'n1', 'n2', 'low']);
+  });
+});
+
+describe('followUpsStore.setPriority', () => {
+  it('asks main to change it', async () => {
+    await followUpsStore.setPriority('a1', 'high');
+    expect(mockGroveBench.setFollowUpPriority).toHaveBeenCalledWith('a1', 'high');
+  });
 });
 
 describe('followUpsStore.openCountIn', () => {
@@ -137,8 +149,8 @@ describe('followUpsStore.add', () => {
     followUpsStore.ready = true;
     followUpsStore.list = [fu('a', '/r')];
     mockGroveBench.addFollowUp.mockResolvedValueOnce({ followUp: fu('new', '/r', { title: 'Write the docs' }), existing: false });
-    const result = await followUpsStore.add('/r', 'Write the docs', 'In docs/help.');
-    expect(mockGroveBench.addFollowUp).toHaveBeenCalledWith('/r', 'Write the docs', 'In docs/help.');
+    const result = await followUpsStore.add('/r', 'Write the docs', 'In docs/help.', 'low');
+    expect(mockGroveBench.addFollowUp).toHaveBeenCalledWith('/r', 'Write the docs', 'In docs/help.', 'low');
     expect(result.existing).toBe(false);
     expect(followUpsStore.list.map((f) => f.id)).toEqual(['a', 'new']);
     // Main's own change for it, arriving after, changes nothing.

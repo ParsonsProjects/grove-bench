@@ -478,6 +478,7 @@
     // Listens before the restore ends: main's scheduler starts after it.
     schedulesStore.init();
     void panelStore.load();
+    void boardStore.load();
     memoryStore.init();
     previewStore.init();
     store.loadRepos().then(() => restoreApp()).catch((e) => {

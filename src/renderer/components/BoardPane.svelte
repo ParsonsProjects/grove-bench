@@ -26,14 +26,20 @@
     BOARD_COLUMN_HINTS,
     BOARD_LANES,
     BOARD_LANE_LABELS,
+    BOARD_SORTS,
+    BOARD_SORT_LABELS,
+    BOARD_SORT_HINTS,
     boardStage,
     boardFollowUps,
     boardLanes,
+    isBoardLanes,
+    isBoardSort,
     matchesBoardQuery,
+    prNeedsYou,
+    sortBoardThreads,
     type BoardColumn,
-    type BoardLanes,
   } from '../lib/board.js';
-  import type { FollowUp } from '../../shared/follow-ups.js';
+  import type { FollowUp, FollowUpPriority } from '../../shared/follow-ups.js';
   import type { SessionStatus } from '../../shared/types.js';
 
   /**
@@ -42,7 +48,8 @@
    * or per group. A thread's card opens it; a follow-up's Start thread opens
    * the new thread with it as the first message. Either closes the board.
    * Shown in the main pane in place of a thread (App.svelte), from the
-   * sidebar's List / Board switch.
+   * sidebar's List / Board switch. Thread cards in each column follow the
+   * Sort choice; follow-ups go highest priority first.
    */
 
   /** What a column says when it has no card (with lanes off). */
@@ -76,6 +83,11 @@
     status: SessionStatus;
     /** The follow-up it was started from, if it was. */
     followUp: FollowUp | null;
+    /** Finished a turn you haven't looked at. */
+    unread: boolean;
+    /** Its open pull request has changes asked for, failing checks or conflicts. */
+    prNeedsYou: boolean;
+    lastActiveAt: number;
   };
   type FollowUpItem = {
     kind: 'follow-up';
@@ -88,7 +100,7 @@
   };
   type Item = ThreadItem | FollowUpItem;
 
-  const threads = $derived(store.openConversations.flatMap((session): ThreadItem[] => {
+  const threads = $derived(sortBoardThreads(store.openConversations.flatMap((session): ThreadItem[] => {
     const pr = prStore.getPr(session.id);
     const state = sessionSpriteState(session);
     const stage = boardStage(state, pr);
@@ -105,8 +117,11 @@
       pr,
       status: session.status,
       followUp: followUpsStore.startedFrom(session.id) ?? null,
+      unread: state === 'unread',
+      prNeedsYou: prNeedsYou(pr),
+      lastActiveAt: session.lastActiveAt ?? session.createdAt ?? 0,
     }];
-  }));
+  }), boardStore.sort));
 
   const openThreadIds = $derived(new Set(store.openConversations.map((s) => s.id)));
 
@@ -169,18 +184,23 @@
     draftStore.openFollowUp(f);
   }
 
-  async function markDone(f: FollowUp) {
+  async function save(change: () => Promise<void>) {
     try {
-      await followUpsStore.setDone(f.id, true);
+      await change();
       notice = null;
     } catch (e) {
       notice = { tone: 'danger', text: ipcErrorText(e, "That couldn't be saved.") };
     }
   }
+
+  const markDone = (f: FollowUp) => save(() => followUpsStore.setDone(f.id, true));
+  const setPriority = (f: FollowUp, priority: FollowUpPriority) => save(() => followUpsStore.setPriority(f.id, priority));
 </script>
 
 <div class="flex flex-col h-full min-h-0 bg-background" data-board>
-  <PanelHeader title="Board">
+  <PanelHeader>
+    <!-- Not PanelHeader's title, which gives way first: the count does here. -->
+    <span class="shrink-0 font-medium text-foreground">Board</span>
     <AlphaBadge />
     <span class="text-caption text-muted-foreground truncate">
       {threads.length} open {threads.length === 1 ? 'thread' : 'threads'}, {followUps.length} {followUps.length === 1 ? 'follow-up' : 'follow-ups'}
@@ -190,11 +210,23 @@
         <span id="board-lanes-label" class="text-caption text-muted-foreground">Lanes</span>
         <Segmented.Root
           value={boardStore.lanes}
-          onValueChange={(v) => { if (v) boardStore.lanes = v as BoardLanes; }}
+          onValueChange={(v) => { if (isBoardLanes(v)) boardStore.setLanes(v); }}
           aria-labelledby="board-lanes-label"
         >
           {#each BOARD_LANES as lane (lane)}
             <Segmented.Item value={lane}>{BOARD_LANE_LABELS[lane]}</Segmented.Item>
+          {/each}
+        </Segmented.Root>
+      </span>
+      <span class="flex items-center gap-1.5">
+        <span id="board-sort-label" class="text-caption text-muted-foreground">Sort</span>
+        <Segmented.Root
+          value={boardStore.sort}
+          onValueChange={(v) => { if (isBoardSort(v)) boardStore.setSort(v); }}
+          aria-labelledby="board-sort-label"
+        >
+          {#each BOARD_SORTS as sort (sort)}
+            <Segmented.Item value={sort} title={BOARD_SORT_HINTS[sort]}>{BOARD_SORT_LABELS[sort]}</Segmented.Item>
           {/each}
         </Segmented.Root>
       </span>
@@ -300,6 +332,7 @@
                     {showProject}
                     onstart={() => startFollowUp(item.followUp)}
                     ondone={() => void markDone(item.followUp)}
+                    onpriority={(p: FollowUpPriority) => void setPriority(item.followUp, p)}
                   />
                 {:else}
                   <BoardCard
@@ -313,6 +346,8 @@
                     status={item.status}
                     pr={item.pr}
                     waiting={column === 'needs-you'}
+                    unread={item.unread}
+                    prNeedsYou={item.prNeedsYou}
                     followUp={item.followUp}
                     onopen={() => boardStore.openThread(item.id)}
                     onfollowup={() => { if (item.followUp) followUpsStore.reveal(item.followUp.id); }}

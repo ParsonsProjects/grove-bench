@@ -6,7 +6,7 @@
 
 import type { ThreadItems } from '../shared/thread-items.js';
 import type { SkillSchedule, SkillScheduleInput } from '../shared/skill-schedules.js';
-import type { FollowUp, FollowUpsChange } from '../shared/follow-ups.js';
+import type { FollowUp, FollowUpPriority, FollowUpsChange } from '../shared/follow-ups.js';
 
 // Capture uncaught errors (a template error can kill Svelte's effect loop).
 const errs: string[] = [];
@@ -42,6 +42,7 @@ const demoFollowUps: FollowUp[] = [
     details: 'The footer icons wrap onto two rows when the sidebar is narrow (Sidebar.svelte, footerTools). '
       + 'Move everything but Settings into an overflow menu under 260px. Done when the footer stays one row at the narrowest width.',
     createdAt: now - 40 * min, fromSessionId: 's-sidebar', fromLabel: 'Sidebar revamp', fromBranch: 'claude/sidebar-revamp',
+    priority: 'low',
   },
   {
     id: '8b10e4', repoPath: REPO_A, title: 'Add a test for the retry banner on a second 401',
@@ -53,6 +54,7 @@ const demoFollowUps: FollowUp[] = [
     id: 'c2d9a7', repoPath: REPO_B, title: 'Expire refresh tokens that were issued before the key rotation',
     details: 'Found while fixing the refresh: tokens signed with the old key still pass verify() in auth/tokens.ts.',
     createdAt: now - 3 * 60 * min, fromSessionId: 's-oauth', fromLabel: 'claude/fix-oauth-refresh', fromBranch: 'claude/fix-oauth-refresh',
+    priority: 'high',
   },
   {
     id: 'e7f310', repoPath: REPO_B, title: 'Find out why the login e2e test is flaky',
@@ -560,10 +562,12 @@ const api: Record<string, unknown> = {
     followUpListeners.add(callback);
     return () => followUpListeners.delete(callback);
   },
-  addFollowUp: async (repoPath: string, title: string, details: string) => {
+  addFollowUp: async (repoPath: string, title: string, details: string, priority?: FollowUpPriority) => {
     const same = demoFollowUps.find((f) => f.repoPath === repoPath && f.doneAt === undefined && f.title.toLowerCase() === title.trim().toLowerCase());
     if (same) return { followUp: structuredClone(same), existing: true };
-    const followUp: FollowUp = { id: Math.random().toString(16).slice(2, 8), repoPath, title: title.trim(), details: details.trim(), createdAt: Date.now() };
+    const followUp: FollowUp = {
+      id: Math.random().toString(16).slice(2, 8), repoPath, title: title.trim(), details: details.trim(), createdAt: Date.now(), priority: priority ?? 'normal',
+    };
     demoFollowUps.push(followUp);
     changeFollowUp(followUp);
     return { followUp: structuredClone(followUp), existing: false };
@@ -575,6 +579,12 @@ const api: Record<string, unknown> = {
     else delete f.doneAt;
     changeFollowUp(f);
   },
+  setFollowUpPriority: async (id: string, priority: FollowUpPriority) => {
+    const f = demoFollowUps.find((x) => x.id === id);
+    if (!f) return;
+    f.priority = priority;
+    changeFollowUp(f);
+  },
   followUpStarted: async (id: string, sessionId: string) => {
     const f = demoFollowUps.find((x) => x.id === id);
     if (!f) return;
@@ -584,6 +594,8 @@ const api: Record<string, unknown> = {
   getOpenTabs: async () => [],
   getCollapsedRepos: async () => ({ [REPO_A]: false, [REPO_B]: false }),
   getSessionSort: async () => ({ key: 'age', dir: 'desc' }),
+  getBoardLayout: async () => null,
+  setBoardLayout: () => {},
   getSidebarWidth: async () => 320,
   getCollapsedPanels: async () => ({}),
   // One piece of work across both projects: the API fix and the sign-in UI that uses it.

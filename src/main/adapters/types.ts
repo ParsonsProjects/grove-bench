@@ -6,7 +6,7 @@
  */
 import type { ToolView } from '../../shared/tool-view.js';
 import type { SkillDirs } from '../skills.js';
-import type { FollowUp } from '../../shared/follow-ups.js';
+import type { FollowUp, FollowUpPriority } from '../../shared/follow-ups.js';
 import type { AgentStage, AgentEvent, MemoryEntry, ModelTotals, TokenCounts, PermissionMode, ControlDescriptor, ProviderUsage, McpServerInfo, McpAuthStartResult, McpConfiguredServer, McpAddServerOpts, McpConfigScope, McpElicitationRequest, McpElicitationResponse, McpServerContextCost, McpSupport, SkillDefinition, SkillInfo, ToolCategory, ToolRule, ImageAttachment, ImageMediaType } from '../../shared/types.js';
 
 // ─── Capability Flags ───
@@ -160,8 +160,9 @@ export interface MemoryOperations {
  *  can only see and close its own project's. Failures throw with a message
  *  for the agent. */
 export interface FollowUpOperations {
-  add(input: { title: string; details: string }): { followUp: FollowUp; existing: boolean };
-  /** Open ones, oldest first; with `includeDone`, done ones after them. */
+  add(input: { title: string; details: string; priority?: FollowUpPriority }): { followUp: FollowUp; existing: boolean };
+  /** Open ones, highest priority first and oldest first inside each; with
+   *  `includeDone`, done ones after them. */
   list(opts: { includeDone?: boolean }): FollowUp[];
   done(id: string, note?: string): FollowUp;
 }

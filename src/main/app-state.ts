@@ -2,7 +2,7 @@ import path from 'node:path';
 import { app } from 'electron';
 import { z } from 'zod';
 
-import { COLLAPSIBLE_PANELS, type CollapsedPanels, type ConversationGroup, type PrerequisiteStatus, type ProviderUsage, type SessionSortState, type SkillSuggestion } from '../shared/types.js';
+import { COLLAPSIBLE_PANELS, type BoardLayout, type CollapsedPanels, type ConversationGroup, type PrerequisiteStatus, type ProviderUsage, type SessionSortState, type SkillSuggestion } from '../shared/types.js';
 import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-state.js';
 import { readJsonFile, readJsonFileAsync, writeFileAtomic, writeFileAtomicSync, type AtomicWrite, type JsonFileRead } from './json-file.js';
 import { freezeLog } from './freeze-log.js';
@@ -42,6 +42,8 @@ export interface AppState {
   openTabIds: string[];
   collapsedRepos: Record<string, boolean>;
   sessionSort: SessionSortState;
+  /** The board's lanes and sort. Absent until first changed. */
+  boardLayout?: BoardLayout;
   /** Sidebar width in px (user-resizable). Null/absent = renderer default. */
   sidebarWidth?: number | null;
   /** Sidebars folded down to a rail. Absent = all open. */
@@ -148,11 +150,18 @@ const groupsSchema = z.array(z.unknown()).transform((raw): ConversationGroup[] =
   });
 });
 
+/** Each half falls back on its own, so a bad sort keeps the lanes. */
+const boardLayoutSchema = z.object({
+  lanes: z.enum(['none', 'project', 'group']).catch('none'),
+  sort: z.enum(['last-active', 'unread-first']).catch('unread-first'),
+});
+
 /** Per-field fallback: a corrupt value resets that field only. */
 const appStateSchema = z.object({
   openTabIds: z.array(z.string()).catch(DEFAULT_STATE.openTabIds),
   collapsedRepos: z.record(z.string(), z.boolean()).catch(DEFAULT_STATE.collapsedRepos),
   sessionSort: z.object({ key: z.enum(['name', 'age']), dir: z.enum(['asc', 'desc']) }).catch(DEFAULT_STATE.sessionSort),
+  boardLayout: boardLayoutSchema.optional().catch(undefined),
   sidebarWidth: z.number().finite().nullable().optional().catch(null),
   collapsedPanels: collapsedPanelsSchema.optional().catch(undefined),
   skillSuggestions: z.record(z.string(), z.object({
@@ -543,6 +552,17 @@ export function loadSessionSort(): SessionSortState {
 
 export function saveSessionSort(sort: SessionSortState): void {
   setSoon('sessionSort', sort);
+}
+
+export function loadBoardLayout(): BoardLayout | null {
+  return pick((state) => state.boardLayout ?? null);
+}
+
+/** Junk from the renderer is ignored. */
+export function saveBoardLayout(layout: unknown): void {
+  if (typeof layout !== 'object' || layout === null) return;
+  const parsed = boardLayoutSchema.safeParse(layout);
+  if (parsed.success) setSoon('boardLayout', parsed.data);
 }
 
 export function loadSidebarWidth(): number | null {

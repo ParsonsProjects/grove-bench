@@ -11,7 +11,7 @@
 import { z } from 'zod';
 import type { FollowUpOperations, MemoryOperations, PreviewOperations } from './types.js';
 import { groveToolOf, type GroveServerName } from '../../shared/grove-tools.js';
-import { FOLLOW_UP_LIMITS, type FollowUp } from '../../shared/follow-ups.js';
+import { FOLLOW_UP_LIMITS, FOLLOW_UP_PRIORITIES, followUpPriority, type FollowUp, type FollowUpPriority } from '../../shared/follow-ups.js';
 import { formatAge } from '../../shared/format-age.js';
 
 export { groveToolOf, type GroveServerName };
@@ -151,11 +151,17 @@ export function memoryServer(ops: MemoryOperations): GroveServer {
 
 // ─── grove-followups ───
 
+const PRIORITY_TEXT: Record<FollowUpPriority, string> = {
+  high: 'High priority',
+  normal: 'Normal priority',
+  low: 'Low priority',
+};
+
 /** One follow-up as followup_list shows it: its details in full, or cut to
  *  FOLLOW_UP_LIMITS.detailsInList when it lists several. */
 function describeFollowUp(f: FollowUp, now: number, full: boolean): string {
   const from = f.fromLabel ? ` in "${f.fromLabel}"${f.fromBranch ? ` (branch ${f.fromBranch})` : ''}` : '';
-  const lines = [`## ${f.id}: ${f.title}`, `Added ${formatAge(f.createdAt, { now, long: true })}${from}.`];
+  const lines = [`## ${f.id}: ${f.title}`, `${PRIORITY_TEXT[followUpPriority(f)]}. Added ${formatAge(f.createdAt, { now, long: true })}${from}.`];
   if (f.startedSessionIds?.length) lines.push(`A thread was started from it ${f.startedSessionIds.length === 1 ? 'once' : `${f.startedSessionIds.length} times`}.`);
   if (f.doneAt !== undefined) lines.push(`Done ${formatAge(f.doneAt, { now, long: true })}${f.doneNote ? `: ${f.doneNote}` : '.'}`);
   if (f.details) {
@@ -168,11 +174,12 @@ function describeFollowUp(f: FollowUp, now: number, full: boolean): string {
 /** Tool bodies, separate from the tool definitions so they can be tested alone. */
 export function followUpToolHandlers(ops: FollowUpOperations, now: () => number = Date.now) {
   return {
-    add: ({ title, details }: { title: string; details?: string }) => guarded(async () => {
-      const { followUp, existing } = ops.add({ title, details: details ?? '' });
+    add: ({ title, details, priority }: { title: string; details?: string; priority?: FollowUpPriority }) => guarded(async () => {
+      const { followUp, existing } = ops.add({ title, details: details ?? '', priority });
       return text(existing
         ? `An open follow-up with that title is already listed: ${followUp.id}. Nothing was added.`
-        : `Added follow-up ${followUp.id}: ${followUp.title}. The user can start a thread from it in Grove Bench's Follow-ups drawer.`);
+        : `Added follow-up ${followUp.id} (${followUpPriority(followUp)} priority): ${followUp.title}. `
+          + 'The user can start a thread from it in Grove Bench\'s Follow-ups drawer.');
     }),
 
     list: ({ includeDone, id }: { includeDone?: boolean; id?: string }) => guarded(async () => {
@@ -217,6 +224,10 @@ export function followUpsServer(ops: FollowUpOperations): GroveServer {
           title: z.string().min(1).describe(`One line saying what to do, e.g. "Handle an expired token in refreshSession". Cut to ${FOLLOW_UP_LIMITS.title} characters.`),
           details: z.string().optional().describe('What a new thread needs to start: what and why, where (files, functions), what you found, '
             + `and what done looks like. Cut to ${FOLLOW_UP_LIMITS.details} characters.`),
+          priority: z.enum(FOLLOW_UP_PRIORITIES as [FollowUpPriority, ...FollowUpPriority[]]).optional().describe(
+            'How soon it should be picked up; the user can change it. Most follow-ups are "normal" (the default): a bug with a workaround, '
+            + 'a missing test, a refactor that would help. "high" only for something broken that people will hit, a security or '
+            + 'data-loss risk, or something that blocks other work. "low" for tidying and nice-to-haves.'),
         },
         run: run.add,
         searchHint: 'follow-up later task todo backlog next thread',
@@ -224,7 +235,7 @@ export function followUpsServer(ops: FollowUpOperations): GroveServer {
       },
       {
         name: 'followup_list',
-        description: 'List this project\'s follow-ups (work for later threads), oldest first, with the start of their details. '
+        description: 'List this project\'s follow-ups (work for later threads), highest priority first, then oldest first, with the start of their details. '
           + 'Give an id to read one in full.',
         shape: {
           includeDone: z.boolean().optional().describe('Also list the ones that are done (the most recent ones are kept).'),

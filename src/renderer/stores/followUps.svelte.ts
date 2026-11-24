@@ -5,7 +5,7 @@
  * Starting a thread from one fills the New thread draft
  * (draftStore.openFollowUp), and the thread is noted against it once it starts.
  */
-import { applyFollowUpsChange, type FollowUp, type FollowUpsChange } from '../../shared/follow-ups.js';
+import { applyFollowUpsChange, byFollowUpPriority, type FollowUp, type FollowUpPriority, type FollowUpsChange } from '../../shared/follow-ups.js';
 import { nextOpening } from './dock.svelte.js';
 
 /** How often, and how many times, to ask again while follow-ups.json can't
@@ -88,9 +88,10 @@ class FollowUpsStore {
     return this.list.filter((f) => f.doneAt === undefined && projects.has(f.repoPath)).length;
   }
 
-  /** Each project with follow-ups: open ones oldest first (the order they
-   *  came up), done ones most recent first. Projects in `repoOrder` first, in
-   *  that order, then any others (a removed project's). */
+  /** Each project with follow-ups: open ones highest priority first, oldest
+   *  first inside each (the order they came up), done ones most recent first.
+   *  Projects in `repoOrder` first, in that order, then any others (a removed
+   *  project's). */
   byProject(repoOrder: readonly string[]): FollowUpProject[] {
     const projects = new Map<string, FollowUpProject>();
     for (const f of this.list) {
@@ -98,7 +99,10 @@ class FollowUpsStore {
       if (!p) projects.set(f.repoPath, p = { repoPath: f.repoPath, open: [], done: [] });
       (f.doneAt === undefined ? p.open : p.done).push(f);
     }
-    for (const p of projects.values()) p.done.sort((a, b) => (b.doneAt ?? 0) - (a.doneAt ?? 0));
+    for (const p of projects.values()) {
+      p.open = byFollowUpPriority(p.open);
+      p.done.sort((a, b) => (b.doneAt ?? 0) - (a.doneAt ?? 0));
+    }
     const rank = (repo: string) => {
       const i = repoOrder.indexOf(repo);
       return i === -1 ? repoOrder.length : i;
@@ -134,6 +138,10 @@ class FollowUpsStore {
     return window.groveBench.setFollowUpDone(id, done);
   }
 
+  setPriority(id: string, priority: FollowUpPriority): Promise<void> {
+    return window.groveBench.setFollowUpPriority(id, priority);
+  }
+
   remove(id: string): Promise<void> {
     return window.groveBench.removeFollowUp(id);
   }
@@ -141,8 +149,8 @@ class FollowUpsStore {
   /** Add one by hand (FollowUpForm). Resolves with what main kept: an open
    *  one with the same title instead, when there is one (`existing`). The
    *  list shows it at once, without waiting for main's change. */
-  async add(repoPath: string, title: string, details: string): Promise<{ followUp: FollowUp; existing: boolean }> {
-    const result = await window.groveBench.addFollowUp(repoPath, title, details);
+  async add(repoPath: string, title: string, details: string, priority?: FollowUpPriority): Promise<{ followUp: FollowUp; existing: boolean }> {
+    const result = await window.groveBench.addFollowUp(repoPath, title, details, priority);
     if (this.ready && !result.existing) this.list = applyFollowUpsChange(this.list, { upserted: [result.followUp], removed: [] });
     return result;
   }

@@ -6,9 +6,16 @@
   import { Label } from '$lib/components/ui/label/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import { Textarea } from '$lib/components/ui/textarea/index.js';
+  import * as Segmented from '$lib/components/ui/segmented/index.js';
   import { followUpsStore } from '../stores/followUps.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
-  import { FOLLOW_UP_LIMITS } from '../../shared/follow-ups.js';
+  import {
+    FOLLOW_UP_LIMITS,
+    FOLLOW_UP_PRIORITIES,
+    FOLLOW_UP_PRIORITY_LABELS,
+    isFollowUpPriority,
+    type FollowUpPriority,
+  } from '../../shared/follow-ups.js';
   import { ipcErrorText } from '../lib/mcp-errors.js';
 
   /**
@@ -23,6 +30,7 @@
   let repo = $state('');
   let title = $state('');
   let details = $state('');
+  let priority = $state<FollowUpPriority>('normal');
   let saving = $state(false);
   let message = $state<{ tone: 'warning' | 'danger'; text: string } | null>(null);
 
@@ -36,6 +44,7 @@
       repo = opened.repoPath && store.repos.includes(opened.repoPath) ? opened.repoPath : (store.repos[0] ?? '');
       title = '';
       details = '';
+      priority = 'normal';
       message = null;
     });
   });
@@ -54,7 +63,7 @@
     }
     saving = true;
     try {
-      const { followUp, existing } = await followUpsStore.add(repo, title, details);
+      const { followUp, existing } = await followUpsStore.add(repo, title, details, priority);
       if (existing) {
         message = { tone: 'warning', text: `${store.repoDisplayName(repo)} already has an open follow-up called "${followUp.title}".` };
         return;
@@ -103,6 +112,19 @@
             rows={5}
             placeholder="What a thread with none of your context needs to start: where, why, and what done looks like."
           />
+        </div>
+        <div class="flex flex-col gap-1.5">
+          <span id="follow-up-priority-label" class="text-sm font-medium leading-none">Priority</span>
+          <Segmented.Root
+            value={priority}
+            onValueChange={(v) => { if (isFollowUpPriority(v)) priority = v; }}
+            aria-labelledby="follow-up-priority-label"
+            class="self-start"
+          >
+            {#each FOLLOW_UP_PRIORITIES as p (p)}
+              <Segmented.Item value={p}>{FOLLOW_UP_PRIORITY_LABELS[p]}</Segmented.Item>
+            {/each}
+          </Segmented.Root>
         </div>
         {#if store.repos.length > 1}
           <div class="flex flex-col gap-1.5">

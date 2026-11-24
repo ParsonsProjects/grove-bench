@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { render, cleanup, fireEvent, screen, within } from '@testing-library/svelte';
+import { render, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/svelte';
 
 import BoardPane from './BoardPane.svelte';
 import { store } from '../stores/sessions.svelte.js';
@@ -13,6 +13,9 @@ import { followUpsStore } from '../stores/followUps.svelte.js';
 import { draftStore } from '../stores/draft.svelte.js';
 import { mockGroveBench } from '../__mocks__/setup.js';
 import type { FollowUp } from '../../shared/follow-ups.js';
+
+// bits-ui scrolls the highlighted option into view; jsdom has no layout.
+Element.prototype.scrollIntoView ??= function scrollIntoView() {};
 
 /** The cards in a column, by their thread's id, in order. */
 function column(stage: string, lane?: string): string[] {
@@ -51,7 +54,9 @@ afterEach(() => {
   cleanup();
   boardStore.close();
   boardStore.lanes = 'none';
+  boardStore.sort = 'unread-first';
   boardStore.query = '';
+  store.needsAttention = {};
   store.sessions = [];
   store.repos = [];
   store.activeSessionId = null;
@@ -322,5 +327,112 @@ describe('BoardPane cards', () => {
     expect(line).toBeTruthy();
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter cards' }), { target: { value: line } });
     expect([...document.querySelectorAll('[data-board-card]')].map((c) => c.getAttribute('data-board-card'))).toEqual(['wait']);
+  });
+});
+
+describe('BoardPane: what needs a look, and the order', () => {
+  beforeEach(() => {
+    store.sessions = [
+      { id: 'read', branch: 'a', repoPath: '/web', status: 'running', displayName: 'Looked at', lastActiveAt: 30 },
+      { id: 'new', branch: 'b', repoPath: '/web', status: 'running', displayName: 'Not looked at', lastActiveAt: 10 },
+      { id: 'pr', branch: 'c', repoPath: '/web', status: 'running', displayName: 'Changes asked for', lastActiveAt: 20 },
+    ] as any;
+    messageStore.isRunning = {};
+    messageStore.messagesBySession = {};
+    prStore.prsBySession = { pr: [{ number: 5, url: 'https://example.test/5', state: 'OPEN', reviewDecision: 'CHANGES_REQUESTED' }] };
+    store.needsAttention = { new: true };
+    mockGroveBench.setBoardLayout.mockClear();
+  });
+
+  const card = (id: string) => document.querySelector<HTMLElement>(`[data-board-card="${id}"]`)!;
+
+  it("marks a card with output you haven't read, and one whose pull request needs you, each its own way", () => {
+    render(BoardPane);
+    expect(card('new').parentElement).toHaveAttribute('data-board-card-unread');
+    expect(within(card('new')).getByText('New')).toBeInTheDocument();
+    expect(card('new')).toHaveAccessibleName(/New: output you haven't read/);
+
+    expect(card('pr').parentElement).toHaveAttribute('data-board-card-pr-needs-you');
+    expect(card('pr').parentElement).not.toHaveAttribute('data-board-card-unread');
+    expect(card('pr')).toHaveAccessibleName(/Pull request #5 needs you: Changes requested/);
+
+    for (const attr of ['data-board-card-unread', 'data-board-card-pr-needs-you']) {
+      expect(card('read').parentElement).not.toHaveAttribute(attr);
+    }
+    expect(within(card('read')).queryByText('New')).toBeNull();
+  });
+
+  it('puts unread first, then a pull request that needs you, then the rest; Last active goes by that alone, and is saved', async () => {
+    render(BoardPane);
+    expect(screen.getByRole('radio', { name: 'Unread first' })).toBeChecked();
+    expect(column('review')).toEqual(['new', 'pr', 'read']);
+
+    await fireEvent.click(screen.getByRole('radio', { name: 'Last active' }));
+    expect(column('review')).toEqual(['read', 'pr', 'new']);
+    expect(mockGroveBench.setBoardLayout).toHaveBeenLastCalledWith({ lanes: 'none', sort: 'last-active' });
+  });
+
+  it('saves the lanes too', async () => {
+    render(BoardPane);
+    await fireEvent.click(screen.getByRole('radio', { name: 'Group' }));
+    expect(mockGroveBench.setBoardLayout).toHaveBeenLastCalledWith({ lanes: 'group', sort: 'unread-first' });
+  });
+
+  it('opens laid out as it was saved, unless you changed it while that loaded', async () => {
+    mockGroveBench.getBoardLayout.mockResolvedValueOnce({ lanes: 'project', sort: 'last-active' });
+    await boardStore.load();
+    expect(boardStore.lanes).toBe('project');
+    expect(boardStore.sort).toBe('last-active');
+
+    let answer: (layout: { lanes: 'group'; sort: 'last-active' }) => void = () => {};
+    mockGroveBench.getBoardLayout.mockReturnValueOnce(new Promise((r) => { answer = r; }));
+    const loading = boardStore.load();
+    boardStore.setSort('unread-first');
+    answer({ lanes: 'group', sort: 'last-active' });
+    await loading;
+    expect(boardStore.lanes).toBe('project');
+    expect(boardStore.sort).toBe('unread-first');
+  });
+});
+
+describe('BoardPane: follow-up priority', () => {
+  const f = (id: string, extra: Partial<FollowUp> = {}): FollowUp => ({ id, repoPath: '/web', title: `Follow-up ${id}`, details: '', createdAt: 0, ...extra });
+  const followUpCards = () => [...document.querySelectorAll('[data-board-follow-up]')].map((c) => c.getAttribute('data-board-follow-up'));
+
+  it('lists high priority first and low last, and says which on the card', () => {
+    followUpsStore.list = [f('a', { priority: 'low' }), f('b'), f('c', { priority: 'high' })];
+    render(BoardPane);
+    expect(followUpCards()).toEqual(['c', 'b', 'a']);
+    expect(screen.getByRole('article', { name: 'Follow-up: Follow-up c, high priority' })).toBeInTheDocument();
+    expect(screen.getByRole('article', { name: 'Follow-up: Follow-up b' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Priority of Follow-up a: Low/ })).toHaveTextContent('Low');
+  });
+
+  it('changes it from the card', async () => {
+    followUpsStore.list = [f('a')];
+    render(BoardPane);
+    // jsdom has no pointer capture, so pick from the keyboard.
+    const trigger = screen.getByRole('button', { name: /Priority of Follow-up a: Normal/ });
+    trigger.focus();
+    await fireEvent.keyDown(trigger, { key: 'Enter' });
+    const option = await screen.findByRole('option', { name: 'High' });
+    option.focus();
+    await fireEvent.pointerMove(option);
+    await fireEvent.keyDown(document.activeElement ?? option, { key: 'Enter' });
+    await waitFor(() => expect(mockGroveBench.setFollowUpPriority).toHaveBeenCalledWith('a', 'high'));
+  });
+
+  it("says when the change couldn't be saved", async () => {
+    followUpsStore.list = [f('a')];
+    mockGroveBench.setFollowUpPriority.mockRejectedValueOnce(new Error("Grove Bench couldn't save its follow-ups"));
+    render(BoardPane);
+    const trigger = screen.getByRole('button', { name: /Priority of Follow-up a/ });
+    trigger.focus();
+    await fireEvent.keyDown(trigger, { key: 'Enter' });
+    const option = await screen.findByRole('option', { name: 'Low' });
+    option.focus();
+    await fireEvent.pointerMove(option);
+    await fireEvent.keyDown(document.activeElement ?? option, { key: 'Enter' });
+    expect(await screen.findByText(/couldn't save its follow-ups/)).toBeInTheDocument();
   });
 });

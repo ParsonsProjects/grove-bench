@@ -4,7 +4,7 @@ import type { LimitKind } from './limits.js';
 import type { ThreadItems } from './thread-items.js';
 import type { ScheduleOutcome, SkillSchedule, SkillScheduleInput } from './skill-schedules.js';
 import type { CiLogTail } from './ci-log.js';
-import type { FollowUp, FollowUpsChange } from './follow-ups.js';
+import type { FollowUp, FollowUpPriority, FollowUpsChange } from './follow-ups.js';
 
 // ─── Worktree ───
 
@@ -1575,6 +1575,20 @@ export interface SessionSortState {
   dir: 'asc' | 'desc';
 }
 
+/** The board's lanes (renderer lib/board.ts): none, one row per project, or one per group. */
+export type BoardLanes = 'none' | 'project' | 'group';
+
+/** The order of a column's thread cards on the board: most recently active
+ *  first, or the ones that need a look first (unread, then a pull request
+ *  that needs you), most recently active first inside each. */
+export type BoardSort = 'last-active' | 'unread-first';
+
+/** How the board was laid out, saved in app state so it opens that way again. */
+export interface BoardLayout {
+  lanes: BoardLanes;
+  sort: BoardSort;
+}
+
 /** Conversations that belong to one piece of work, usually in different
  *  projects (an API change and the web change that uses it). Short-lived:
  *  the group goes when its last conversation leaves it. Each conversation
@@ -1808,8 +1822,9 @@ export interface GroveBenchAPI {
   listFollowUps(): Promise<FollowUp[] | null>;
   /** Add one by hand to a project. `existing` when an open one already has
    *  that title: it is returned and nothing is added. */
-  addFollowUp(repoPath: string, title: string, details: string): Promise<{ followUp: FollowUp; existing: boolean }>;
+  addFollowUp(repoPath: string, title: string, details: string, priority?: FollowUpPriority): Promise<{ followUp: FollowUp; existing: boolean }>;
   setFollowUpDone(id: string, done: boolean): Promise<void>;
+  setFollowUpPriority(id: string, priority: FollowUpPriority): Promise<void>;
   followUpStarted(id: string, sessionId: string): Promise<void>;
   removeFollowUp(id: string): Promise<void>;
   /** What changed in each save, by an agent or another window
@@ -2098,6 +2113,9 @@ export interface GroveBenchAPI {
   setCollapsedRepos(map: Record<string, boolean>): void;
   getSessionSort(): Promise<SessionSortState>;
   setSessionSort(sort: SessionSortState): void;
+  /** The board's saved layout, or null before it was first changed. */
+  getBoardLayout(): Promise<BoardLayout | null>;
+  setBoardLayout(layout: BoardLayout): void;
   getSidebarWidth(): Promise<number | null>;
   setSidebarWidth(width: number): void;
   getCollapsedPanels(): Promise<CollapsedPanels>;
@@ -2931,6 +2949,8 @@ export const IPC = {
   APP_STATE_SET_COLLAPSED_REPOS: 'appState:setCollapsedRepos',
   APP_STATE_GET_SESSION_SORT: 'appState:getSessionSort',
   APP_STATE_SET_SESSION_SORT: 'appState:setSessionSort',
+  APP_STATE_GET_BOARD_LAYOUT: 'appState:getBoardLayout',
+  APP_STATE_SET_BOARD_LAYOUT: 'appState:setBoardLayout',
   APP_STATE_GET_SIDEBAR_WIDTH: 'appState:getSidebarWidth',
   APP_STATE_SET_SIDEBAR_WIDTH: 'appState:setSidebarWidth',
   APP_STATE_GET_COLLAPSED_PANELS: 'appState:getCollapsedPanels',
@@ -2980,6 +3000,8 @@ export const IPC = {
   FOLLOW_UP_ADD: 'followUps:add',
   /** Renderer → main: mark one done (true) or open it again (false). */
   FOLLOW_UP_SET_DONE: 'followUps:setDone',
+  /** Renderer → main: change how soon one should be picked up. */
+  FOLLOW_UP_SET_PRIORITY: 'followUps:setPriority',
   /** Renderer → main: a thread was started from one. */
   FOLLOW_UP_STARTED: 'followUps:started',
   FOLLOW_UP_REMOVE: 'followUps:remove',
