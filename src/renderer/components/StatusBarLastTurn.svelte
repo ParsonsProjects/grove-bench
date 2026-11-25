@@ -15,6 +15,7 @@
   import { usageReportStore } from '../stores/usageReport.svelte.js';
   import { formatUsd } from '../../shared/limits.js';
   import { formatTokens } from '../lib/context-usage.js';
+  import { coveredByPlan } from '../lib/plan-cost.svelte.js';
   import type { ThreadUsage } from '../../shared/types.js';
   import { Button } from '$lib/components/ui/button/index.js';
 
@@ -33,18 +34,8 @@
 
   let lastResult = $derived(messageStore.lastResult(sessionId));
 
-  /** On a plan (Pro, Max, ...) turns count toward the plan's limits, and the
-   *  SDK's dollar figure is list price that isn't billed, so it is left out:
-   *  https://code.claude.com/docs/en/costs. The answer comes from plan usage
-   *  (reported means a plan), so null while that isn't known yet. An agent
-   *  that can't report usage can't say, so its cost shows. */
-  let onPlan = $derived.by((): boolean | null => {
-    const usage = usageStore.get(usageStore.providerFor(sessionId));
-    if (usage) return usage.available;
-    if (!agentsStore.loaded) return null;
-    const agentType = store.sessions.find((s) => s.id === sessionId)?.agentType ?? agentsStore.defaultId;
-    return agentsStore.get(agentType)?.capabilities.usage === true ? null : false;
-  });
+  /** On a plan the cost is left out (coveredByPlan). */
+  let onPlan = $derived(coveredByPlan(sessionId));
   // A restored conversation can have a cost before anything asked for plan
   // usage: ask (the store throttles and shares it across conversations).
   $effect(() => {

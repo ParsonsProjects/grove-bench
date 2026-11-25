@@ -8,6 +8,7 @@
   import XIcon from '@lucide/svelte/icons/x';
   import MarkdownBlock from './MarkdownBlock.svelte';
   import ThreadMessage from './ThreadMessage.svelte';
+  import TurnCard from './TurnCard.svelte';
   import MessageSearchBar from './MessageSearchBar.svelte';
   import SelectionMenu from './SelectionMenu.svelte';
   import BookmarkLinks from './BookmarkLinks.svelte';
@@ -18,7 +19,9 @@
   import { bookmarkStore } from '../stores/bookmarks.svelte.js';
   import { arrivalScene } from '../stores/arrivalScene.svelte.js';
   import { settingsStore } from '../stores/settings.svelte.js';
-  import { filterVisibleMessages, foldNarration, hasAgentReply, narrationIds, threadMessages } from '$lib/message-view.js';
+  import { filterVisibleMessages, foldNarration, hasAgentReply, narrationIds, threadMessages, type MessageViewMode, type ThreadRow } from '$lib/message-view.js';
+  import { foldsByDefault, groupTurns, isPrompt, isWorkStep, turnStatus, turnViewMessages, type TurnStatus } from '$lib/turns.js';
+  import { coveredByPlan } from '$lib/plan-cost.svelte.js';
   import { dayDividers, dayStart } from '$lib/message-dates.js';
   import { whileShown } from '$lib/while-shown.js';
   import { sessionRepoColor } from '$lib/session-repo-color.js';
@@ -53,9 +56,16 @@
   // unanswered permissions.
   // The toggle lives in the status bar; the default comes from settings.
   let viewMode = $derived(messageStore.getViewMode(sessionId));
+  // Summary draws each turn as a card (TurnCard), its steps folded behind a
+  // strip rather than left out.
+  let turnView = $derived(viewMode === 'summary');
   // Subagents' messages are in their own threads (SubagentPanel).
   let thread = $derived(threadMessages(allMessages));
-  let filteredMessages = $derived(filterVisibleMessages(thread, viewMode));
+  /** What the view draws of a thread. */
+  function visibleOf(msgs: ChatMessage[], mode: MessageViewMode): ChatMessage[] {
+    return mode === 'summary' ? turnViewMessages(msgs) : filterVisibleMessages(msgs, mode);
+  }
+  let filteredMessages = $derived(visibleOf(thread, viewMode));
   // Summary and Focus fold the agent's notes while working into one line per
   // run. In Summary the edits and commands it keeps split the runs.
   const NO_NOTES = new Set<string>();
@@ -161,7 +171,8 @@
     const el = scrollContainer;
     const row = el && el.clientHeight > 0 ? rowInView(el) : undefined;
     // A fold of notes is drawn anew when older notes join it (it's keyed by
-    // its first), so it's found again by a message it holds.
+    // its first), so it's found again by a message it holds; so is a turn
+    // whose prompt joins it.
     const id = row?.dataset.msgId ?? row?.querySelector<HTMLElement>('[data-msg-id]')?.dataset.msgId;
     const before = row?.getBoundingClientRect().top ?? 0;
     change();
@@ -173,11 +184,11 @@
     if (Math.abs(moved) >= 1) el.scrollTop += moved;
   }
 
-  /** The first row (a message, or a fold of notes) at least partly in view. */
+  /** The first row (a message, a fold of notes or a turn) at least partly in view. */
   function rowInView(el: HTMLElement): HTMLElement | undefined {
     const viewTop = el.getBoundingClientRect().top;
     for (const child of Array.from(el.children)) {
-      if (!(child instanceof HTMLElement) || !(child.dataset.msgId || child.dataset.notes !== undefined)) continue;
+      if (!(child instanceof HTMLElement) || !(child.dataset.msgId || child.dataset.notes !== undefined || child.dataset.turnRow !== undefined)) continue;
       if (child.getBoundingClientRect().bottom > viewTop) return child;
     }
     return undefined;
@@ -205,7 +216,57 @@
     }
     return start > 0 ? all.slice(start) : all;
   });
-  let rows = $derived(foldNarration(messages, notes));
+  let rows = $derived(turnView ? [] : foldNarration(messages, notes));
+
+  // ─── Summary: the drawn messages as turns ───
+  /** The first drawn message comes after a prompt that isn't drawn. */
+  let continuesTurn = $derived.by(() => {
+    const first = messages[0];
+    if (!turnView || !first || isPrompt(first)) return false;
+    const firstPrompt = filteredMessages.findIndex(isPrompt);
+    return firstPrompt >= 0 && filteredMessages.indexOf(first) > firstPrompt;
+  });
+  let groups = $derived(turnView ? groupTurns(messages, continuesTurn) : []);
+  /** The turn the agent is working on: the last, while it runs. */
+  let liveTurnId = $derived.by(() => {
+    const last = groups.at(-1);
+    return last?.kind === 'turn' && (isRunning || !!streamingText) ? last.turn.id : null;
+  });
+  /** Turns the reader folded or opened, and turns whose steps they showed
+   *  or hid, by turn id. Others follow foldsByDefault, and show their steps
+   *  while they run. */
+  let foldedByReader = $state<Record<string, boolean>>({});
+  let stepsByReader = $state<Record<string, boolean>>({});
+  let turnState = $derived.by(() => {
+    const turns = groups.flatMap((g) => (g.kind === 'turn' ? [g.turn] : []));
+    const state = new Map<string, { status: TurnStatus; folded: boolean; workOpen: boolean }>();
+    turns.forEach((turn, i) => {
+      const live = turn.id === liveTurnId;
+      const status = turnStatus(turn, live);
+      const running = status === 'working' || status === 'attention';
+      state.set(turn.id, {
+        status,
+        folded: !running && (foldedByReader[turn.id] ?? foldsByDefault(i, turns.length, status)),
+        workOpen: stepsByReader[turn.id] ?? live,
+      });
+    });
+    return state;
+  });
+  /** On a plan, a turn's cost isn't billed, so cards leave it out. */
+  let showCost = $derived(coveredByPlan(sessionId) !== true);
+
+  /** Open the turn a message is in, and its steps if it's one, so a jump
+   *  can scroll to it. */
+  function revealInTurn(id: string) {
+    for (const g of groups) {
+      if (g.kind !== 'turn') continue;
+      const msg = g.turn.prompt?.id === id ? g.turn.prompt : g.turn.msgs.find((m) => m.id === id);
+      if (!msg) continue;
+      foldedByReader[g.turn.id] = false;
+      if (isWorkStep(msg, notes)) stepsByReader[g.turn.id] = true;
+      return;
+    }
+  }
 
   // ─── Day dividers above the first prompt of each day ───
   // Over the messages drawn, so the first prompt drawn always has one and
@@ -267,6 +328,8 @@
     sessionId; // track
     visibleCount = PAGE_SIZE;
     filledCount = 0;
+    foldedByReader = {};
+    stepsByReader = {};
   });
 
   function expandVisibleCount(newCount: number) {
@@ -291,7 +354,7 @@
     await messageStore.loadOlderEvents(sessionId);
     // Show all messages after loading older events (they're already in the
     // store). Counted there: switched away meanwhile, this chat stands still.
-    const count = filterVisibleMessages(threadMessages(messageStore.getMessages(sessionId)), viewMode).length;
+    const count = visibleOf(threadMessages(messageStore.getMessages(sessionId)), viewMode).length;
     await keepingPlace(() => {
       drawAll();
       visibleCount = count;
@@ -453,6 +516,11 @@
       if (matchIdx >= 0) {
         visibleCount = Math.max(visibleCount, filteredMessages.length - matchIdx);
       }
+      await tick();
+    }
+    // In Summary, the turn it's in may be folded, or its steps hidden.
+    if (turnView) {
+      revealInTurn(id);
       await tick();
     }
     currentMatchId = id;
@@ -809,15 +877,17 @@
     </div>
   {/if}
 
+  {#snippet dayDivider(day: string)}
+    <div role="separator" aria-label={day} class="flex items-center gap-3 mt-3 mb-1 text-caption text-muted-foreground select-none">
+      <span class="flex-1 border-t border-border"></span>
+      {day}
+      <span class="flex-1 border-t border-border"></span>
+    </div>
+  {/snippet}
+
   {#snippet messageRow(msg: ChatMessage, top = false)}
     {@const day = dividers.get(msg.id)}
-    {#if day}
-      <div role="separator" aria-label={day} class="flex items-center gap-3 mt-3 mb-1 text-caption text-muted-foreground select-none">
-        <span class="flex-1 border-t border-border"></span>
-        {day}
-        <span class="flex-1 border-t border-border"></span>
-      </div>
-    {/if}
+    {#if day}{@render dayDivider(day)}{/if}
     <div
       data-msg-id={msg.id}
       class={currentMatchId === msg.id ? 'ring-1 ring-yellow-500/60 bg-yellow-500/10' : ''}
@@ -827,41 +897,102 @@
     </div>
   {/snippet}
 
-  {#each rows as row (row.kind === 'message' ? row.msg.id : `notes-${row.msgs[0].id}`)}
-    {#if row.kind === 'message'}
-      {@render messageRow(row.msg, true)}
-    {:else}
-      <!-- Keyed by its first note, so it stays open as more notes join. -->
-      <details data-notes class="py-1 text-xs" use:watchRow>
-        <summary class="cursor-pointer text-muted-foreground hover:text-foreground/60 italic select-none">
-          {row.msgs.length === 1 ? '1 note' : `${row.msgs.length} notes`} while working
-        </summary>
-        <div class="mt-1 pl-3 border-l-2 border-border">
-          {#each row.msgs as msg (msg.id)}
-            {@render messageRow(msg)}
-          {/each}
-        </div>
-      </details>
-    {/if}
-  {/each}
-
-  <!-- Streaming thinking (live) — suppressed in focus mode -->
-  {#if streamingThinking && viewMode !== 'focus' && arrival === null}
-    {@const trimmed = streamingThinking.trimEnd()}
-    {@const lastLine = trimmed.slice(trimmed.lastIndexOf('\n') + 1).trim() || 'thinking...'}
-    <div class="py-1 flex items-center gap-2 text-xs text-muted-foreground italic truncate">
-      <span class="inline-block w-1.5 h-3 bg-purple-400 animate-pulse shrink-0"></span>
-      <span class="truncate">{lastLine}</span>
+  <!-- A message in a turn card: the card is the row watched, and its day
+       divider goes above the card. -->
+  {#snippet turnRow(msg: ChatMessage, mode: MessageViewMode)}
+    <div
+      data-msg-id={msg.id}
+      class={currentMatchId === msg.id ? 'ring-1 ring-yellow-500/60 bg-yellow-500/10' : ''}
+    >
+      <ThreadMessage {sessionId} {msg} viewMode={mode} />
     </div>
+  {/snippet}
+
+  {#snippet threadRows(list: ThreadRow[])}
+    {#each list as row (row.kind === 'message' ? row.msg.id : `notes-${row.msgs[0].id}`)}
+      {#if row.kind === 'message'}
+        {@render messageRow(row.msg, true)}
+      {:else}
+        <!-- Keyed by its first note, so it stays open as more notes join. -->
+        <details data-notes class="py-1 text-xs" use:watchRow>
+          <summary class="cursor-pointer text-muted-foreground hover:text-foreground/60 italic select-none">
+            {row.msgs.length === 1 ? '1 note' : `${row.msgs.length} notes`} while working
+          </summary>
+          <div class="mt-1 pl-3 border-l-2 border-border">
+            {#each row.msgs as msg (msg.id)}
+              {@render messageRow(msg)}
+            {/each}
+          </div>
+        </details>
+      {/if}
+    {/each}
+  {/snippet}
+
+  {#if turnView}
+    {#each groups as group (group.kind === 'turn' ? group.turn.id : group.id)}
+      {#if group.kind === 'rows'}
+        <!-- Before the first prompt: rows, as Summary always drew them. -->
+        {@render threadRows(foldNarration(group.msgs, notes))}
+      {:else}
+        {@const turn = group.turn}
+        {@const at = turnState.get(turn.id)}
+        {@const day = turn.prompt ? dividers.get(turn.prompt.id) : undefined}
+        {#if at}
+          <div data-turn-row use:watchRow>
+            {#if day}{@render dayDivider(day)}{/if}
+            <TurnCard
+              {sessionId}
+              {turn}
+              status={at.status}
+              {notes}
+              folded={at.folded}
+              onfold={(folded: boolean) => { foldedByReader[turn.id] = folded; }}
+              workOpen={at.workOpen}
+              onwork={(open: boolean) => { stepsByReader[turn.id] = open; }}
+              {showCost}
+              row={turnRow}
+              live={turn.id === liveTurnId && arrival === null ? liveOutput : undefined}
+            />
+          </div>
+        {/if}
+      {/if}
+    {/each}
+  {:else}
+    {@render threadRows(rows)}
   {/if}
 
-  <!-- Streaming text (live) -->
-  {#if streamingText}
-    <div class="py-1 text-sm text-foreground">
-      {#if paneShown}<MarkdownBlock content={streamingText} streaming {sessionId} />{/if}
-      <span class="inline-block w-1.5 h-4 bg-muted-foreground animate-pulse ml-0.5 align-text-bottom"></span>
-    </div>
-  {:else if arrival !== null}
+  <!-- The live reply, its thinking and the working line: in the running
+       turn's card in Summary, else under the thread. -->
+  {#snippet liveOutput()}
+    <!-- Streaming thinking (live) — suppressed in focus mode -->
+    {#if streamingThinking && viewMode !== 'focus' && arrival === null}
+      {@const trimmed = streamingThinking.trimEnd()}
+      {@const lastLine = trimmed.slice(trimmed.lastIndexOf('\n') + 1).trim() || 'thinking...'}
+      <div class="py-1 flex items-center gap-2 text-xs text-muted-foreground italic truncate">
+        <span class="inline-block w-1.5 h-3 bg-purple-400 animate-pulse shrink-0"></span>
+        <span class="truncate">{lastLine}</span>
+      </div>
+    {/if}
+
+    <!-- Streaming text (live) -->
+    {#if streamingText}
+      <div class="py-1 text-sm text-foreground">
+        {#if paneShown}<MarkdownBlock content={streamingText} streaming {sessionId} />{/if}
+        <span class="inline-block w-1.5 h-4 bg-muted-foreground animate-pulse ml-0.5 align-text-bottom"></span>
+      </div>
+    {:else if arrival === null && isRunning && (!streamingThinking || viewMode === 'focus')}
+      <div class="py-2 flex items-center gap-2 text-xs text-muted-foreground">
+        <Pulse motion="spin" />
+        {@render activityLabel()}
+      </div>
+    {/if}
+  {/snippet}
+
+  {#if !(turnView && liveTurnId !== null && arrival === null)}
+    {@render liveOutput()}
+  {/if}
+
+  {#if !streamingText && arrival !== null}
     <!-- The first turn: the agent walks up to its bench and gets to work.
          Only the open conversation draws it, so it picks up from its start
          time when shown again rather than replaying a stale animation. -->
@@ -881,11 +1012,6 @@
           {/snippet}
         </GroveWalk>
       {/if}
-    </div>
-  {:else if isRunning && (!streamingThinking || viewMode === 'focus')}
-    <div class="py-2 flex items-center gap-2 text-xs text-muted-foreground">
-      <Pulse motion="spin" />
-      {@render activityLabel()}
     </div>
   {/if}
 

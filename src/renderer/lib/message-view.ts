@@ -16,8 +16,15 @@ export const VIEW_MODE_LABELS: Record<MessageViewMode, string> = {
 /** Short description of what each mode shows, for pickers and hints. */
 export const VIEW_MODE_DESCRIPTIONS: Record<MessageViewMode, string> = {
   detailed: 'Everything: thinking, every tool call, system notes',
-  summary: 'Hides thinking and most tool calls (edits, writes, shell commands, images and subagents stay); notes while working fold into one line',
+  summary: 'Each prompt and what the agent did for it as one card: its steps fold into one line you can open, then its answer, the files it changed and its time; turns before the last two fold to one line',
   focus: 'Agent responses, questions and your answers only (no tool calls or thinking; notes while working fold into one line; images stay; subagents show as one line)',
+};
+
+/** A subagent's panel has no prompts of its own to make turns of, so its
+ *  Summary hides steps instead. */
+export const SUBAGENT_VIEW_MODE_DESCRIPTIONS: Record<MessageViewMode, string> = {
+  ...VIEW_MODE_DESCRIPTIONS,
+  summary: 'Hides thinking and most tool calls (edits, writes, shell commands, images and subagents stay); notes while working fold into one line',
 };
 
 /** Grove's own MCP servers (the Preview browser, project memory): local, and
@@ -76,8 +83,16 @@ export function threadMessages(messages: ChatMessage[], parentToolUseId?: string
  *  the same reason, unless it is titled as one of Grove's tools (as Gemini
  *  CLI titles them, without the server) or only carries a to-do list. */
 function shownInSummary(call: Extract<ChatMessage, { kind: 'tool_call' }>): boolean {
+  return changesFiles(toolViewOf(call), call.toolCategory) || actsOutsideProject(call);
+}
+
+/** A call that may act outside the project, so Summary keeps it in view (in
+ *  a turn card too, rather than folded with the steps): an MCP tool other
+ *  than Grove's own, or Grove's follow-up tools; or another agent's call
+ *  Grove can't place (see shownInSummary). */
+export function actsOutsideProject(call: Extract<ChatMessage, { kind: 'tool_call' }>): boolean {
   const view = toolViewOf(call);
-  if (changesFiles(view, call.toolCategory)) return true;
+  if (changesFiles(view, call.toolCategory)) return false;
   if (view.mcp) return !GROVE_MCP_SERVERS.has(view.mcp.server) || GROVE_TOOLS_IN_SUMMARY.has(view.mcp.tool);
   return !!call.toolView && view.kind === 'other' && (call.toolCategory ?? 'other') === 'other'
     && !titledAsGroveTool(call.toolName) && !taskListOf(call.toolName, call.toolInput);

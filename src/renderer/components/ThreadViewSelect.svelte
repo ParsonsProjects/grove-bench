@@ -12,7 +12,8 @@
   import { subagentPanelStore } from '../stores/subagentPanel.svelte.js';
   import { whileShown } from '../lib/while-shown.js';
   import { ACTIVITY_VIEW_MODES, type ActivityViewMode } from '../../shared/types.js';
-  import { filterVisibleMessages, threadMessages, VIEW_MODE_DESCRIPTIONS, VIEW_MODE_LABELS } from '../lib/message-view.js';
+  import { filterVisibleMessages, threadMessages, SUBAGENT_VIEW_MODE_DESCRIPTIONS, VIEW_MODE_DESCRIPTIONS, VIEW_MODE_LABELS } from '../lib/message-view.js';
+  import { turnViewMessages } from '../lib/turns.js';
 
   let { sessionId, subagentOf }: {
     sessionId: string;
@@ -28,7 +29,10 @@
     () => messageStore.getMessages(sessionId),
   ));
   let thread = $derived(threadMessages(messages, subagentOf));
-  let hiddenCount = $derived(thread.length - filterVisibleMessages(thread, viewMode).length);
+  // The thread's Summary folds a turn's steps into its card rather than
+  // leaving them out (turnViewMessages); a subagent's still leaves them out.
+  let hiddenCount = $derived(thread.length - (viewMode === 'summary' && !subagentOf ? turnViewMessages(thread) : filterVisibleMessages(thread, viewMode)).length);
+  let descriptions = $derived(subagentOf ? SUBAGENT_VIEW_MODE_DESCRIPTIONS : VIEW_MODE_DESCRIPTIONS);
   let label = $derived(VIEW_MODE_LABELS[viewMode]);
   let hiddenText = $derived(hiddenCount > 0 ? `${hiddenCount} hidden` : '');
   let what = $derived(subagentOf ? 'Subagent view' : 'Thread view');
@@ -49,7 +53,7 @@
     class="flex items-center gap-1.5 pl-1 pr-3 text-xs font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring
       {viewMode === 'detailed' ? 'text-muted-foreground hover:text-foreground' : 'text-primary hover:text-primary/80'}"
     aria-label="{what}: {label}{hiddenText ? `, ${hiddenText}` : ''}"
-    title="{what}: {VIEW_MODE_DESCRIPTIONS[viewMode]}{hiddenText ? ` (${hiddenText})` : ''}"
+    title="{what}: {descriptions[viewMode]}{hiddenText ? ` (${hiddenText})` : ''}"
   >
     <!-- Sets it apart from the tab's name; the subagent panel has none. -->
     {#if !subagentOf}
@@ -70,7 +74,7 @@
         <!-- Full-width lines: the item centres its last span's children. -->
         <span class="flex flex-col gap-0.5">
           <span class="w-full text-foreground">{VIEW_MODE_LABELS[mode]}</span>
-          <span class="w-full text-caption text-muted-foreground whitespace-normal">{VIEW_MODE_DESCRIPTIONS[mode]}</span>
+          <span class="w-full text-caption text-muted-foreground whitespace-normal">{descriptions[mode]}</span>
         </span>
       </Select.Item>
     {/each}

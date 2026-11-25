@@ -87,12 +87,22 @@ describe("OutputPanel: a turn's end", () => {
   });
   afterEach(() => messageStore.setViewMode(SID, 'detailed'));
 
-  it('shows "done" with its cost and time outside Focus', () => {
-    messageStore.setViewMode(SID, 'summary');
+  it('shows "done" with its cost and time in Detailed', () => {
+    messageStore.setViewMode(SID, 'detailed');
     messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'Fix it' }, done] };
     const { getByText } = render(OutputPanel, { sessionId: SID });
     expect(getByText(/done/)).toHaveTextContent('$0.0000');
     expect(getByText(/done/)).toHaveTextContent('0.8s');
+  });
+
+  it("puts a turn's time and cost in its card's footer in Summary", () => {
+    messageStore.setViewMode(SID, 'summary');
+    messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'Fix it' }, { ...done, totalCostUsd: 0.41, durationMs: 192_000 }] };
+    const { container, queryByText } = render(OutputPanel, { sessionId: SID });
+    const card = container.querySelector('[data-turn="u1"]')!;
+    expect(card).toHaveTextContent('3m 12s');
+    expect(card).toHaveTextContent('$0.41');
+    expect(queryByText(/done/)).toBeNull();
   });
 
   it('hides a turn that went fine in Focus', () => {
@@ -150,6 +160,12 @@ describe('OutputPanel — rewind from a user message', () => {
 
 describe('OutputPanel: day dividers', () => {
   const at = (day: number, hour: number, minute = 0) => new Date(2026, 9, day, hour, minute).getTime();
+  /** The prompt a divider sits above: the next row's, or in Summary the
+   *  first message of the turn card under it. */
+  const promptBelow = (divider: Element) => {
+    const next = divider.nextElementSibling;
+    return next?.getAttribute('data-msg-id') ?? next?.querySelector('[data-msg-id]')?.getAttribute('data-msg-id');
+  };
 
   it('marks the first prompt of each day, passing over prompts with no time', () => {
     vi.useFakeTimers({ toFake: ['Date'], now: at(22, 12) });
@@ -169,8 +185,8 @@ describe('OutputPanel: day dividers', () => {
       const dividers = getAllByRole('separator');
       expect(dividers.map((d) => d.textContent?.trim())).toEqual(['Yesterday', 'Today']);
       // Each sits just above its day's first prompt.
-      expect(dividers[0].nextElementSibling).toHaveAttribute('data-msg-id', 'u1');
-      expect(dividers[1].nextElementSibling).toHaveAttribute('data-msg-id', 'u3');
+      expect(promptBelow(dividers[0])).toBe('u1');
+      expect(promptBelow(dividers[1])).toBe('u3');
     } finally {
       vi.useRealTimers();
     }
@@ -196,13 +212,13 @@ describe('OutputPanel: day dividers', () => {
       let dividers = getAllByRole('separator');
       expect(dividers).toHaveLength(1);
       expect(dividers[0]).toHaveTextContent('Today');
-      expect(dividers[0].nextElementSibling).toHaveAttribute('data-msg-id', 'u2');
+      expect(promptBelow(dividers[0])).toBe('u2');
 
       // Loading the older messages moves it up to the day's first prompt.
       await fireEvent.click(getByRole('button', { name: /Load 10 older messages/ }));
       dividers = getAllByRole('separator');
       expect(dividers).toHaveLength(1);
-      expect(dividers[0].nextElementSibling).toHaveAttribute('data-msg-id', 'u1');
+      expect(promptBelow(dividers[0])).toBe('u1');
     } finally {
       vi.useRealTimers();
     }
@@ -1531,18 +1547,22 @@ describe('OutputPanel: notes while working', () => {
     expect(container.querySelector('[data-msg-id="ans"]')!.closest('details')).toBeNull();
   });
 
-  it('folds them in Summary too, with each edit it keeps starting a new fold', async () => {
+  it("folds them with the turn's steps in Summary, in order, and keeps the answer open", async () => {
     const [user, n1, t1, n2, t2, ans] = turn();
     const edit: ChatMessage = { kind: 'tool_call', id: 'e1', toolName: 'Edit', toolInput: { file_path: 'a.ts', old_string: 'a', new_string: 'b' }, toolUseId: 'tu-e1', uuid: 'a6', pending: false };
     messageStore.messagesBySession = { [SID]: [user, n1, t1, edit, n2, t2, ans] };
     messageStore.setViewMode(SID, 'summary');
-    const { container } = render(OutputPanel, { sessionId: SID });
+    const { container, getByRole } = render(OutputPanel, { sessionId: SID });
     await tick();
 
-    const folds = [...container.querySelectorAll('details[data-notes]')];
-    expect(folds.map((f) => f.querySelector('summary')!.textContent!.trim())).toEqual(['1 note while working', '1 note while working']);
-    expect(container.querySelector('[data-msg-id="e1"]')!.closest('details')).toBeNull();
-    expect(container.querySelector('[data-msg-id="ans"]')!.closest('details')).toBeNull();
+    // Folded behind the strip: the notes and the steps; the answer stays.
+    expect(container.querySelector('details[data-notes]')).toBeNull();
+    for (const id of ['n1', 't1', 'e1', 'n2', 't2']) expect(container.querySelector(`[data-msg-id="${id}"]`)).toBeNull();
+    expect(container.querySelector('[data-msg-id="ans"]')).not.toBeNull();
+
+    await fireEvent.click(getByRole('button', { name: /Worked/ }));
+    const drawnIds = [...container.querySelectorAll('[data-msg-id]')].map((el) => el.getAttribute('data-msg-id'));
+    expect(drawnIds).toEqual(['u1', 'n1', 't1', 'e1', 'n2', 't2', 'ans']);
   });
 
   it('leaves them in line in Detailed', async () => {
@@ -1690,5 +1710,117 @@ describe('OutputPanel: an edit in the thread', () => {
 
     expect(container).toHaveTextContent('Now the tests');
     expect(createPatch).not.toHaveBeenCalled();
+  });
+});
+
+describe('OutputPanel: turns in Summary', () => {
+  const prompt = (id: string, text = `prompt ${id}`): ChatMessage => ({ kind: 'user', id, text, uuid: `uu-${id}` });
+  const reply = (id: string): ChatMessage => ({ kind: 'text', id, text: `answer ${id}`, uuid: `ua-${id}` });
+  const done = (id: string): ChatMessage => ({ kind: 'result', id, subtype: 'success', isError: false, durationMs: 41_000 });
+  const bash = (id: string, command: string, isError = false): ChatMessage => ({
+    kind: 'tool_call', id, toolName: 'Bash', toolInput: { command }, toolUseId: `tu-${id}`, uuid: '', pending: false,
+    result: isError ? 'FAIL' : 'PASS', ...(isError ? { isError: true } : {}),
+  });
+
+  beforeEach(() => {
+    store.activeSessionId = SID;
+    messageStore.setViewMode(SID, 'summary');
+  });
+  afterEach(() => {
+    messageStore.isRunning = {};
+    messageStore.viewModeBySession = {};
+  });
+
+  it('folds turns before the last two to one line, and opens one when clicked', async () => {
+    messageStore.messagesBySession = {
+      [SID]: [prompt('u1', 'first\nsecond line'), reply('a1'), done('r1'), prompt('u2'), reply('a2'), done('r2'), prompt('u3'), reply('a3'), done('r3')],
+    };
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await tick();
+
+    const first = container.querySelector('[data-turn="u1"]')!;
+    expect(first.querySelector('[data-msg-id="a1"]')).toBeNull();
+    const line = within(first as HTMLElement).getByRole('button', { name: /first/ });
+    expect(line).toHaveTextContent('41s');
+    expect(line).not.toHaveTextContent('second line');
+    expect(container.querySelector('[data-msg-id="a2"]')).not.toBeNull();
+    expect(container.querySelector('[data-msg-id="a3"]')).not.toBeNull();
+
+    await fireEvent.click(line);
+    expect(first.querySelector('[data-msg-id="a1"]')).not.toBeNull();
+    // And folds again from its header.
+    await fireEvent.click(within(first as HTMLElement).getByRole('button', { name: 'Fold this turn' }));
+    expect(first.querySelector('[data-msg-id="a1"]')).toBeNull();
+  });
+
+  it("shows the running turn's steps, what it waits on and its live output in its card", async () => {
+    messageStore.messagesBySession = {
+      [SID]: [
+        prompt('u1'), reply('a1'), done('r1'),
+        prompt('u2'), bash('b1', 'ls'),
+        { kind: 'permission', id: 'p1', requestId: 'rq', toolName: 'Bash', toolInput: { command: 'npm run migrate' }, toolUseId: 'tu-p', resolved: false },
+      ],
+    };
+    messageStore.setIsRunning(SID, true);
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await tick();
+
+    const live = container.querySelector('[data-turn="u2"]')!;
+    expect(live).toHaveTextContent('Waiting for you');
+    expect(live.querySelector('[data-msg-id="b1"]')).not.toBeNull();
+    expect(live.querySelector('[data-msg-id="p1"]')).not.toBeNull();
+    expect(live).toHaveTextContent('Working...');
+    // A running turn can't be folded away.
+    expect(within(live as HTMLElement).queryByRole('button', { name: 'Fold this turn' })).toBeNull();
+  });
+
+  it('links a command that failed to the run that passed, and says so in the strip', async () => {
+    messageStore.messagesBySession = {
+      [SID]: [prompt('u1'), bash('f1', 'npm test', true), bash('p1', 'npm test'), reply('a1'), done('r1')],
+    };
+    const { container, getByRole } = render(OutputPanel, { sessionId: SID });
+    await tick();
+
+    const strip = getByRole('button', { name: /Worked 41s/ });
+    expect(strip).toHaveTextContent('2 commands, 1 failed, passed on retry');
+    expect(strip).toHaveAttribute('aria-expanded', 'false');
+
+    await fireEvent.click(strip);
+    Element.prototype.scrollIntoView = vi.fn();
+    await fireEvent.click(getByRole('button', { name: /Passed on retry/ }));
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[data-msg-id="p1"]')).toHaveClass('ring-1');
+    expect(getByRole('button', { name: /Retry of the run that failed/ })).toBeInTheDocument();
+  });
+
+  it("opens a folded turn and its steps to jump to a message in them", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    messageStore.messagesBySession = {
+      [SID]: [prompt('u1'), bash('b1', 'ls'), reply('a1'), done('r1'), prompt('u2'), reply('a2'), done('r2'), prompt('u3'), reply('a3'), done('r3')],
+    };
+    vi.spyOn(messageStore, 'loadOlderUntil').mockResolvedValue();
+    vi.spyOn(messageStore, 'findMessageForEvent').mockResolvedValue('b1');
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await tick();
+    expect(container.querySelector('[data-msg-id="b1"]')).toBeNull();
+
+    messageStore.requestJump(SID, { eventIndex: 3, uuid: null, bookmarkId: 'B' });
+    await vi.waitFor(() => expect(container.querySelector('[data-msg-id="b1"]')).not.toBeNull());
+    // Still Summary: nothing had to switch views to find it.
+    expect(messageStore.getViewMode(SID)).toBe('summary');
+    await vi.waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
+    vi.restoreAllMocks();
+  });
+
+  it('draws messages before the first prompt as rows, as Summary did', async () => {
+    messageStore.messagesBySession = {
+      [SID]: [{ kind: 'thinking', id: 't0', thinking: 'hmm' }, { kind: 'system', id: 's0', text: 'Connected' }, prompt('u1'), reply('a1')],
+    };
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await tick();
+
+    expect(container.querySelector('[data-msg-id="t0"]')).toBeNull();
+    expect(container.querySelector('[data-msg-id="s0"]')!.closest('[data-turn]')).toBeNull();
+    expect(container.querySelector('[data-msg-id="a1"]')!.closest('[data-turn]')).toHaveAttribute('data-turn', 'u1');
   });
 });

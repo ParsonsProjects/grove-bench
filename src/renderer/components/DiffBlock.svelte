@@ -29,6 +29,8 @@
   } = $props();
 
   let sideBySide = $state(false);
+  /** Summary's one line, opened to show the diff under it. */
+  let summaryOpen = $state(false);
   let filePath = $derived(view.path || 'file');
   /** A whole-file write rather than replacements within the file. */
   let isWrite = $derived(!view.edits?.length && view.write !== undefined);
@@ -76,8 +78,22 @@
         <Pulse />
       {:else if isError}
         <span class="text-destructive">error</span>
+      {:else if heldBack || diffLines.length > 0}
+        <Button
+          variant="quiet"
+          size="inline"
+          onclick={() => summaryOpen = !summaryOpen}
+          class="ml-auto shrink-0 select-none"
+          aria-expanded={summaryOpen}
+          title={summaryOpen ? 'Hide the edit' : `Show the edit to ${filePath}`}
+        >
+          {summaryOpen ? 'hide' : 'show'}
+        </Button>
       {/if}
     </div>
+    {#if summaryOpen}
+      <div class="mt-1">{@render diffBody()}</div>
+    {/if}
   </div>
 {:else}
   <div class="py-1 my-1 border-l-4 border-primary pl-3">
@@ -123,15 +139,19 @@
       {/if}
     </div>
 
-    {#if heldBack}
-      <LargeDiffNotice kind="edit" size={editSize(view)} label={view.path ? `Show edit to ${view.path}` : undefined} onShow={() => (shown = true)} />
-    {:else}
-      {#if shownDiff && !shownDiff.linedUp}<OldThenNewNotice diff={shownDiff} label={view.path ? `Compare edit to ${view.path} line by line` : undefined} onCompare={() => (compared = true)} />{/if}
-      <DiffView lines={diffLines} {sideBySide} {filePath} deferHighlight />
-    {/if}
+    {@render diffBody()}
 
     {#if isError && result}
       <div class="text-xs text-destructive mt-1">{result}</div>
     {/if}
   </div>
 {/if}
+
+{#snippet diffBody()}
+  {#if heldBack}
+    <LargeDiffNotice kind="edit" size={editSize(view)} label={view.path ? `Show edit to ${view.path}` : undefined} onShow={() => (shown = true)} />
+  {:else}
+    {#if shownDiff && !shownDiff.linedUp}<OldThenNewNotice diff={shownDiff} label={view.path ? `Compare edit to ${view.path} line by line` : undefined} onCompare={() => (compared = true)} />{/if}
+    <DiffView lines={diffLines} {sideBySide} {filePath} deferHighlight />
+  {/if}
+{/snippet}

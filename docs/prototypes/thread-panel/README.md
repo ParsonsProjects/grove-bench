@@ -25,12 +25,16 @@ Every design shows the same sample thread: a short question, a fix with a failed
 | Weak spot | More boxes than today | Hides the most work | Busiest; answers compete with rows |
 | New data needed | None: turns group from each prompt to its result | None | A timestamp on each tool event (only prompts and results have one) |
 
-## My take
+## Decision
+
+A, with C's failed-then-passed link, built as the Thread tab's Summary view (`TurnCard.svelte`; help in `docs/help/thread-tab.md`, "Turns in Summary"). Detailed and Focus are unchanged.
+
+## My take (before the decision)
 
 A is the strongest base: it fixes turn boundaries and scanning at once, and needs no new data. Two things worth borrowing from C: the failed-then-passed link, and the turn outline once a thread gets long. B's one-sentence summary could be A's narrow-width work strip.
 
 ## Open questions
 
-- Should Detailed, Summary and Focus stay as they are, or does one of these replace Summary?
-- How far back should turns fold: everything but the last turn, or the last two (as in A)?
+- ~~Should one of these replace Summary?~~ Decided: A replaces Summary; Detailed and Focus stay.
+- ~~How far back should turns fold?~~ Decided: turns before the last two fold.
 - Does the work strip belong in the sidebar's thread rows too, as a glance at what each agent did?
