@@ -27,8 +27,32 @@ describe('followUpToolHandlers', () => {
     const ops = fakeOps();
     const res = await followUpToolHandlers(ops).add({ title: 'Add tests', details: 'Cover refresh()' });
     expect(ops.add).toHaveBeenCalledWith({ title: 'Add tests', details: 'Cover refresh()' });
-    expect(textOf(res)).toBe("Added follow-up a1b2c3: Add tests. The user can start a thread from it in Grove Bench's Follow-ups drawer.");
+    expect(textOf(res)).toBe("Added follow-up a1b2c3 (normal priority): Add tests. The user can start a thread from it in Grove Bench's Follow-ups drawer.");
     expect(res.isError).toBeUndefined();
+  });
+
+  it('passes the priority through and says which one it got', async () => {
+    const ops = fakeOps({ add: vi.fn(() => ({ followUp: followUp({ priority: 'high' }), existing: false })) });
+    const res = await followUpToolHandlers(ops).add({ title: 'Add tests', priority: 'high' });
+    expect(ops.add).toHaveBeenCalledWith({ title: 'Add tests', details: '', priority: 'high' });
+    expect(textOf(res)).toContain('a1b2c3 (high priority)');
+  });
+
+  it('reads a priority in any case, and makes a word it does not know normal rather than refusing', async () => {
+    const ops = fakeOps();
+    const handlers = followUpToolHandlers(ops);
+    await handlers.add({ title: 'a', priority: ' HIGH ' });
+    expect(ops.add).toHaveBeenLastCalledWith({ title: 'a', details: '', priority: 'high' });
+    const res = await handlers.add({ title: 'b', priority: 'urgent' });
+    expect(ops.add).toHaveBeenLastCalledWith({ title: 'b', details: '', priority: undefined });
+    expect(res.isError).toBeUndefined();
+    expect(textOf(res)).toContain('(normal priority)');
+  });
+
+  it('says when adding one already listed raised its priority', async () => {
+    const ops = fakeOps({ add: vi.fn(() => ({ followUp: followUp({ priority: 'high' }), existing: true, raised: true })) });
+    const res = await followUpToolHandlers(ops).add({ title: 'Add tests', priority: 'high' });
+    expect(textOf(res)).toBe('An open follow-up with that title is already listed: a1b2c3. It is now high priority; nothing else was changed.');
   });
 
   it('says when an open one with that title was already listed', async () => {
@@ -45,19 +69,19 @@ describe('followUpToolHandlers', () => {
   it('lists each with its id, age, origin and details', async () => {
     const ops = fakeOps({ list: vi.fn(() => [
       followUp({ fromLabel: 'Fix login', fromBranch: 'claude/login', startedSessionIds: ['s2'] }),
-      followUp({ id: 'ffffff', title: 'Old', details: '', createdAt: NOW - 3 * 24 * HOUR, doneAt: NOW - HOUR, doneNote: 'Removed it' }),
+      followUp({ id: 'ffffff', title: 'Old', details: '', priority: 'low', createdAt: NOW - 3 * 24 * HOUR, doneAt: NOW - HOUR, doneNote: 'Removed it' }),
     ]) });
     const res = await followUpToolHandlers(ops, () => NOW).list({ includeDone: true });
     expect(ops.list).toHaveBeenCalledWith({ includeDone: true });
     expect(textOf(res)).toBe([
       '## a1b2c3: Add tests',
-      'Added 2 hours ago in "Fix login" (branch claude/login).',
+      'Normal priority. Added 2 hours ago in "Fix login" (branch claude/login).',
       'A thread was started from it once.',
       '',
       'Cover refresh()',
       '',
       '## ffffff: Old',
-      'Added 3 days ago.',
+      'Low priority. Added 3 days ago.',
       'Done 1 hour ago: Removed it',
     ].join('\n'));
   });
@@ -120,6 +144,10 @@ describe('followup tool inputs', () => {
     expect(shape('followup_add').safeParse({ title: 't'.repeat(500), details: 'd'.repeat(9000) }).success).toBe(true);
     expect(shape('followup_add').safeParse({ title: 't' }).success).toBe(true);
     expect(shape('followup_add').safeParse({ title: '' }).success).toBe(false);
+    // Any word: one the store doesn't know makes it normal, not a refused call.
+    for (const priority of ['high', 'normal', 'low', 'High', 'urgent']) {
+      expect(shape('followup_add').safeParse({ title: 't', priority }).success, priority).toBe(true);
+    }
     expect(shape('followup_done').safeParse({ id: 'a', note: 'n'.repeat(2000) }).success).toBe(true);
   });
 });

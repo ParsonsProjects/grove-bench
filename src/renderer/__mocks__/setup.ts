@@ -190,6 +190,8 @@ const mockGroveBench = {
   setCollapsedRepos: vi.fn(),
   getSessionSort: vi.fn(() => Promise.resolve({ key: 'age', dir: 'desc' } as import('../../shared/types.js').SessionSortState)),
   setSessionSort: vi.fn(),
+  getBoardLayout: vi.fn(() => Promise.resolve(null as import('../../shared/types.js').BoardLayout | null)),
+  setBoardLayout: vi.fn(),
   getSidebarWidth: vi.fn(() => Promise.resolve(null as number | null)),
   setSidebarWidth: vi.fn(),
   getCollapsedPanels: vi.fn(() => Promise.resolve({} as import('../../shared/types.js').CollapsedPanels)),
@@ -223,11 +225,14 @@ const mockGroveBench = {
   removeBookmark: vi.fn(() => Promise.resolve()),
   updateBookmark: vi.fn(() => Promise.resolve()),
   listFollowUps: vi.fn(() => Promise.resolve([] as import('../../shared/follow-ups.js').FollowUp[] | null)),
-  addFollowUp: vi.fn((repoPath: string, title: string, details: string) => Promise.resolve({
-    followUp: { id: 'new1', repoPath, title, details, createdAt: 0 },
+  addFollowUp: vi.fn((
+    repoPath: string, title: string, details: string, priority?: import('../../shared/follow-ups.js').FollowUpPriority,
+  ): Promise<{ followUp: import('../../shared/follow-ups.js').FollowUp; existing: boolean }> => Promise.resolve({
+    followUp: { id: 'new1', repoPath, title, details, createdAt: 0, priority: priority ?? 'normal' },
     existing: false,
   })),
   setFollowUpDone: vi.fn(() => Promise.resolve()),
+  setFollowUpPriority: vi.fn(() => Promise.resolve()),
   followUpStarted: vi.fn(() => Promise.resolve()),
   removeFollowUp: vi.fn(() => Promise.resolve()),
   onFollowUpsChanged: vi.fn((_callback: (change: import('../../shared/follow-ups.js').FollowUpsChange) => void) => () => {}),

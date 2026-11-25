@@ -140,6 +140,17 @@ describe('PanelHeader', () => {
     expect(screen.getByText('Terminal')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Clear' })).toBeInTheDocument();
   });
+
+  it('lets wide actions wrap onto a row of their own only when asked', () => {
+    const actions = createRawSnippet(() => ({ render: () => '<button>Clear</button>' }));
+    const { container, unmount } = render(PanelHeader, { title: 'Board', actions });
+    const header = () => container.querySelector('[data-slot="panel-header"]')!;
+    expect(header()).not.toHaveClass('flex-wrap');
+    unmount();
+    render(PanelHeader, { target: container, props: { title: 'Board', actions, wrap: true } });
+    expect(header()).toHaveClass('flex-wrap');
+    expect(screen.getByRole('button', { name: 'Clear' }).parentElement).toHaveClass('flex-wrap', 'shrink');
+  });
 });
 
 describe('Pulse', () => {

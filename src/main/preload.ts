@@ -146,8 +146,11 @@ const api: GroveBenchAPI = {
 
   // Follow-ups
   listFollowUps: () => ipcRenderer.invoke(IPC.FOLLOW_UPS_LIST),
-  addFollowUp: (repoPath: string, title: string, details: string) => ipcRenderer.invoke(IPC.FOLLOW_UP_ADD, repoPath, title, details),
+  addFollowUp: (repoPath: string, title: string, details: string, priority?: import('../shared/follow-ups.js').FollowUpPriority) =>
+    ipcRenderer.invoke(IPC.FOLLOW_UP_ADD, repoPath, title, details, priority),
   setFollowUpDone: (id: string, done: boolean) => ipcRenderer.invoke(IPC.FOLLOW_UP_SET_DONE, id, done),
+  setFollowUpPriority: (id: string, priority: import('../shared/follow-ups.js').FollowUpPriority) =>
+    ipcRenderer.invoke(IPC.FOLLOW_UP_SET_PRIORITY, id, priority),
   followUpStarted: (id: string, sessionId: string) => ipcRenderer.invoke(IPC.FOLLOW_UP_STARTED, id, sessionId),
   removeFollowUp: (id: string) => ipcRenderer.invoke(IPC.FOLLOW_UP_REMOVE, id),
   onFollowUpsChanged: (callback: (change: import('../shared/follow-ups.js').FollowUpsChange) => void) => {
@@ -490,6 +493,10 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.APP_STATE_GET_SESSION_SORT) as Promise<import('../shared/types.js').SessionSortState>,
   setSessionSort: (sort: import('../shared/types.js').SessionSortState) =>
     ipcRenderer.send(IPC.APP_STATE_SET_SESSION_SORT, sort),
+  getBoardLayout: () =>
+    ipcRenderer.invoke(IPC.APP_STATE_GET_BOARD_LAYOUT) as Promise<import('../shared/types.js').BoardLayout | null>,
+  setBoardLayout: (layout: import('../shared/types.js').BoardLayout) =>
+    ipcRenderer.send(IPC.APP_STATE_SET_BOARD_LAYOUT, layout),
   getUnreadSessions: () => ipcRenderer.invoke(IPC.APP_STATE_GET_UNREAD) as Promise<string[]>,
   setUnreadSessions: (ids: string[]) => ipcRenderer.send(IPC.APP_STATE_SET_UNREAD, ids),
   getTodoSessions: () => ipcRenderer.invoke(IPC.APP_STATE_GET_TODO) as Promise<string[] | null>,

@@ -8,11 +8,17 @@ Every agent can add them: Claude Code and the ACP agents (Gemini CLI, Copilot CL
 
 Click the list icon in the sidebar footer, next to bookmarks (it is on the rail too when the sidebar is folded). The number on it is how many follow-ups are open across your projects (a removed project's aren't counted). The list opens beside the thread you're in, or beside a new thread or the landing screen. Press `Esc` or the **✕** to close it.
 
-Follow-ups are grouped by project, oldest first, so they stay in the order they came up. Each shows what to do, when it was added, the thread that added it (click its name to open it, if the thread is still open), and the details the agent wrote for the next thread. Long details fold to four lines; **Show more** opens them.
+Follow-ups are grouped by project, highest [priority](#priority) first, then oldest first, so ones of the same priority stay in the order they came up. Each shows what to do, when it was added, the thread that added it (click its name to open it, if the thread is still open), and the details the agent wrote for the next thread. Long details fold to four lines; **Show more** opens them.
+
+## Priority
+
+Each follow-up is **High**, **Normal** or **Low**. The agent that adds one picks it: high for something broken that people will hit, a security or data-loss risk, or work that blocks other work; low for tidying and nice-to-haves; normal for the rest. Follow-ups saved before there were priorities are normal. If an agent adds one that is already listed, with a higher priority, the listed one's priority goes up (never down), so an agent can say the work became more pressing. High ones have an amber edge, here and on the board.
+
+To change one, click its priority (next to **Delete** here, or on the right of its card on the board) and pick another.
 
 ## Adding one yourself
 
-Click **+** at the top of the list (or in the board's Follow-ups column) to open **New follow-up**. Write what needs doing, and if you like the details a thread with none of your context needs to start: where, why, and what done looks like. With more than one project, pick the one it belongs to (it starts in the project of the thread you're in). Click **Add follow-up**, or press `Ctrl+Enter` in the details. **Cancel** or `Esc` closes it without adding anything.
+Click **+** at the top of the list (or in the board's Follow-ups column) to open **New follow-up**. Write what needs doing, and if you like the details a thread with none of your context needs to start: where, why, and what done looks like. Pick its **Priority** (it starts at **Normal**). With more than one project, pick the one it belongs to (it starts in the project of the thread you're in). Click **Add follow-up**, or press `Ctrl+Enter` in the details. **Cancel** or `Esc` closes it without adding anything.
 
 One you add works like an agent's: start a thread from it, and that thread's agent marks it done. If the project already has an open follow-up with the same title, Grove Bench says so and doesn't add it twice.
 
@@ -36,8 +42,8 @@ When the thread's agent finishes the work, it marks the follow-up done and says 
 
 ## What agents are told
 
-Each new thread is told what follow-ups are, when to add one (work outside what you asked for in that thread), and to write the details so a thread with none of its context can start on them. It is also given the titles of up to ten open follow-ups in its project, so it doesn't add one twice and can mark one done if its work finishes it. Titles a thread was started from are marked as possibly in progress. Because other agents wrote them, the titles are marked as notes, not instructions. It is told not to start on a follow-up unless you ask.
+Each new thread is told what follow-ups are, when to add one (work outside what you asked for in that thread), and to write the details so a thread with none of its context can start on them. It is also given the titles of up to ten open follow-ups in its project, highest priority first, so it doesn't add one twice and can mark one done if its work finishes it. High and low ones say so, and titles a thread was started from are marked as possibly in progress. Because other agents wrote them, the titles are marked as notes, not instructions. It is told not to start on a follow-up unless you ask.
 
-Agents use three tools from Grove Bench's `grove-followups` server: `followup_add`, `followup_list` and `followup_done`. `followup_list` shows the first 200 characters of each follow-up's details; given an id, it shows that one in full. They run without asking you, like the memory tools, because they only change Grove Bench's own list. In the Thread tab's Summary view, adding a follow-up and marking one done stay in view.
+Agents use three tools from Grove Bench's `grove-followups` server: `followup_add`, `followup_list` and `followup_done`. `followup_add` takes the priority, with what each one is for. `followup_list` lists them highest priority first, with the first 200 characters of each one's details; given an id, it shows that one in full. They run without asking you, like the memory tools, because they only change Grove Bench's own list. In the Thread tab's Summary view, adding a follow-up and marking one done stay in view.
 
 A project can have up to 100 open follow-ups. They are saved in `follow-ups.json` in Grove Bench's app data folder, not in your project, so they aren't committed or shared with your team.

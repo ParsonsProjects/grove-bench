@@ -11,6 +11,7 @@ import { todaySpend } from './session-limits.js';
 import { deletePrBranch, isCommitSha, isMergeMethod, prActionOptions, prMerge, prSetAutoMerge, prSetDraft, prSetOpen, prTarget, prUpdateBranch, type PrTarget } from './pr-actions.js';
 import { searchEvents, findEventIndexByUuid, extractSessionPreview, firstUserPrompt } from './event-search.js';
 import { openCutOff } from '../shared/cut-off.js';
+import { isFollowUpPriority } from '../shared/follow-ups.js';
 import { decideAutoName } from './session-auto-name.js';
 import { cleanUserGoal, generateGoal, goalInputFromEvents, type GoalInput } from './session-goal.js';
 import { launchEditor } from './editor-launch.js';
@@ -53,7 +54,7 @@ import { deleteSchedule, listSchedules, recordScheduleRun, saveSchedule } from '
 import { linkSkills, setSkillReach, skillSharing } from './skill-sharing.js';
 import { CLAUDE_SKILL_DIRS, markWorktreeOnly, readSkillFile, readsSharedSkills, saveSkillFile, type SkillDirs } from './skills.js';
 import { accountLinkDirs } from './session-skills.js';
-import { listProjects, lastAddedProject, rememberProject, forgetProject, loadOpenTabs, saveOpenTabs, loadCollapsedRepos, saveCollapsedRepos, loadSessionSort, saveSessionSort, loadSidebarWidth, saveSidebarWidth, loadCollapsedPanels, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, saveTodoSessionIds, loadTodoSessionIds, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
+import { listProjects, lastAddedProject, rememberProject, forgetProject, loadOpenTabs, saveOpenTabs, loadCollapsedRepos, saveCollapsedRepos, loadSessionSort, saveSessionSort, loadBoardLayout, saveBoardLayout, loadSidebarWidth, saveSidebarWidth, loadCollapsedPanels, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, saveTodoSessionIds, loadTodoSessionIds, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
 import { isThreadId } from './session-event-store.js';
@@ -2658,7 +2659,7 @@ export function registerHandlers() {
 
   // Added by hand, from the Follow-ups drawer or the board. Nothing names
   // the thread it came from: it came from you.
-  ipcMain.handle(IPC.FOLLOW_UP_ADD, async (_event, repoPath: unknown, title: unknown, details: unknown) => {
+  ipcMain.handle(IPC.FOLLOW_UP_ADD, async (_event, repoPath: unknown, title: unknown, details: unknown, priority: unknown) => {
     if (typeof repoPath !== 'string' || !repoPath || typeof title !== 'string' || typeof details !== 'string') {
       throw new Error('A follow-up needs a project and a title.');
     }
@@ -2667,12 +2668,17 @@ export function registerHandlers() {
     if (!listProjects(await worktreeManager.listRepos()).includes(repoPath)) {
       throw new Error("That project isn't in Grove Bench any more. Add it again, or pick another.");
     }
-    return followUps.addFollowUp({ repoPath, title, details, byUser: true });
+    return followUps.addFollowUp({ repoPath, title, details, priority: isFollowUpPriority(priority) ? priority : undefined, byUser: true });
   });
 
   ipcMain.handle(IPC.FOLLOW_UP_SET_DONE, (_event, id: string, done: boolean) => {
     if (done) followUps.markFollowUpDone(id);
     else followUps.reopenFollowUp(id);
+  });
+
+  ipcMain.handle(IPC.FOLLOW_UP_SET_PRIORITY, (_event, id: string, priority: unknown) => {
+    if (!isFollowUpPriority(priority)) throw new Error('That is not a follow-up priority.');
+    followUps.setFollowUpPriority(id, priority);
   });
 
   ipcMain.handle(IPC.FOLLOW_UP_STARTED, (_event, id: string, sessionId: string) => {
@@ -2728,6 +2734,12 @@ export function registerHandlers() {
 
   ipcMain.on(IPC.APP_STATE_SET_SESSION_SORT, (_event, sort: import('../shared/types.js').SessionSortState) => {
     saveSessionSort(sort);
+  });
+
+  ipcMain.handle(IPC.APP_STATE_GET_BOARD_LAYOUT, () => loadBoardLayout());
+
+  ipcMain.on(IPC.APP_STATE_SET_BOARD_LAYOUT, (_event, layout: unknown) => {
+    saveBoardLayout(layout);
   });
 
   ipcMain.handle(IPC.APP_STATE_GET_SIDEBAR_WIDTH, () => loadSidebarWidth());

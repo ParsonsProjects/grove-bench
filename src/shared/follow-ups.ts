@@ -8,12 +8,55 @@
  * new one at once whatever branch it is on.
  */
 
+/** How soon a follow-up should be picked up. The agent that adds one sets it
+ *  (followup_add); you can change it. */
+export type FollowUpPriority = 'high' | 'normal' | 'low';
+
+/** Highest first: the order lists show them in. */
+export const FOLLOW_UP_PRIORITIES: readonly FollowUpPriority[] = ['high', 'normal', 'low'];
+
+export const FOLLOW_UP_PRIORITY_LABELS: Record<FollowUpPriority, string> = {
+  high: 'High',
+  normal: 'Normal',
+  low: 'Low',
+};
+
+export function isFollowUpPriority(value: unknown): value is FollowUpPriority {
+  return typeof value === 'string' && (FOLLOW_UP_PRIORITIES as readonly string[]).includes(value);
+}
+
+/** A priority an agent typed, in any case and with spaces around it, or
+ *  undefined when it isn't one (the follow-up is then normal). */
+export function toFollowUpPriority(value: unknown): FollowUpPriority | undefined {
+  const word = typeof value === 'string' ? value.trim().toLowerCase() : value;
+  return isFollowUpPriority(word) ? word : undefined;
+}
+
+/** Its priority: normal for one saved before follow-ups had one. */
+export function followUpPriority(f: Pick<FollowUp, 'priority'>): FollowUpPriority {
+  return f.priority ?? 'normal';
+}
+
+/** Where a priority comes in a list: 0 for high, the most pressing. */
+export function followUpPriorityRank(priority: FollowUpPriority): number {
+  return FOLLOW_UP_PRIORITIES.indexOf(priority);
+}
+
+/** `list` highest priority first, keeping the order it had inside each
+ *  priority (oldest first, as the list is saved). Doesn't change `list`. */
+export function byFollowUpPriority<T extends Pick<FollowUp, 'priority'>>(list: readonly T[]): T[] {
+  const rank = (f: T) => followUpPriorityRank(followUpPriority(f));
+  return [...list].sort((a, b) => rank(a) - rank(b));
+}
+
 export interface FollowUp {
   /** Short, so an agent can type it back (followup_done). */
   id: string;
   repoPath: string;
   /** One line: what to do. */
   title: string;
+  /** Unset in follow-ups saved before there were priorities: normal. */
+  priority?: FollowUpPriority;
   /** What a new thread needs to start without this one's context: where,
    *  why, and what done looks like. Sent with the title as its first message. */
   details: string;

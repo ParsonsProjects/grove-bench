@@ -58,6 +58,7 @@ import {
   loadTodoSessionIds, saveTodoSessionIds,
   loadSkillSchedules, saveSkillSchedules, updateSkillSchedules,
   loadTrayIntroduced, saveTrayIntroduced,
+  loadBoardLayout, saveBoardLayout,
   appStateSaved, resetAppStateForTests,
 } from './app-state.js';
 
@@ -860,6 +861,32 @@ describe('skill schedules', () => {
     ] });
     expect(state.skillSchedules).toEqual([schedule]);
     expect(validateAppState({ skillSchedules: 'nope' }).skillSchedules).toBeUndefined();
+  });
+});
+
+describe('Board layout', () => {
+  it('has none until the first change, then saves it with the rest', async () => {
+    const file = useDisk({ schemaVersion: V, openTabIds: ['keep'] });
+    expect(loadBoardLayout()).toBeNull();
+    saveBoardLayout({ lanes: 'project', sort: 'last-active' });
+    expect(loadBoardLayout()).toEqual({ lanes: 'project', sort: 'last-active' });
+    vi.advanceTimersByTime(500);
+    await appStateSaved();
+    expect(file.get()).toMatchObject({ boardLayout: { lanes: 'project', sort: 'last-active' }, openTabIds: ['keep'] });
+  });
+
+  it('resets only the half of a saved one that is bad', () => {
+    useDisk({ schemaVersion: V, boardLayout: { lanes: 'group', sort: 'sideways' } });
+    expect(loadBoardLayout()).toEqual({ lanes: 'group', sort: 'unread-first' });
+    expect(validateAppState({ boardLayout: 'nope' }).boardLayout).toBeUndefined();
+  });
+
+  it('ignores junk from the renderer, a layout with one unknown half included, keeping the saved one', () => {
+    useDisk({ schemaVersion: V, boardLayout: { lanes: 'project', sort: 'last-active' } });
+    for (const junk of ['junk', null, [], {}, { lanes: 'group' }, { lanes: 'group', sort: 'newest' }, { lanes: 'rows', sort: 'unread-first' }]) {
+      saveBoardLayout(junk);
+    }
+    expect(loadBoardLayout()).toEqual({ lanes: 'project', sort: 'last-active' });
   });
 });
 

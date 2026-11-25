@@ -48,7 +48,21 @@ describe('FollowUpDialog', () => {
     await fill('Add tests', 'For the refresh path.');
     await fireEvent.click(screen.getByRole('button', { name: 'Add follow-up' }));
     await waitFor(() => expect(followUpsStore.addingIn).toBeNull());
-    expect(mockGroveBench.addFollowUp).toHaveBeenCalledWith('/repo-b', 'Add tests', 'For the refresh path.');
+    expect(mockGroveBench.addFollowUp).toHaveBeenCalledWith('/repo-b', 'Add tests', 'For the refresh path.', 'normal');
+  });
+
+  it('adds it with the priority picked, normal until then', async () => {
+    followUpsStore.openAdd('/repo-a');
+    render(FollowUpDialog);
+    const group = screen.getByRole('radiogroup', { name: 'Priority' });
+    expect(screen.getByRole('radio', { name: 'Normal' })).toBeChecked();
+    expect(group).toBeInTheDocument();
+    await fill('Fix the expired token check');
+    await fireEvent.click(screen.getByRole('radio', { name: 'High' }));
+    expect(screen.getByRole('radio', { name: 'High' })).toBeChecked();
+    await fireEvent.click(screen.getByRole('button', { name: 'Add follow-up' }));
+    await waitFor(() => expect(followUpsStore.addingIn).toBeNull());
+    expect(mockGroveBench.addFollowUp).toHaveBeenCalledWith('/repo-a', 'Fix the expired token check', '', 'high');
   });
 
   it('keeps what was typed when the project list changes while it is open', async () => {

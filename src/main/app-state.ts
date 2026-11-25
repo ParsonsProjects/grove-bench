@@ -2,7 +2,7 @@ import path from 'node:path';
 import { app } from 'electron';
 import { z } from 'zod';
 
-import { COLLAPSIBLE_PANELS, type CollapsedPanels, type ConversationGroup, type PrerequisiteStatus, type ProviderUsage, type SessionSortState, type SkillSuggestion } from '../shared/types.js';
+import { BOARD_LANES, BOARD_SORTS, COLLAPSIBLE_PANELS, type BoardLayout, type CollapsedPanels, type ConversationGroup, type PrerequisiteStatus, type ProviderUsage, type SessionSortState, type SkillSuggestion } from '../shared/types.js';
 import { migrateRaw, stampSchemaVersion, type Migration } from './persisted-state.js';
 import { readJsonFile, readJsonFileAsync, writeFileAtomic, writeFileAtomicSync, type AtomicWrite, type JsonFileRead } from './json-file.js';
 import { freezeLog } from './freeze-log.js';
@@ -42,6 +42,8 @@ export interface AppState {
   openTabIds: string[];
   collapsedRepos: Record<string, boolean>;
   sessionSort: SessionSortState;
+  /** The board's lanes and sort. Absent until first changed. */
+  boardLayout?: BoardLayout;
   /** Sidebar width in px (user-resizable). Null/absent = renderer default. */
   sidebarWidth?: number | null;
   /** Sidebars folded down to a rail. Absent = all open. */
@@ -148,11 +150,22 @@ const groupsSchema = z.array(z.unknown()).transform((raw): ConversationGroup[] =
   });
 });
 
+/** A layout from the renderer, saved only when both halves are known. */
+const boardLayoutSchema = z.object({ lanes: z.enum(BOARD_LANES), sort: z.enum(BOARD_SORTS) });
+
+/** The saved layout as read back: each half falls back on its own, so a bad
+ *  sort keeps the lanes. */
+const savedBoardLayoutSchema = z.object({
+  lanes: z.enum(BOARD_LANES).catch('none'),
+  sort: z.enum(BOARD_SORTS).catch('unread-first'),
+});
+
 /** Per-field fallback: a corrupt value resets that field only. */
 const appStateSchema = z.object({
   openTabIds: z.array(z.string()).catch(DEFAULT_STATE.openTabIds),
   collapsedRepos: z.record(z.string(), z.boolean()).catch(DEFAULT_STATE.collapsedRepos),
   sessionSort: z.object({ key: z.enum(['name', 'age']), dir: z.enum(['asc', 'desc']) }).catch(DEFAULT_STATE.sessionSort),
+  boardLayout: savedBoardLayoutSchema.optional().catch(undefined),
   sidebarWidth: z.number().finite().nullable().optional().catch(null),
   collapsedPanels: collapsedPanelsSchema.optional().catch(undefined),
   skillSuggestions: z.record(z.string(), z.object({
@@ -543,6 +556,17 @@ export function loadSessionSort(): SessionSortState {
 
 export function saveSessionSort(sort: SessionSortState): void {
   setSoon('sessionSort', sort);
+}
+
+export function loadBoardLayout(): BoardLayout | null {
+  return pick((state) => state.boardLayout ?? null);
+}
+
+/** Junk from the renderer is ignored, a layout with one unknown half
+ *  included, so it can't replace a good saved one with the defaults. */
+export function saveBoardLayout(layout: unknown): void {
+  const parsed = boardLayoutSchema.safeParse(layout);
+  if (parsed.success) setSoon('boardLayout', parsed.data);
 }
 
 export function loadSidebarWidth(): number | null {

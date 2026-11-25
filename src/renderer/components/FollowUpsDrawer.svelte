@@ -20,8 +20,9 @@
   import { getRepoColor } from '../lib/repo-colors.js';
   import { formatAge } from '../../shared/format-age.js';
   import { ipcErrorText } from '../lib/mcp-errors.js';
-  import { followUpPrompt, type FollowUp } from '../../shared/follow-ups.js';
+  import { followUpPriority, followUpPrompt, type FollowUp, type FollowUpPriority } from '../../shared/follow-ups.js';
   import CopyButton from './CopyButton.svelte';
+  import FollowUpPriorityPicker from './FollowUpPriorityPicker.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { PanelHeader } from '$lib/components/ui/panel-header/index.js';
@@ -201,7 +202,7 @@
             {@const started = startedThread(f)}
             {@const long = f.details.length > 220 || f.details.split('\n').length > 4}
             <article
-              class="mb-2 border bg-card/80 p-2 {followUpsStore.revealId === f.id ? 'border-ring' : 'border-border'}"
+              class="mb-2 border bg-card/80 p-2 {followUpsStore.revealId === f.id ? 'border-ring' : followUpPriority(f) === 'high' ? 'border-amber-500/50' : 'border-border'}"
               aria-label={f.title}
               aria-current={followUpsStore.revealId === f.id ? 'true' : undefined}
               data-follow-up={f.id}
@@ -238,10 +239,16 @@
                   title="Mark it done"
                 >Done</Button>
                 <CopyButton text={followUpPrompt(f)} class="size-5" />
+                <span class="ml-auto">
+                  <FollowUpPriorityPicker
+                    value={followUpPriority(f)}
+                    title={f.title}
+                    onchange={(p: FollowUpPriority) => run(() => followUpsStore.setPriority(f.id, p))}
+                  />
+                </span>
                 <Button
                   variant="quiet-destructive"
                   size="2xs"
-                  class="ml-auto"
                   onclick={() => run(() => followUpsStore.remove(f.id))}
                   title="Delete this follow-up"
                 >Delete</Button>

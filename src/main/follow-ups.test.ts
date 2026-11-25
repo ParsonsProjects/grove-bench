@@ -31,6 +31,7 @@ import {
   removeFollowUp,
   reopenFollowUp,
   resetFollowUpsForTest,
+  setFollowUpPriority,
 } from './follow-ups.js';
 import { FOLLOW_UP_LIMITS, type FollowUp } from '../shared/follow-ups.js';
 
@@ -70,7 +71,36 @@ describe('addFollowUp', () => {
       fromSessionId: 's1', fromLabel: 'Fix login', fromBranch: 'claude/login',
     });
     expect(followUp.id).toMatch(/^[0-9a-f]{6}$/);
+    expect(followUp.priority).toBe('normal');
     expect(saved()).toEqual([followUp]);
+  });
+
+  it('keeps the priority it was given, and makes anything else normal', () => {
+    expect(addFollowUp({ repoPath: '/repo', title: 'a', details: '', priority: 'high' }).followUp.priority).toBe('high');
+    expect(addFollowUp({ repoPath: '/repo', title: 'b', details: '', priority: 'urgent' as never }).followUp.priority).toBe('normal');
+  });
+
+  it('raises the priority of an open one an agent adds again with a higher one, and only then', () => {
+    const { followUp } = addFollowUp({ repoPath: '/repo', title: 'Fix tokens', details: '' });
+    const listener = vi.fn();
+    onFollowUpsChanged(listener);
+
+    // The same or lower: left as it is, and nothing saved.
+    expect(addFollowUp({ repoPath: '/repo', title: 'fix tokens', details: '', priority: 'low' })).toEqual({ followUp, existing: true });
+    expect(addFollowUp({ repoPath: '/repo', title: 'Fix tokens', details: '', priority: 'normal' })).toEqual({ followUp, existing: true });
+    expect(addFollowUp({ repoPath: '/repo', title: 'Fix tokens', details: '' })).toEqual({ followUp, existing: true });
+    expect(listener).not.toHaveBeenCalled();
+
+    const again = addFollowUp({ repoPath: '/repo', title: 'Fix tokens', details: 'other details', priority: 'high' });
+    expect(again).toEqual({ followUp: { ...followUp, priority: 'high' }, existing: true, raised: true });
+    expect(saved()).toEqual([{ ...followUp, priority: 'high' }]);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("doesn't raise one from the New follow-up dialog: you change it on the card", () => {
+    const { followUp } = addFollowUp({ repoPath: '/repo', title: 'Fix tokens', details: '' });
+    expect(addFollowUp({ repoPath: '/repo', title: 'Fix tokens', details: '', priority: 'high', byUser: true })).toEqual({ followUp, existing: true });
+    expect(saved()[0]?.priority).toBe('normal');
   });
 
   it('cuts a long title and long details to their limits', () => {
@@ -138,6 +168,19 @@ describe('addFollowUp', () => {
 });
 
 describe('listFollowUps', () => {
+  it('reads one saved before priorities as it was, and drops a priority that is not one', () => {
+    disk = JSON.stringify([
+      { id: 'aaaaaa', repoPath: '/r', title: 'old', details: '', createdAt: 1 },
+      { id: 'bbbbbb', repoPath: '/r', title: 'bad', details: '', createdAt: 2, priority: 'urgent' },
+      { id: 'cccccc', repoPath: '/r', title: 'low', details: '', createdAt: 3, priority: 'low' },
+    ]);
+    const list = listFollowUps();
+    expect(list?.[0]).not.toHaveProperty('priority');
+    expect(list?.[1]).not.toHaveProperty('priority');
+    expect(list?.[1]).toMatchObject({ id: 'bbbbbb', title: 'bad' });
+    expect(list?.[2]?.priority).toBe('low');
+  });
+
   it('reads the saved file and drops entries that are not follow-ups', () => {
     disk = JSON.stringify([
       { id: 'abc123', repoPath: '/repo', title: 't', details: 'd', createdAt: 1 },
@@ -182,6 +225,19 @@ describe('done, reopen, started and remove', () => {
     markFollowUpStarted(followUp.id, 's2');
     markFollowUpStarted(followUp.id, 's3');
     expect(saved()[0].startedSessionIds).toEqual(['s2', 's3']);
+  });
+
+  it('changes the priority, telling the listeners, and leaves it alone when it is the same', () => {
+    const { followUp } = addFollowUp({ repoPath: '/repo', title: 't', details: '' });
+    const listener = vi.fn();
+    onFollowUpsChanged(listener);
+    expect(setFollowUpPriority(followUp.id.toUpperCase(), 'high').priority).toBe('high');
+    expect(saved()[0]?.priority).toBe('high');
+    expect(listener).toHaveBeenCalledWith({ upserted: [expect.objectContaining({ id: followUp.id, priority: 'high' })], removed: [] });
+    setFollowUpPriority(followUp.id, 'high');
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(() => setFollowUpPriority(followUp.id, 'urgent' as never)).toThrow(/not a follow-up priority/);
+    expect(() => setFollowUpPriority('zzzzzz', 'low')).toThrow(/no follow-up/);
   });
 
   it('removes one, and ignores an id it no longer has', () => {
@@ -236,6 +292,15 @@ describe('followUpOperationsFor', () => {
     expect(ops.list({ includeDone: true }).map((f) => f.id)).toEqual([c.id, b.id, a.id]);
   });
 
+  it('passes the priority on, and lists open ones highest priority first, oldest first inside each', () => {
+    const ops = followUpOperationsFor(thread);
+    expect(ops.add({ title: 'low', details: '', priority: 'low' }).followUp.priority).toBe('low');
+    ops.add({ title: 'normal', details: '' });
+    ops.add({ title: 'high 1', details: '', priority: 'high' });
+    ops.add({ title: 'high 2', details: '', priority: 'high' });
+    expect(ops.list({}).map((f) => f.title)).toEqual(['high 1', 'high 2', 'normal', 'low']);
+  });
+
   it('marks done as the thread, in its own project only', () => {
     const other = addFollowUp({ repoPath: '/other', title: 'elsewhere', details: '' }).followUp;
     const ops = followUpOperationsFor(thread);
@@ -267,6 +332,14 @@ describe('followUpsForSystemPrompt', () => {
     const prompt = followUpsForSystemPrompt('/repo');
     expect(prompt).toContain(`${started.id}: started (a thread was started from it, so it may be in progress)`);
     expect(prompt).toMatch(/: not started\n/);
+  });
+
+  it('lists high priority ones first and says which are high or low', () => {
+    const normal = addFollowUp({ repoPath: '/repo', title: 'normal one', details: '' }, 1).followUp;
+    const high = addFollowUp({ repoPath: '/repo', title: 'urgent one', details: '', priority: 'high' }, 0).followUp;
+    const low = addFollowUp({ repoPath: '/repo', title: 'later one', details: '', priority: 'low' }, 2).followUp;
+    const prompt = followUpsForSystemPrompt('/repo');
+    expect(prompt).toContain(`- ${high.id} (high priority): urgent one\n- ${normal.id}: normal one\n- ${low.id} (low priority): later one\n`);
   });
 
   it("lists the project's open ones, newest first, up to ten", () => {

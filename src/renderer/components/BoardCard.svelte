@@ -17,8 +17,14 @@
    * and its pull request. The card opens the thread. One started from a
    * follow-up names it along the bottom, a button of its own that shows it
    * in the Follow-ups drawer.
+   *
+   * Cards that need a look stand out, each its own way: one that is unread
+   * (a turn finished, or a pull request alert came, since you last looked)
+   * has a green edge and says New (green: finished a turn), and one whose
+   * pull request needs you has an amber edge (amber: needs you), its badge
+   * saying why.
    */
-  let { id, name, branch, projectName, projectColor, showProject, state, status, pr, waiting, followUp = null, onopen, onfollowup }: {
+  let { id, name, branch, projectName, projectColor, showProject, state, status, pr, waiting, unread = false, prNeedsYou = false, followUp = null, onopen, onfollowup }: {
     id: string;
     name: string;
     branch: string;
@@ -33,6 +39,10 @@
     pr: PrInfo | null;
     /** In Needs you: drawn with an amber edge, like a waiting prompt. */
     waiting: boolean;
+    /** Unread: a turn finished, or a pull request alert came, since you last looked. */
+    unread?: boolean;
+    /** Its open pull request has changes asked for, failing checks or conflicts. */
+    prNeedsYou?: boolean;
     /** The follow-up the thread was started from, if it was. */
     followUp?: FollowUp | null;
     onopen: () => void;
@@ -44,13 +54,15 @@
   /** Read out in full: the card's lines are cut short when it is narrow. */
   const label = $derived([
     name,
-    AGENT_SPRITES[state].label,
+    unread ? 'New since you last looked' : AGENT_SPRITES[state].label,
     subtitle?.text,
-    pr && prBadge ? `Pull request #${pr.number}: ${prBadge.label}` : '',
+    pr && prBadge ? `Pull request #${pr.number}${prNeedsYou ? ' needs you' : ''}: ${prBadge.label}` : '',
   ].filter(Boolean).join('. '));
+
+  const edge = $derived(waiting || (prNeedsYou && !unread) ? 'border-status-attention/60' : unread ? 'border-status-unread/70' : 'border-border');
 </script>
 
-<div class="w-full min-w-0 flex flex-col bg-card border {waiting ? 'border-status-attention/60' : 'border-border'}">
+<div class="w-full min-w-0 flex flex-col bg-card border {edge}" data-board-card-unread={unread || undefined} data-board-card-pr-needs-you={prNeedsYou || undefined}>
 <button
   type="button"
   onclick={onopen}
@@ -67,6 +79,7 @@
       <StatusDot {state} />
     {/if}
     <span class="flex-1 min-w-0 truncate text-xs font-medium text-foreground">{name}</span>
+    {#if unread}<Badge tone="success" variant="soft" aria-hidden="true">New</Badge>{/if}
   </span>
   <span class="flex items-center gap-1.5 min-w-0 w-full text-caption text-muted-foreground">
     {#if showProject}

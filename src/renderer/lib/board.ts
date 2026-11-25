@@ -7,9 +7,12 @@
  * PR says. A quiet one is in Review until its PR is merged or closed.
  */
 
-import type { PrInfo } from '../../shared/types.js';
-import type { FollowUp } from '../../shared/follow-ups.js';
+import { BOARD_LANES, BOARD_SORTS, type BoardLanes, type BoardSort, type PrInfo } from '../../shared/types.js';
+import { byFollowUpPriority, type FollowUp } from '../../shared/follow-ups.js';
 import type { AgentSpriteState } from './agent-sprite.js';
+
+export { BOARD_LANES, BOARD_SORTS };
+export type { BoardLanes, BoardSort };
 
 export type BoardStage = 'working' | 'needs-you' | 'review' | 'done';
 
@@ -49,14 +52,15 @@ export const BOARD_COLUMN_HINTS: Record<BoardColumn, string> = {
 /** The follow-ups the board's first column shows: open ones in a project
  *  still in Grove Bench, unless a thread started from one is open (that
  *  thread's card stands for it). One whose thread was closed before the work
- *  was done comes back, `startedBefore`, oldest first as in the drawer. */
+ *  was done comes back, `startedBefore`. Highest priority first, then oldest
+ *  first, as in the drawer. */
 export function boardFollowUps(
   list: readonly FollowUp[],
   repos: readonly string[],
   isOpenThread: (sessionId: string) => boolean,
 ): { followUp: FollowUp; startedBefore: boolean }[] {
   const known = new Set(repos);
-  return list.flatMap((f) => {
+  return byFollowUpPriority(list).flatMap((f) => {
     if (f.doneAt !== undefined || !known.has(f.repoPath)) return [];
     const started = f.startedSessionIds ?? [];
     if (started.some(isOpenThread)) return [];
@@ -84,15 +88,46 @@ export function boardStage(state: AgentSpriteState, pr: Pick<PrInfo, 'state'> | 
   }
 }
 
-export type BoardLanes = 'none' | 'project' | 'group';
-
-export const BOARD_LANES: readonly BoardLanes[] = ['none', 'project', 'group'];
-
 export const BOARD_LANE_LABELS: Record<BoardLanes, string> = {
   none: 'None',
   project: 'Project',
   group: 'Group',
 };
+
+export const BOARD_SORT_LABELS: Record<BoardSort, string> = {
+  'unread-first': 'Unread first',
+  'last-active': 'Last active',
+};
+
+export const BOARD_SORT_HINTS: Record<BoardSort, string> = {
+  'unread-first': 'Threads with something new since you last looked first, then ones whose pull request needs you, each most recently active first',
+  'last-active': 'Most recently active thread first',
+};
+
+/** What sorting a thread's card needs: whether it is unread (finished a turn
+ *  you haven't looked at), whether its pull request needs you (prNeedsYou),
+ *  and when it was last active. */
+export interface BoardSortable {
+  unread: boolean;
+  prNeedsYou: boolean;
+  lastActiveAt: number;
+}
+
+/** Thread cards in the board's order, without changing `cards`. Cards that
+ *  tie keep the order they came in. */
+export function sortBoardThreads<T extends BoardSortable>(cards: readonly T[], sort: BoardSort): T[] {
+  const rank = (c: T) => (sort === 'last-active' ? 0 : c.unread ? 0 : c.prNeedsYou ? 1 : 2);
+  return [...cards].sort((a, b) => rank(a) - rank(b) || b.lastActiveAt - a.lastActiveAt);
+}
+
+/** For the board's controls, whose values arrive as strings, and the saved layout. */
+export function isBoardSort(value: unknown): value is BoardSort {
+  return typeof value === 'string' && (BOARD_SORTS as readonly string[]).includes(value);
+}
+
+export function isBoardLanes(value: unknown): value is BoardLanes {
+  return typeof value === 'string' && (BOARD_LANES as readonly string[]).includes(value);
+}
 
 export interface BoardLane<T> {
   /** Stable key: 'all', a project's path, a group's id, or 'no-group'. */
@@ -144,19 +179,31 @@ export function boardLanes<T extends { id: string; repoPath: string }>(cards: re
 
 export type PrBadgeTone = 'neutral' | 'muted' | 'info' | 'success' | 'warning' | 'danger' | 'accent';
 
+type PrStanding = Pick<PrInfo, 'state' | 'isDraft' | 'reviewDecision' | 'checks' | 'mergeState'>;
+
 /** A card's pull request in one word or two, most telling first: how it
- *  ended, then what stops it (a draft, changes asked for, failing checks),
- *  then how it stands. Purple is merged, as elsewhere in the app. */
-export function prSummary(pr: Pick<PrInfo, 'state' | 'isDraft' | 'reviewDecision' | 'checks'>): { label: string; tone: PrBadgeTone } {
+ *  ended, then what stops it (a draft, changes asked for, failing checks,
+ *  conflicts), then how it stands. Purple is merged, as elsewhere in the app. */
+export function prSummary(pr: PrStanding): { label: string; tone: PrBadgeTone } {
   if (pr.state === 'MERGED') return { label: 'Merged', tone: 'accent' };
   if (pr.state === 'CLOSED') return { label: 'Closed', tone: 'muted' };
   if (pr.isDraft) return { label: 'Draft', tone: 'muted' };
   if (pr.reviewDecision === 'CHANGES_REQUESTED') return { label: 'Changes requested', tone: 'warning' };
   if (pr.checks && pr.checks.failed > 0) return { label: 'Checks failing', tone: 'danger' };
+  if (pr.mergeState === 'dirty') return { label: 'Conflicts', tone: 'warning' };
   if (pr.reviewDecision === 'APPROVED') return { label: 'Approved', tone: 'success' };
   if (pr.checks && pr.checks.pending > 0) return { label: 'Checks running', tone: 'info' };
   if (pr.checks && pr.checks.total > 0) return { label: 'Checks passing', tone: 'success' };
   return { label: 'Open', tone: 'neutral' };
+}
+
+/** Whether an open pull request has something only you can sort out:
+ *  changes asked for, failing checks, or conflicts with its base. A draft
+ *  doesn't count: it isn't ready for review yet (as the status bar says).
+ *  prSummary names the reason in the same words. */
+export function prNeedsYou(pr: PrStanding | null): boolean {
+  if (!pr || pr.state === 'MERGED' || pr.state === 'CLOSED' || pr.isDraft) return false;
+  return pr.reviewDecision === 'CHANGES_REQUESTED' || (!!pr.checks && pr.checks.failed > 0) || pr.mergeState === 'dirty';
 }
 
 /** Whether a card matches the board's filter: every word of the query
