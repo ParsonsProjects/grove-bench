@@ -13,6 +13,7 @@ import {
   FOLLOW_UP_LIMITS,
   byFollowUpPriority,
   followUpPriority,
+  followUpPriorityRank,
   isFollowUpPriority,
   type FollowUp,
   type FollowUpPriority,
@@ -145,14 +146,25 @@ export interface FollowUpInput {
 
 /** Add a follow-up to its project. One with the same title that is still
  *  open is returned instead (`existing`), so an agent that asks twice
- *  doesn't list the work twice. */
-export function addFollowUp(input: FollowUpInput, now = Date.now()): { followUp: FollowUp; existing: boolean } {
+ *  doesn't list the work twice. An agent asking with a higher priority
+ *  raises that one's (`raised`): it has no other way to say the work became
+ *  more pressing. Never lowered that way, so it can't undo one you raised;
+ *  and not from the New follow-up dialog, as you change it on the card. */
+export function addFollowUp(input: FollowUpInput, now = Date.now()): { followUp: FollowUp; existing: boolean; raised?: boolean } {
   const title = oneLine(input.title, FOLLOW_UP_LIMITS.title);
   if (!title) throw new Error('A follow-up needs a title.');
   const list = forUpdate();
   const open = list.filter((f) => f.repoPath === input.repoPath && f.doneAt === undefined);
   const same = open.find((f) => f.title.toLowerCase() === title.toLowerCase());
-  if (same) return { followUp: same, existing: true };
+  if (same) {
+    const wanted = isFollowUpPriority(input.priority) ? input.priority : undefined;
+    if (input.byUser || !wanted || followUpPriorityRank(wanted) >= followUpPriorityRank(followUpPriority(same))) {
+      return { followUp: same, existing: true };
+    }
+    const raised = { ...same, priority: wanted };
+    save(replace(list, raised), [raised]);
+    return { followUp: raised, existing: true, raised: true };
+  }
   if (open.length >= FOLLOW_UP_LIMITS.openPerProject) {
     throw new Error(`This project already has ${open.length} open follow-ups, the most it can have. `
       + (input.byUser

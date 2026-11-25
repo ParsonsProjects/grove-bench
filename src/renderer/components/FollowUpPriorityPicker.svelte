@@ -12,6 +12,11 @@
    * on the board's follow-up cards and in the Follow-ups drawer. High wears
    * amber (BRAND.md: amber needs you), so it stands out in a column; normal
    * and low stay quiet.
+   *
+   * It always shows the saved priority: the Select reads `value` through a
+   * function binding rather than keeping the pick itself, so it changes
+   * once main has saved it, and a pick that couldn't be saved goes back
+   * (and can be picked again to retry).
    */
   let { value, title, onchange }: {
     value: FollowUpPriority;
@@ -29,8 +34,7 @@
 
 <Select.Root
   type="single"
-  {value}
-  onValueChange={(v: string) => { if (isFollowUpPriority(v) && v !== value) onchange(v); }}
+  bind:value={() => value, (v: string) => { if (isFollowUpPriority(v) && v !== value) onchange(v); }}
 >
   <Select.Trigger
     class="data-[size=default]:h-5 gap-0.5 px-1 py-0 text-micro font-medium shadow-none dark:bg-transparent [&_svg]:size-2.5 {TONE[value]}"

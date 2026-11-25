@@ -160,7 +160,9 @@ export interface MemoryOperations {
  *  can only see and close its own project's. Failures throw with a message
  *  for the agent. */
 export interface FollowUpOperations {
-  add(input: { title: string; details: string; priority?: FollowUpPriority }): { followUp: FollowUp; existing: boolean };
+  /** `raised`: an open one with that title was there, and asking with a
+   *  higher priority raised its priority. */
+  add(input: { title: string; details: string; priority?: FollowUpPriority }): { followUp: FollowUp; existing: boolean; raised?: boolean };
   /** Open ones, highest priority first and oldest first inside each; with
    *  `includeDone`, done ones after them. */
   list(opts: { includeDone?: boolean }): FollowUp[];

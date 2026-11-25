@@ -18,10 +18,11 @@
    * follow-up names it along the bottom, a button of its own that shows it
    * in the Follow-ups drawer.
    *
-   * Cards that need a look stand out, each its own way: one with output you
-   * haven't read has a green edge and says New (green: finished a turn), and
-   * one whose pull request needs you has an amber edge (amber: needs you),
-   * its badge saying why.
+   * Cards that need a look stand out, each its own way: one that is unread
+   * (a turn finished, or a pull request alert came, since you last looked)
+   * has a green edge and says New (green: finished a turn), and one whose
+   * pull request needs you has an amber edge (amber: needs you), its badge
+   * saying why.
    */
   let { id, name, branch, projectName, projectColor, showProject, state, status, pr, waiting, unread = false, prNeedsYou = false, followUp = null, onopen, onfollowup }: {
     id: string;
@@ -38,7 +39,7 @@
     pr: PrInfo | null;
     /** In Needs you: drawn with an amber edge, like a waiting prompt. */
     waiting: boolean;
-    /** Finished a turn you haven't looked at. */
+    /** Unread: a turn finished, or a pull request alert came, since you last looked. */
     unread?: boolean;
     /** Its open pull request has changes asked for, failing checks or conflicts. */
     prNeedsYou?: boolean;
@@ -53,7 +54,7 @@
   /** Read out in full: the card's lines are cut short when it is narrow. */
   const label = $derived([
     name,
-    unread ? 'New: output you haven\'t read' : AGENT_SPRITES[state].label,
+    unread ? 'New since you last looked' : AGENT_SPRITES[state].label,
     subtitle?.text,
     pr && prBadge ? `Pull request #${pr.number}${prNeedsYou ? ' needs you' : ''}: ${prBadge.label}` : '',
   ].filter(Boolean).join('. '));

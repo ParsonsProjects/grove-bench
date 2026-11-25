@@ -38,6 +38,23 @@ describe('followUpToolHandlers', () => {
     expect(textOf(res)).toContain('a1b2c3 (high priority)');
   });
 
+  it('reads a priority in any case, and makes a word it does not know normal rather than refusing', async () => {
+    const ops = fakeOps();
+    const handlers = followUpToolHandlers(ops);
+    await handlers.add({ title: 'a', priority: ' HIGH ' });
+    expect(ops.add).toHaveBeenLastCalledWith({ title: 'a', details: '', priority: 'high' });
+    const res = await handlers.add({ title: 'b', priority: 'urgent' });
+    expect(ops.add).toHaveBeenLastCalledWith({ title: 'b', details: '', priority: undefined });
+    expect(res.isError).toBeUndefined();
+    expect(textOf(res)).toContain('(normal priority)');
+  });
+
+  it('says when adding one already listed raised its priority', async () => {
+    const ops = fakeOps({ add: vi.fn(() => ({ followUp: followUp({ priority: 'high' }), existing: true, raised: true })) });
+    const res = await followUpToolHandlers(ops).add({ title: 'Add tests', priority: 'high' });
+    expect(textOf(res)).toBe('An open follow-up with that title is already listed: a1b2c3. It is now high priority; nothing else was changed.');
+  });
+
   it('says when an open one with that title was already listed', async () => {
     const res = await followUpToolHandlers(fakeOps({ add: vi.fn(() => ({ followUp: followUp(), existing: true })) })).add({ title: 'Add tests', details: '' });
     expect(textOf(res)).toContain('already listed: a1b2c3');
@@ -127,10 +144,10 @@ describe('followup tool inputs', () => {
     expect(shape('followup_add').safeParse({ title: 't'.repeat(500), details: 'd'.repeat(9000) }).success).toBe(true);
     expect(shape('followup_add').safeParse({ title: 't' }).success).toBe(true);
     expect(shape('followup_add').safeParse({ title: '' }).success).toBe(false);
-    for (const priority of ['high', 'normal', 'low']) {
+    // Any word: one the store doesn't know makes it normal, not a refused call.
+    for (const priority of ['high', 'normal', 'low', 'High', 'urgent']) {
       expect(shape('followup_add').safeParse({ title: 't', priority }).success, priority).toBe(true);
     }
-    expect(shape('followup_add').safeParse({ title: 't', priority: 'urgent' }).success).toBe(false);
     expect(shape('followup_done').safeParse({ id: 'a', note: 'n'.repeat(2000) }).success).toBe(true);
   });
 });

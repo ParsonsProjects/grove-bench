@@ -12,7 +12,7 @@ Follow-ups are grouped by project, highest [priority](#priority) first, then old
 
 ## Priority
 
-Each follow-up is **High**, **Normal** or **Low**. The agent that adds one picks it: high for something broken that people will hit, a security or data-loss risk, or work that blocks other work; low for tidying and nice-to-haves; normal for the rest. Follow-ups saved before there were priorities are normal. High ones have an amber edge, here and on the board.
+Each follow-up is **High**, **Normal** or **Low**. The agent that adds one picks it: high for something broken that people will hit, a security or data-loss risk, or work that blocks other work; low for tidying and nice-to-haves; normal for the rest. Follow-ups saved before there were priorities are normal. If an agent adds one that is already listed, with a higher priority, the listed one's priority goes up (never down), so an agent can say the work became more pressing. High ones have an amber edge, here and on the board.
 
 To change one, click its priority (next to **Delete** here, or on the right of its card on the board) and pick another.
 

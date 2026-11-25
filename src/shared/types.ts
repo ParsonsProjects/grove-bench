@@ -1575,13 +1575,18 @@ export interface SessionSortState {
   dir: 'asc' | 'desc';
 }
 
-/** The board's lanes (renderer lib/board.ts): none, one row per project, or one per group. */
-export type BoardLanes = 'none' | 'project' | 'group';
+/** The board's lanes (renderer lib/board.ts): none, one row per project, or
+ *  one per group, in the order the board offers them. Main's saved layout
+ *  checks against this list too, so a new value only needs adding here. */
+export const BOARD_LANES = ['none', 'project', 'group'] as const;
+export type BoardLanes = (typeof BOARD_LANES)[number];
 
-/** The order of a column's thread cards on the board: most recently active
- *  first, or the ones that need a look first (unread, then a pull request
- *  that needs you), most recently active first inside each. */
-export type BoardSort = 'last-active' | 'unread-first';
+/** The order of a column's thread cards on the board: the ones that need a
+ *  look first (unread, then a pull request that needs you), or most recently
+ *  active first. In the order the board offers them; like BOARD_LANES, main
+ *  checks the saved layout against it. */
+export const BOARD_SORTS = ['unread-first', 'last-active'] as const;
+export type BoardSort = (typeof BOARD_SORTS)[number];
 
 /** How the board was laid out, saved in app state so it opens that way again. */
 export interface BoardLayout {

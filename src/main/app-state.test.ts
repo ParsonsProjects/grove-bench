@@ -875,13 +875,18 @@ describe('Board layout', () => {
     expect(file.get()).toMatchObject({ boardLayout: { lanes: 'project', sort: 'last-active' }, openTabIds: ['keep'] });
   });
 
-  it('ignores junk from the renderer, and resets only the half of a saved one that is bad', () => {
+  it('resets only the half of a saved one that is bad', () => {
     useDisk({ schemaVersion: V, boardLayout: { lanes: 'group', sort: 'sideways' } });
     expect(loadBoardLayout()).toEqual({ lanes: 'group', sort: 'unread-first' });
-    saveBoardLayout('junk');
-    saveBoardLayout(null);
-    expect(loadBoardLayout()).toEqual({ lanes: 'group', sort: 'unread-first' });
     expect(validateAppState({ boardLayout: 'nope' }).boardLayout).toBeUndefined();
+  });
+
+  it('ignores junk from the renderer, a layout with one unknown half included, keeping the saved one', () => {
+    useDisk({ schemaVersion: V, boardLayout: { lanes: 'project', sort: 'last-active' } });
+    for (const junk of ['junk', null, [], {}, { lanes: 'group' }, { lanes: 'group', sort: 'newest' }, { lanes: 'rows', sort: 'unread-first' }]) {
+      saveBoardLayout(junk);
+    }
+    expect(loadBoardLayout()).toEqual({ lanes: 'project', sort: 'last-active' });
   });
 });
 

@@ -11,7 +11,7 @@
 import { z } from 'zod';
 import type { FollowUpOperations, MemoryOperations, PreviewOperations } from './types.js';
 import { groveToolOf, type GroveServerName } from '../../shared/grove-tools.js';
-import { FOLLOW_UP_LIMITS, FOLLOW_UP_PRIORITIES, followUpPriority, type FollowUp, type FollowUpPriority } from '../../shared/follow-ups.js';
+import { FOLLOW_UP_LIMITS, followUpPriority, toFollowUpPriority, type FollowUp, type FollowUpPriority } from '../../shared/follow-ups.js';
 import { formatAge } from '../../shared/format-age.js';
 
 export { groveToolOf, type GroveServerName };
@@ -174,11 +174,13 @@ function describeFollowUp(f: FollowUp, now: number, full: boolean): string {
 /** Tool bodies, separate from the tool definitions so they can be tested alone. */
 export function followUpToolHandlers(ops: FollowUpOperations, now: () => number = Date.now) {
   return {
-    add: ({ title, details, priority }: { title: string; details?: string; priority?: FollowUpPriority }) => guarded(async () => {
-      const { followUp, existing } = ops.add({ title, details: details ?? '', priority });
+    add: ({ title, details, priority }: { title: string; details?: string; priority?: string }) => guarded(async () => {
+      const { followUp, existing, raised } = ops.add({ title, details: details ?? '', priority: toFollowUpPriority(priority) });
+      const level = `${followUpPriority(followUp)} priority`;
+      if (raised) return text(`An open follow-up with that title is already listed: ${followUp.id}. It is now ${level}; nothing else was changed.`);
       return text(existing
-        ? `An open follow-up with that title is already listed: ${followUp.id}. Nothing was added.`
-        : `Added follow-up ${followUp.id} (${followUpPriority(followUp)} priority): ${followUp.title}. `
+        ? `An open follow-up with that title is already listed: ${followUp.id} (${level}). Nothing was added.`
+        : `Added follow-up ${followUp.id} (${level}): ${followUp.title}. `
           + 'The user can start a thread from it in Grove Bench\'s Follow-ups drawer.');
     }),
 
@@ -224,10 +226,13 @@ export function followUpsServer(ops: FollowUpOperations): GroveServer {
           title: z.string().min(1).describe(`One line saying what to do, e.g. "Handle an expired token in refreshSession". Cut to ${FOLLOW_UP_LIMITS.title} characters.`),
           details: z.string().optional().describe('What a new thread needs to start: what and why, where (files, functions), what you found, '
             + `and what done looks like. Cut to ${FOLLOW_UP_LIMITS.details} characters.`),
-          priority: z.enum(FOLLOW_UP_PRIORITIES as [FollowUpPriority, ...FollowUpPriority[]]).optional().describe(
-            'How soon it should be picked up; the user can change it. Most follow-ups are "normal" (the default): a bug with a workaround, '
-            + 'a missing test, a refactor that would help. "high" only for something broken that people will hit, a security or '
-            + 'data-loss risk, or something that blocks other work. "low" for tidying and nice-to-haves.'),
+          // Any text, not an enum: a word the store doesn't know makes it
+          // normal rather than refusing the whole call and losing the work.
+          priority: z.string().optional().describe(
+            'How soon it should be picked up: "high", "normal" or "low"; the user can change it. Most follow-ups are "normal" '
+            + '(the default, and what any other word means): a bug with a workaround, a missing test, a refactor that would help. '
+            + '"high" only for something broken that people will hit, a security or data-loss risk, or something that blocks other '
+            + 'work. "low" for tidying and nice-to-haves. Adding one already listed with a higher priority raises its priority.'),
         },
         run: run.add,
         searchHint: 'follow-up later task todo backlog next thread',

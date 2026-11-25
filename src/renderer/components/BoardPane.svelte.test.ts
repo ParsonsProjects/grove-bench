@@ -346,11 +346,11 @@ describe('BoardPane: what needs a look, and the order', () => {
 
   const card = (id: string) => document.querySelector<HTMLElement>(`[data-board-card="${id}"]`)!;
 
-  it("marks a card with output you haven't read, and one whose pull request needs you, each its own way", () => {
+  it('marks an unread card, and one whose pull request needs you, each its own way', () => {
     render(BoardPane);
     expect(card('new').parentElement).toHaveAttribute('data-board-card-unread');
     expect(within(card('new')).getByText('New')).toBeInTheDocument();
-    expect(card('new')).toHaveAccessibleName(/New: output you haven't read/);
+    expect(card('new')).toHaveAccessibleName(/New since you last looked/);
 
     expect(card('pr').parentElement).toHaveAttribute('data-board-card-pr-needs-you');
     expect(card('pr').parentElement).not.toHaveAttribute('data-board-card-unread');
@@ -422,17 +422,29 @@ describe('BoardPane: follow-up priority', () => {
     await waitFor(() => expect(mockGroveBench.setFollowUpPriority).toHaveBeenCalledWith('a', 'high'));
   });
 
-  it("says when the change couldn't be saved", async () => {
-    followUpsStore.list = [f('a')];
-    mockGroveBench.setFollowUpPriority.mockRejectedValueOnce(new Error("Grove Bench couldn't save its follow-ups"));
-    render(BoardPane);
-    const trigger = screen.getByRole('button', { name: /Priority of Follow-up a/ });
+  /** Open the card's priority list and pick `name`, from the keyboard (jsdom has no pointer capture). */
+  async function pickPriority(trigger: HTMLElement, name: string) {
     trigger.focus();
     await fireEvent.keyDown(trigger, { key: 'Enter' });
-    const option = await screen.findByRole('option', { name: 'Low' });
+    const option = await screen.findByRole('option', { name });
     option.focus();
     await fireEvent.pointerMove(option);
     await fireEvent.keyDown(document.activeElement ?? option, { key: 'Enter' });
+  }
+
+  it("says when the change couldn't be saved, goes back to the saved one, and can be tried again", async () => {
+    followUpsStore.list = [f('a')];
+    mockGroveBench.setFollowUpPriority.mockClear();
+    mockGroveBench.setFollowUpPriority.mockRejectedValueOnce(new Error("Grove Bench couldn't save its follow-ups"));
+    render(BoardPane);
+    const trigger = screen.getByRole('button', { name: /Priority of Follow-up a/ });
+    await pickPriority(trigger, 'Low');
     expect(await screen.findByText(/couldn't save its follow-ups/)).toBeInTheDocument();
+    expect(trigger).toHaveTextContent('Normal');
+
+    // The list still has Normal picked, so picking Low again asks again.
+    await pickPriority(trigger, 'Low');
+    await waitFor(() => expect(mockGroveBench.setFollowUpPriority).toHaveBeenCalledTimes(2));
+    expect(mockGroveBench.setFollowUpPriority).toHaveBeenLastCalledWith('a', 'low');
   });
 });

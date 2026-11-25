@@ -83,7 +83,7 @@
     status: SessionStatus;
     /** The follow-up it was started from, if it was. */
     followUp: FollowUp | null;
-    /** Finished a turn you haven't looked at. */
+    /** Unread: a turn finished, or a pull request alert came, since you last looked. */
     unread: boolean;
     /** Its open pull request has changes asked for, failing checks or conflicts. */
     prNeedsYou: boolean;
@@ -198,7 +198,9 @@
 </script>
 
 <div class="flex flex-col h-full min-h-0 bg-background" data-board>
-  <PanelHeader>
+  <!-- wrap: Lanes, Sort and the filter go to a row of their own when the
+       pane is too narrow for them beside the title. -->
+  <PanelHeader wrap>
     <!-- Not PanelHeader's title, which gives way first: the count does here. -->
     <span class="shrink-0 font-medium text-foreground">Board</span>
     <AlphaBadge />

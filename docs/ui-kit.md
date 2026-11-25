@@ -86,7 +86,7 @@ All in `src/renderer/lib/components/ui/`. Import from the folder's `index.js`:
 | `Notice` | A message that stays in a panel until what it describes changes: a failed save, a missing git identity, a tip | Divs with `bg-destructive/10` or `bg-yellow-500/10` |
 | `Confirm` | Asking before an action that discards something, in place of the button that started it: the question (what it discards), Cancel and the action. `busy` holds both buttons, `disabled` only the action, `stretch` shares a narrow popover's width | A `<p role="alert">` and two hand-placed buttons |
 | `SectionLabel` | The small uppercase heading over a group of rows | `text-[10px] uppercase tracking-wide` spans |
-| `PanelHeader` | The bar along the top of a panel or tab: title left, actions right | `border-b bg-card/50 px-3 py-1.5` divs |
+| `PanelHeader` | The bar along the top of a panel or tab: title left, actions right. `wrap` for wide actions: they take a row of their own when they don't fit | `border-b bg-card/50 px-3 py-1.5` divs |
 | `Pulse` | A square that shows something is in progress: a tool running, a thread working, a panel loading. Blue (`working`) by default; `attention` while something waits for you | `w-2.5 h-2.5 bg-primary animate-pulse` spans |
 | `Logo` | The pixel tree, with or without the wordmark | Copies of the tree SVG |
 | `menuPanel`, `menuItem`, `menuLabel`, `menuSeparator` | Class recipes for hand-built popovers and menus, so they match | Copied popover and row classes |

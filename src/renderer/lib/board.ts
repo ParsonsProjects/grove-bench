@@ -7,10 +7,11 @@
  * PR says. A quiet one is in Review until its PR is merged or closed.
  */
 
-import type { BoardLanes, BoardSort, PrInfo } from '../../shared/types.js';
+import { BOARD_LANES, BOARD_SORTS, type BoardLanes, type BoardSort, type PrInfo } from '../../shared/types.js';
 import { byFollowUpPriority, type FollowUp } from '../../shared/follow-ups.js';
 import type { AgentSpriteState } from './agent-sprite.js';
 
+export { BOARD_LANES, BOARD_SORTS };
 export type { BoardLanes, BoardSort };
 
 export type BoardStage = 'working' | 'needs-you' | 'review' | 'done';
@@ -87,15 +88,11 @@ export function boardStage(state: AgentSpriteState, pr: Pick<PrInfo, 'state'> | 
   }
 }
 
-export const BOARD_LANES: readonly BoardLanes[] = ['none', 'project', 'group'];
-
 export const BOARD_LANE_LABELS: Record<BoardLanes, string> = {
   none: 'None',
   project: 'Project',
   group: 'Group',
 };
-
-export const BOARD_SORTS: readonly BoardSort[] = ['unread-first', 'last-active'];
 
 export const BOARD_SORT_LABELS: Record<BoardSort, string> = {
   'unread-first': 'Unread first',
@@ -103,7 +100,7 @@ export const BOARD_SORT_LABELS: Record<BoardSort, string> = {
 };
 
 export const BOARD_SORT_HINTS: Record<BoardSort, string> = {
-  'unread-first': 'Threads with output you haven\'t read first, then ones whose pull request needs you, each most recently active first',
+  'unread-first': 'Threads with something new since you last looked first, then ones whose pull request needs you, each most recently active first',
   'last-active': 'Most recently active thread first',
 };
 

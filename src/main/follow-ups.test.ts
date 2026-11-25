@@ -80,6 +80,29 @@ describe('addFollowUp', () => {
     expect(addFollowUp({ repoPath: '/repo', title: 'b', details: '', priority: 'urgent' as never }).followUp.priority).toBe('normal');
   });
 
+  it('raises the priority of an open one an agent adds again with a higher one, and only then', () => {
+    const { followUp } = addFollowUp({ repoPath: '/repo', title: 'Fix tokens', details: '' });
+    const listener = vi.fn();
+    onFollowUpsChanged(listener);
+
+    // The same or lower: left as it is, and nothing saved.
+    expect(addFollowUp({ repoPath: '/repo', title: 'fix tokens', details: '', priority: 'low' })).toEqual({ followUp, existing: true });
+    expect(addFollowUp({ repoPath: '/repo', title: 'Fix tokens', details: '', priority: 'normal' })).toEqual({ followUp, existing: true });
+    expect(addFollowUp({ repoPath: '/repo', title: 'Fix tokens', details: '' })).toEqual({ followUp, existing: true });
+    expect(listener).not.toHaveBeenCalled();
+
+    const again = addFollowUp({ repoPath: '/repo', title: 'Fix tokens', details: 'other details', priority: 'high' });
+    expect(again).toEqual({ followUp: { ...followUp, priority: 'high' }, existing: true, raised: true });
+    expect(saved()).toEqual([{ ...followUp, priority: 'high' }]);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("doesn't raise one from the New follow-up dialog: you change it on the card", () => {
+    const { followUp } = addFollowUp({ repoPath: '/repo', title: 'Fix tokens', details: '' });
+    expect(addFollowUp({ repoPath: '/repo', title: 'Fix tokens', details: '', priority: 'high', byUser: true })).toEqual({ followUp, existing: true });
+    expect(saved()[0]?.priority).toBe('normal');
+  });
+
   it('cuts a long title and long details to their limits', () => {
     const { followUp } = addFollowUp({ repoPath: '/repo', title: 'x'.repeat(500), details: 'y'.repeat(10_000) });
     expect(followUp.title).toHaveLength(FOLLOW_UP_LIMITS.title);
