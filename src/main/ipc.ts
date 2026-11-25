@@ -24,6 +24,7 @@ import type { AgentAdapter } from './adapters/types.js';
 import { agentForProject, recordedAgent } from './background-tasks.js';
 import { validateBranchName, branchExists, branchExistsAnywhere, worktreeBranches, listBranches, getDefaultBranch, git, fileDiff, fileDiffAgainst, isTracked, patchResult, patchOverLimit, MAX_TEXT_FILE_BYTES, resolveMergeBase, blobLines, hashWorkingFiles, listProjectFiles, revertFile, gitOperation, continueGitOperation, abortGitOperation, synthesizeUntrackedDiff, detectBinaryDiff, imageExtFor, looksBinary, textLines, mimeForImageExt, stageFile, unstageFile, commit, push, syncStatus, branchCommits, MissingBaseError, logCommits, rebaseOnto, cherryPick, squashSince, currentBranch, recentCheckouts, getGitIdentity, gitVersion } from './git.js';
 import { inspectProjectFolder, projectKind } from './project-path.js';
+import { projectPickerStart } from './folder-picker.js';
 import { prsForBranches, prCreate, prReviewComments, prJobLog, prRerunFailed, ghLogin, isNetworkError, isRateLimitError, openPrs, GH_OFFLINE_COOLDOWN_MS, GH_OFFLINE_MESSAGE, GH_RATE_LIMITED_MESSAGE } from './gh.js';
 import { tempBranchName, isTempBranch, generateBranchName } from './branch-name.js';
 import { displayTextFromSent } from '../shared/prompt-text.js';
@@ -53,7 +54,7 @@ import { deleteSchedule, listSchedules, recordScheduleRun, saveSchedule } from '
 import { linkSkills, setSkillReach, skillSharing } from './skill-sharing.js';
 import { CLAUDE_SKILL_DIRS, markWorktreeOnly, readSkillFile, readsSharedSkills, saveSkillFile, type SkillDirs } from './skills.js';
 import { accountLinkDirs } from './session-skills.js';
-import { listProjects, rememberProject, forgetProject, loadOpenTabs, saveOpenTabs, loadCollapsedRepos, saveCollapsedRepos, loadSessionSort, saveSessionSort, loadBoardLayout, saveBoardLayout, loadSidebarWidth, saveSidebarWidth, loadCollapsedPanels, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, saveTodoSessionIds, loadTodoSessionIds, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
+import { listProjects, lastAddedProject, rememberProject, forgetProject, loadOpenTabs, saveOpenTabs, loadCollapsedRepos, saveCollapsedRepos, loadSessionSort, saveSessionSort, loadBoardLayout, saveBoardLayout, loadSidebarWidth, saveSidebarWidth, loadCollapsedPanels, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, saveTodoSessionIds, loadTodoSessionIds, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
 import { isThreadId } from './session-event-store.js';
@@ -266,6 +267,7 @@ export function registerHandlers() {
     const result = await dialog.showOpenDialog(win, {
       properties: ['openDirectory'],
       title: 'Select a project folder',
+      defaultPath: await projectPickerStart(lastAddedProject(), app.getPath('home')),
     });
 
     if (result.canceled || result.filePaths.length === 0) return null;

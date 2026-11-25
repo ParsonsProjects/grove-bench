@@ -7,6 +7,8 @@ import { createRequire } from 'node:module';
 import { createServer } from 'vite';
 
 const require = createRequire(import.meta.url);
+// Since Electron 42 this downloads the Electron binary the first time it runs
+// after an install (the package has no install script any more).
 const electronPath = require('electron');
 
 async function main() {

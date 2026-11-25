@@ -213,7 +213,7 @@ const mockGroveBench = {
   reportFreeze: vi.fn(),
   reportTiming: vi.fn(),
   logIdle: vi.fn(),
-  recordPerformanceTrace: vi.fn(() => Promise.resolve({ name: 'trace-test.json', sizeBytes: 1024, seconds: 10 })),
+  recordPerformanceTrace: vi.fn(() => Promise.resolve({ name: 'trace-test.pftrace', sizeBytes: 1024, seconds: 10 })),
   showPerformanceFile: vi.fn(() => Promise.resolve()),
   setAttentionBadge: vi.fn(),
   onSpellcheckMenu: vi.fn(() => () => {}),

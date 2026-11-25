@@ -34,9 +34,10 @@ export const Menu = Object.assign(vi.fn(), {
   buildFromTemplate: vi.fn(() => ({ popup: vi.fn() })),
 });
 
+// Promise-returning since Electron 44.
 export const clipboard = {
-  writeText: vi.fn(),
-  readText: vi.fn(() => ''),
+  writeText: vi.fn(() => Promise.resolve()),
+  readText: vi.fn(() => Promise.resolve('')),
 };
 
 export const session = {

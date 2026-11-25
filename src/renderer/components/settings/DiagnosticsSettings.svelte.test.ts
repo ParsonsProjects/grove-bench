@@ -30,8 +30,8 @@ describe('DiagnosticsSettings', () => {
     const recording = screen.getByRole('button', { name: 'Recording... 10 s' });
     expect(recording).toBeDisabled();
 
-    finish({ name: 'trace-2026-10-01T12-00-00-000Z.json', sizeBytes: 12_582_912, seconds: 10 });
-    expect(await screen.findByText('Saved trace-2026-10-01T12-00-00-000Z.json (12.0 MB).')).toBeInTheDocument();
+    finish({ name: 'trace-2026-10-01T12-00-00-000Z.pftrace', sizeBytes: 12_582_912, seconds: 10 });
+    expect(await screen.findByText('Saved trace-2026-10-01T12-00-00-000Z.pftrace (12.0 MB).')).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Show in folder' }));
     expect(mockGroveBench.showPerformanceFile).toHaveBeenCalledWith('trace');

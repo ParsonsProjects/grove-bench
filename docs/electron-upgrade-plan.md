@@ -1,10 +1,16 @@
 # Electron upgrade plan
 
-> **Status: Plan, not started.** Recommendation:
-> - Move to Electron 44.9.x in one jump, on or after 28 Oct 2026 (44.9.3, or at least 44.9.1).
-> - Move to 45 in a second PR, once 45 has had a few patch releases and well before 46 ships.
+> **Status: Done on 22 Nov 2026, straight to Electron 45.3.2** (the newest 45 at least 7 days old; `npm audit` finds no advisories in it). Both PRs below went in as one: the `allowScripts` entry, the folder dialog's `defaultPath` (the folder holding the project added last, else home), the `clipboard.writeText` catch, and `.pftrace` trace files.
 >
-> Checked on 25 Oct 2026, against the lockfile's Electron 33.3.2.
+> **Still to do, before Electron 46:** move `credentials.ts` to the async `safeStorage` calls. The sync ones are deprecated in 45 but still work. The 46.0.0-alpha.12 typings no longer have them, so `npm run typecheck` fails on a 46 bump until this is done. Left out so the stored-key change gets its own PR and a hand test on Windows. Decrypting every saved key into the cache once after `app.whenReady()` would keep `getApiKey`, `hasApiKey` and `canStoreApiKey` sync; only `saveApiKey` would become async.
+>
+> **Still to do, before Electron 47:** the `console-message` handler (`preview.ts`, `wc.on('console-message', ...)`) uses the positional arguments, `@deprecated` in the 45 typings. Electron's breaking-changes doc on `main` removes them in 47, when `message` would be undefined and `isElectronNoise` would throw on every console line. Read the event object instead (its `level` is already a string), then delete `consoleLevel` (`preview-log.ts`). The 45 typings also mark the positional `will-navigate` and `will-redirect` arguments `@deprecated` (`preview.ts`, `window-guard.ts`); no breaking-changes section lists that yet.
+>
+> **Correction to the plan below:** with the 45.3.2 typings, ESLint does flag the unhandled `clipboard.writeText` promise (`@typescript-eslint/no-misused-promises`).
+>
+> The hand tests below still need a run on Windows.
+>
+> The rest of this page is the plan as checked on 25 Oct 2026, against the lockfile's Electron 33.3.2.
 
 ## Where things stand
 
@@ -160,9 +166,11 @@ Go straight from 33 to 44. 34 to 43 are all out of support, so stopping at any o
   - Click, type, and trigger an alert.
   - Check that `preview_logs` shows console messages at the right level.
   - Check that a `file://` outside the worktree is blocked, and so is a download.
+  - Check that the agent's local page can't make signed-in requests to a site you're signed in to in your page: its requests off this machine, and a service worker's, go without `Cookie`, and their `Set-Cookie` is dropped. `DESIGN.md` says this was checked with Electron 33.
 - **Attachments:**
   - Paste an image into the prompt and check that it still shows after a restart (`grove-attachment://image`).
   - Check that an image the agent made in the worktree shows (`grove-attachment://worktree`).
+  - Attach a file with the paperclip twice, and check where its file picker opens the second time. Electron 43 made `dialog.*` start in Downloads without a `defaultPath`; its doc doesn't say whether `<input type="file">` changed too.
 - **Credentials:**
   - Check that a key saved under 33 still works after the upgrade.
   - Save a new key, then clear it.
