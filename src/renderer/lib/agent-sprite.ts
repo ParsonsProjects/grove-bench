@@ -67,6 +67,7 @@ const PALETTE: Record<string, string> = {
   o: '#a8a29e', // logo on the back of the lid, in the project colour
   p: '#3f3f46', // trousers
   f: '#18181b', // shoes
+  k: '#4f3b2f', // chair, seen from behind
   c: 'currentColor',
 };
 
@@ -254,6 +255,52 @@ export const AGENT_SPRITES: Record<AgentSpriteState, AgentSprite> = {
 
 /** Exported for tests: every pose map, so their sizes can be checked. */
 export const SPRITE_MAPS = { SIT, TYPE_A, TYPE_B, ASLEEP, WAVE_A, WAVE_B, WALK_A, WALK_B };
+
+// Seen from behind, on a chair, for the grove map's front row of desks: the
+// agent faces its desk and so faces away from you. Same grid and symbol
+// columns as the front-on poses, so a state reads the same either way.
+const BACK_HEAD = ['.hhhh.....', 'hhhhhh....', 'hhhhhh....', '.hssh.....'];
+const BACK_HEAD_DOWN = ['..........', '.hhhh.....', 'hhhhhh....', 'hhhhhh....'];
+const BACK_BODY = ['cccccc....', 'cccccc....'];
+const CHAIR = ['.kkkk.....', '.k..k.....'];
+const BACK_SIT = [...BACK_HEAD, ...BACK_BODY, 'sccccs....', ...CHAIR];
+// Typing: the elbows move as one hand and then the other reaches the keys.
+const BACK_TYPE_A = [...BACK_HEAD, ...BACK_BODY, 'sccccc....', ...CHAIR];
+const BACK_TYPE_B = [...BACK_HEAD, ...BACK_BODY, 'cccccs....', ...CHAIR];
+// Asleep: head down on the desk.
+const BACK_ASLEEP = [...BACK_HEAD_DOWN, ...BACK_BODY, 'sccccs....', ...CHAIR];
+const BACK_WAVE_POSE = [...BACK_HEAD, ...BACK_BODY, 'scccc.....', ...CHAIR];
+const BACK_WAVE_A = withSymbol(BACK_WAVE_POSE, ['', 's', 'c', 'c', 'c']);
+const BACK_WAVE_B = withSymbol(BACK_WAVE_POSE, ['', '.s', 'c', 'c', 'c']);
+
+function back(state: AgentSpriteState, maps: string[][], opts: Partial<Pick<AgentSprite, 'frameSeconds' | 'pulseSymbol' | 'fade'>> = {}): AgentSprite {
+  const front = AGENT_SPRITES[state];
+  return sprite(front.label, front.colorClass, maps, { frameSeconds: front.frameSeconds, pulseSymbol: front.pulseSymbol, fade: front.fade, ...opts });
+}
+
+/**
+ * The same states seen from behind, with the same labels and colours. A
+ * thread starting up shows seated: its seat waits for it.
+ */
+export const AGENT_SPRITES_BACK: Record<AgentSpriteState, AgentSprite> = {
+  working: back('working', [BACK_TYPE_A, BACK_TYPE_B]),
+  permission: back('permission', [withSymbol(BACK_SIT, QUESTION)]),
+  unread: back('unread', [BACK_WAVE_A, BACK_WAVE_B]),
+  ready: back('ready', [BACK_SIT]),
+  stopped: back('stopped', [withSymbol(BACK_ASLEEP, ZZZ)]),
+  sleeping: back('sleeping', [withSymbol(BACK_ASLEEP, ZZZ)]),
+  error: back('error', [withSymbol(BACK_SIT, BANG)]),
+  starting: back('starting', [BACK_SIT]),
+  installing: back('installing', [BACK_SIT]),
+  removing: back('removing', [BACK_ASLEEP]),
+  allowed: back('allowed', [withSymbol(BACK_SIT, CHECK)]),
+  denied: back('denied', [withSymbol(BACK_SIT, CROSS)]),
+  asking: back('asking', [withSymbol(BACK_SIT, QUESTION)]),
+  answered: back('answered', [withSymbol(BACK_SIT, BUBBLE)]),
+};
+
+/** Exported for tests: every pose seen from behind. */
+export const BACK_SPRITE_MAPS = { BACK_SIT, BACK_TYPE_A, BACK_TYPE_B, BACK_ASLEEP, BACK_WAVE_A, BACK_WAVE_B };
 
 // Scenery for the empty states: a park bench and an unlit lamp post, and
 // each workspace tab's own props, which stand in for the lamp.

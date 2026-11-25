@@ -2432,6 +2432,10 @@ export interface GroveBenchSettings {
    *  threads as cards in columns by stage (Working, Needs you, Review,
    *  Done), with optional lanes per project or group. Default false. */
   boardView: boolean;
+  /** Alpha: with no thread open, the main pane shows the open threads as
+   *  people at desks in a pixel grove, a room per project, in place of the
+   *  Pick a thread list. Default false. */
+  groveMap: boolean;
 
   // Editor
   /** Default diff view mode in the Changes tab. */

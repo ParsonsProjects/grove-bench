@@ -22,6 +22,7 @@
 |----------|--------|
 | `Ctrl+F` | Search in Thread tab |
 | `Ctrl+R` | Open thread finder (quick-switch between threads) |
+| `Ctrl+G` | Back to **Pick a thread** (or the [grove map](settings.md#the-grove-general)), with no thread open. Clicking the **Grove Bench** logo in the title bar does the same |
 | `Ctrl+N` | New thread draft (in the open thread's project) |
 | `Ctrl+Shift+T` | Reopen the last thread you closed |
 | `Ctrl+B` | Open or close bookmarks |

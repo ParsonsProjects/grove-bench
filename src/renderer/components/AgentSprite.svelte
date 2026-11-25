@@ -1,13 +1,16 @@
 <script lang="ts">
-  import { AGENT_SPRITES, SPRITE_W, SPRITE_H, agentColors, type AgentSpriteState } from '../lib/agent-sprite.js';
+  import { AGENT_SPRITES, AGENT_SPRITES_BACK, SPRITE_W, SPRITE_H, agentColors, type AgentSpriteState } from '../lib/agent-sprite.js';
 
   /**
    * `seed` (the conversation id) picks the skin tone and hair colour.
-   * `projectColor` colours the logo on the laptop lid.
+   * `projectColor` colours the logo on the laptop lid. `facing` 'back'
+   * shows the agent from behind, on a chair (the grove map's front row).
    */
-  let { state, seed, projectColor = null, scale = 2 }: { state: AgentSpriteState; seed?: string; projectColor?: string | null; scale?: number } = $props();
+  let { state, seed, projectColor = null, scale = 2, facing = 'front' }: {
+    state: AgentSpriteState; seed?: string; projectColor?: string | null; scale?: number; facing?: 'front' | 'back';
+  } = $props();
 
-  const sprite = $derived(AGENT_SPRITES[state]);
+  const sprite = $derived((facing === 'back' ? AGENT_SPRITES_BACK : AGENT_SPRITES)[state]);
   const animated = $derived(sprite.frames.length > 1);
   const look = $derived(agentColors(seed, projectColor));
 </script>

@@ -156,6 +156,10 @@ class DraftStore {
    *  it go, so a message isn't lost to a misclick. */
   discarded = $state<Draft | null>(null);
 
+  /** Set aside for the landing (the title bar logo, Ctrl+G): kept, but not
+   *  shown until its sidebar row opens it again or a thread opens. */
+  aside = $state(false);
+
   /** Guards against an older agent-info load landing after a newer one. */
   private infoRequest = 0;
   /** The agent and project `skills` is being loaded for. */
@@ -174,7 +178,7 @@ class DraftStore {
   /** Whether the main pane shows the draft: one exists and no conversation
    *  is open over it. */
   get visible(): boolean {
-    return !!this.draft && !sessionStore.activeSessionId;
+    return !!this.draft && !sessionStore.activeSessionId && !this.aside;
   }
 
   /**
@@ -221,6 +225,7 @@ class DraftStore {
       void this.refreshKind(repo);
     }
     sessionStore.activeSessionId = null;
+    this.aside = false;
     // The draft takes the main pane, so the board (alpha) gives way.
     boardStore.close();
   }
@@ -229,6 +234,7 @@ class DraftStore {
   show(): void {
     if (!this.draft) return;
     sessionStore.activeSessionId = null;
+    this.aside = false;
     boardStore.close();
   }
 

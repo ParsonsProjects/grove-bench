@@ -139,6 +139,7 @@ const SETTINGS = {
   groveCharacters: true,
   // On in the demo, so the board can be tried without opening Settings.
   boardView: true,
+  groveMap: false,
   diffViewMode: 'unified',
   defaultActivityView: 'summary',
   spellcheck: true,

@@ -7,6 +7,8 @@ import TitleBar from './TitleBar.svelte';
 import FirstSteps from './FirstSteps.svelte';
 import { helpStore } from '../stores/help.svelte.js';
 import { store } from '../stores/sessions.svelte.js';
+import { boardStore } from '../stores/board.svelte.js';
+import { draftStore } from '../stores/draft.svelte.js';
 
 afterEach(() => {
   cleanup();
@@ -31,6 +33,25 @@ describe('TitleBar', () => {
 
     await vi.advanceTimersByTimeAsync(150);
     expect(isMaximized).toHaveBeenCalledTimes(2);
+  });
+
+  it('takes you to the landing from the logo: no thread open, the board closed, a draft set aside', async () => {
+    render(TitleBar);
+    draftStore.open('/repo');
+    draftStore.setText('half a message');
+    store.activeSessionId = 'a';
+    boardStore.open = true;
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Grove Bench: pick a thread' }));
+
+    expect(store.activeSessionId).toBeNull();
+    expect(boardStore.open).toBe(false);
+    // Kept, not lost, but the landing shows instead of it.
+    expect(draftStore.draft?.text).toBe('half a message');
+    expect(draftStore.visible).toBe(false);
+    draftStore.show();
+    expect(draftStore.visible).toBe(true);
+    draftStore.discard();
   });
 });
 

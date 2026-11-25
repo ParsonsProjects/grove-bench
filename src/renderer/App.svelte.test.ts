@@ -489,6 +489,60 @@ describe('App board (alpha)', () => {
   });
 });
 
+describe('App grove map (alpha)', () => {
+  // The draft too: startup's settingsStore.load() saves a draft that differs
+  // from `current` first, which would put the setting back.
+  function withGroveMap(on: boolean) {
+    const settings = { ...JSON.parse(JSON.stringify(settingsStore.current)), groveMap: on, boardView: false };
+    mockGroveBench.getSettings.mockResolvedValue(settings);
+    settingsStore.current = settings;
+    settingsStore.draft = JSON.parse(JSON.stringify(settings)) as typeof settingsStore.draft;
+  }
+
+  beforeEach(() => {
+    mockGroveBench.listRepos.mockResolvedValue(['/repo']);
+    mockGroveBench.listWorktrees.mockResolvedValue([
+      { id: 'a', branch: 'feat-a', repoPath: '/repo', path: '/wt/a', createdAt: 1, lastActiveAt: 1 },
+    ]);
+    getOpenTabs.mockResolvedValue(['a']);
+  });
+
+  afterEach(() => {
+    mockGroveBench.listRepos.mockResolvedValue([]);
+    mockGroveBench.listWorktrees.mockResolvedValue([]);
+    getOpenTabs.mockResolvedValue([]);
+  });
+
+  it('shows the map in place of the Pick a thread list with its setting on', async () => {
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    withGroveMap(true);
+    render(App);
+    expect(await screen.findByRole('group', { name: 'Threads by project' }, { timeout: 5000 })).toBeInTheDocument();
+    expect(document.querySelector('[data-seat="a"]')).not.toBeNull();
+
+    settingsStore.current = { ...settingsStore.current, groveMap: false };
+    flushSync();
+    expect(await screen.findByText('Or choose one from the sidebar.')).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Threads by project' })).toBeNull();
+    getContext.mockRestore();
+  });
+
+  it('goes back to the landing with Ctrl+G, whichever it is', async () => {
+    withGroveMap(false);
+    render(App);
+    expect(await screen.findByText('Pick a thread', {}, { timeout: 5000 })).toBeInTheDocument();
+    store.activeSessionId = 'a';
+    flushSync();
+    expect(screen.queryByText('Pick a thread')).toBeNull();
+
+    await fireEvent.keyDown(window, { key: 'g', ctrlKey: true });
+    expect(store.activeSessionId).toBeNull();
+    // The landing: its resume fails against the mocks, so the thread may
+    // no longer count as open by now.
+    expect(await screen.findByText(/^(Pick a thread|No open threads)$/)).toBeInTheDocument();
+  });
+});
+
 describe('App New follow-up dialog', () => {
   it('opens when asked for, from the drawer or the board', async () => {
     mockGroveBench.getSettings.mockResolvedValue(JSON.parse(JSON.stringify(settingsStore.current)));

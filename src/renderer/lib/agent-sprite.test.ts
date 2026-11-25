@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { agentSpriteState, agentLook, agentColors, toRuns, AGENT_SPRITES, SPRITE_MAPS, SPRITE_W, SPRITE_H, SIDE_WALK_MAPS, SIDE_WALK_W, SIDE_WALK_H, SKIN_TONES, HAIR_TONES, SCENERY_MAPS, SCENERY_PALETTE, type AgentSpriteInput } from './agent-sprite.js';
+import { agentSpriteState, agentLook, agentColors, toRuns, AGENT_SPRITES, AGENT_SPRITES_BACK, BACK_SPRITE_MAPS, SPRITE_MAPS, SPRITE_W, SPRITE_H, SIDE_WALK_MAPS, SIDE_WALK_W, SIDE_WALK_H, SKIN_TONES, HAIR_TONES, SCENERY_MAPS, SCENERY_PALETTE, type AgentSpriteInput } from './agent-sprite.js';
 
 const base: AgentSpriteInput = { destroying: false, status: 'running', hasPending: false, isRunning: false, backgroundAgent: false, needsAttention: false };
 
@@ -41,6 +41,24 @@ describe('sprite maps', () => {
     for (const [name, map] of Object.entries(SPRITE_MAPS)) {
       const hasLaptop = !name.startsWith('WALK');
       expect(map.some((row) => row.includes('o')), name).toBe(hasLaptop);
+    }
+  });
+
+  it('keep the poses seen from behind on the same grid, on a chair', () => {
+    for (const [name, map] of Object.entries(BACK_SPRITE_MAPS)) {
+      expect(map, name).toHaveLength(SPRITE_H);
+      for (const row of map) expect(row, `${name}: ${row}`).toHaveLength(SPRITE_W);
+      expect(map[SPRITE_H - 2], name).toContain('k');
+    }
+  });
+
+  it('show every state from behind with the front-on label and colour', () => {
+    for (const [state, sprite] of Object.entries(AGENT_SPRITES)) {
+      const behind = AGENT_SPRITES_BACK[state as keyof typeof AGENT_SPRITES_BACK];
+      expect(behind.label, state).toBe(sprite.label);
+      expect(behind.colorClass, state).toBe(sprite.colorClass);
+      expect(behind.pulseSymbol, state).toBe(sprite.pulseSymbol);
+      expect(behind.frames.length, state).toBeGreaterThanOrEqual(1);
     }
   });
 

@@ -4,6 +4,7 @@
   import AgentMonitorTrigger from './AgentMonitorTrigger.svelte';
   import { lazyComponent } from '../lib/lazy-component.js';
   import { helpStore } from '../stores/help.svelte.js';
+  import { goHome } from '../lib/go-home.js';
 
   // Help (with every help page) loads when first opened, then stays mounted.
   const loadHelpPanel = lazyComponent(() => import('./HelpPanel.svelte'));
@@ -155,13 +156,24 @@
   {/each}
 
   <div class="flex-1 app-drag px-3 flex items-center h-full relative z-10">
-    <svg width="11" height="13" viewBox="0 0 21 24" fill="none" class="mr-1.5 shrink-0">
-      <!-- Pixel art tree: 2px pixels with 1px gaps on a 3px grid -->
-      {#each PIXEL_TREE as p (`${p.x},${p.y}`)}
-        <rect x={p.x} y={p.y} width="2" height="2" fill={p.fill}/>
-      {/each}
-    </svg>
-    <span class="text-xs text-muted-foreground">Grove Bench</span>
+    <!-- The way home: no thread open, so the landing shows (Pick a thread,
+         or the grove map). -->
+    <button
+      type="button"
+      onclick={goHome}
+      class="home-btn -ml-1.5 h-6 px-1.5 flex items-center text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring transition-colors"
+      title="Pick a thread (Ctrl+G)"
+      aria-label="Grove Bench: pick a thread"
+      aria-keyshortcuts="Control+G"
+    >
+      <svg width="11" height="13" viewBox="0 0 21 24" fill="none" class="mr-1.5 shrink-0" aria-hidden="true">
+        <!-- Pixel art tree: 2px pixels with 1px gaps on a 3px grid -->
+        {#each PIXEL_TREE as p (`${p.x},${p.y}`)}
+          <rect x={p.x} y={p.y} width="2" height="2" fill={p.fill}/>
+        {/each}
+      </svg>
+      <span class="text-xs">Grove Bench</span>
+    </button>
     <UpdateNotification />
   </div>
   <div class="flex items-center h-full relative z-10">
@@ -221,7 +233,8 @@
   .app-drag {
     -webkit-app-region: drag;
   }
-  .win-btn {
+  .win-btn,
+  .home-btn {
     -webkit-app-region: no-drag;
   }
   .titlebar-pixel {

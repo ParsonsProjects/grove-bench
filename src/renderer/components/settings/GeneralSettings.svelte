@@ -99,6 +99,13 @@
     description="Adds a List / Board switch to the sidebar. The board shows your follow-ups and open threads as cards in columns: Follow-ups, Working, Needs you, Review and Done, with a lane per project or group if you like. Still being tested."
     bind:checked={settingsStore.draft.boardView}
   />
+
+  <CheckboxSetting
+    setting="grove-map"
+    label="Grove map (alpha)"
+    description="When no thread is open, shows your open threads as people at desks in a pixel grove, a room per project, in place of the Pick a thread list. Click the Grove Bench logo or press Ctrl+G to get back to it from a thread. Still being tested."
+    bind:checked={settingsStore.draft.groveMap}
+  />
 </SettingsGroup>
 
 <SettingsGroup title="Appearance">

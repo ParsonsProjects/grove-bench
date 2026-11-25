@@ -29,6 +29,7 @@
   import { memoryStore } from './stores/memory.svelte.js';
   import { prerequisitesStore } from './stores/prerequisites.svelte.js';
   import { lazyComponent } from './lib/lazy-component.js';
+  import { goHome } from './lib/go-home.js';
   import GroveEmptyState from './components/GroveEmptyState.svelte';
   import FirstSteps from './components/FirstSteps.svelte';
   import GroveWalk from './components/GroveWalk.svelte';
@@ -78,10 +79,17 @@
   $effect(() => { if (skillsPanelStore.open) skillsPanelOpened = true; });
   // The board (alpha), from the sidebar's List / Board switch.
   const loadBoardPane = lazyComponent(() => import('./components/BoardPane.svelte'));
+  // The grove map (alpha): the landing with its setting on.
+  const loadGroveMap = lazyComponent(() => import('./components/GroveMap.svelte'));
   // It gives way when a thread opens from anywhere (a card, the sidebar, the
   // finder, a notification), and goes when its setting is turned off.
   $effect(() => {
     if (store.activeSessionId !== null || !settingsStore.current.boardView) untrack(() => boardStore.close());
+  });
+  // A draft set aside for the landing (the logo, Ctrl+G) is back in its old
+  // place once a thread opens: closing that thread shows the draft again.
+  $effect(() => {
+    if (store.activeSessionId !== null) untrack(() => { draftStore.aside = false; });
   });
   // Its Review and Done columns follow the threads' PRs, so they refresh
   // faster while it shows (prStore.setBoardShowing).
@@ -371,6 +379,10 @@
       e.preventDefault();
       agentMonitorStore.toggle();
     }
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'g') {
+      e.preventDefault();
+      goHome();
+    }
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === 'n') {
       e.preventDefault();
       // A draft in the project of the conversation being looked at.
@@ -649,6 +661,19 @@
           </div>
         {/if}
       </div>
+    {:else if !store.activeSessionId && settingsStore.current.groveMap && store.openConversations.length > 0}
+      <svelte:boundary onerror={(e) => console.error('Grove map crashed:', e)}>
+        {#await loadGroveMap() then GroveMap}
+          <GroveMap />
+        {:catch error}
+          <Notice tone="danger" class="m-3">
+            <p>Couldn't load the grove map ({errorMessage(error)}). Restart Grove Bench to try again; if that doesn't help, reinstall it.</p>
+          </Notice>
+        {/await}
+        {#snippet failed(error: unknown, reset: () => void)}
+          {@render crashed('The grove map', error, reset)}
+        {/snippet}
+      </svelte:boundary>
     {:else if !store.activeSessionId}
       <div class="pixel-bg flex-1 flex items-center justify-center text-muted-foreground relative overflow-hidden">
         {#each Array(20) as _, i (i)}
