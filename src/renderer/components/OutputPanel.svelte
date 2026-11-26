@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick, untrack } from 'svelte';
+  import { onMount, onDestroy, tick, untrack, type Snippet } from 'svelte';
   import { messageStore } from '../stores/messages.svelte.js';
   import { store } from '../stores/sessions.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -237,6 +237,8 @@
    *  while they run. */
   let foldedByReader = $state<Record<string, boolean>>({});
   let stepsByReader = $state<Record<string, boolean>>({});
+  /** Running turns the reader asked to see every step of, not the last few. */
+  let allStepsByReader = $state<Record<string, boolean>>({});
   let turnState = $derived.by(() => {
     const turns = groups.flatMap((g) => (g.kind === 'turn' ? [g.turn] : []));
     const state = new Map<string, { status: TurnStatus; folded: boolean; workOpen: boolean }>();
@@ -263,7 +265,10 @@
       const msg = g.turn.prompt?.id === id ? g.turn.prompt : g.turn.msgs.find((m) => m.id === id);
       if (!msg) continue;
       foldedByReader[g.turn.id] = false;
-      if (isWorkStep(msg, notes)) stepsByReader[g.turn.id] = true;
+      if (isWorkStep(msg, notes)) {
+        stepsByReader[g.turn.id] = true;
+        allStepsByReader[g.turn.id] = true;
+      }
       return;
     }
   }
@@ -330,6 +335,7 @@
     filledCount = 0;
     foldedByReader = {};
     stepsByReader = {};
+    allStepsByReader = {};
   });
 
   function expandVisibleCount(newCount: number) {
@@ -899,12 +905,12 @@
 
   <!-- A message in a turn card: the card is the row watched, and its day
        divider goes above the card. -->
-  {#snippet turnRow(msg: ChatMessage, mode: MessageViewMode)}
+  {#snippet turnRow(msg: ChatMessage, mode: MessageViewMode, content: Snippet | undefined)}
     <div
       data-msg-id={msg.id}
       class={currentMatchId === msg.id ? 'ring-1 ring-yellow-500/60 bg-yellow-500/10' : ''}
     >
-      <ThreadMessage {sessionId} {msg} viewMode={mode} />
+      {#if content}{@render content()}{:else}<ThreadMessage {sessionId} {msg} viewMode={mode} />{/if}
     </div>
   {/snippet}
 
@@ -949,6 +955,8 @@
               onfold={(folded: boolean) => { foldedByReader[turn.id] = folded; }}
               workOpen={at.workOpen}
               onwork={(open: boolean) => { stepsByReader[turn.id] = open; }}
+              allSteps={allStepsByReader[turn.id] ?? false}
+              onallsteps={() => { allStepsByReader[turn.id] = true; }}
               {showCost}
               row={turnRow}
               live={turn.id === liveTurnId && arrival === null ? liveOutput : undefined}

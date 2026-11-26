@@ -252,7 +252,7 @@ const lineCounts = new WeakMap<ChatMessage, { add: number; del: number }>();
  * (lineChanges). A whole-file write counts as all added: the old content
  * isn't known.
  */
-function editLineCounts(msg: ChatMessage, view: ToolView): { add: number; del: number } {
+export function editLineCounts(msg: ChatMessage, view: ToolView): { add: number; del: number } {
   const known = lineCounts.get(msg);
   if (known) return known;
   let add = 0;

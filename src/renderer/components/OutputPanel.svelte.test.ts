@@ -1787,10 +1787,47 @@ describe('OutputPanel: turns in Summary', () => {
 
     await fireEvent.click(strip);
     Element.prototype.scrollIntoView = vi.fn();
-    await fireEvent.click(getByRole('button', { name: /Passed on retry/ }));
+    await fireEvent.click(getByRole('button', { name: 'passed on retry ↓' }));
     expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
     expect(container.querySelector('[data-msg-id="p1"]')).toHaveClass('ring-1');
-    expect(getByRole('button', { name: /Retry of the run that failed/ })).toBeInTheDocument();
+    expect(getByRole('button', { name: 'retry of the run that failed ↑' })).toBeInTheDocument();
+  });
+
+  it('draws each step on one line, with the whole step a click away', async () => {
+    messageStore.messagesBySession = {
+      [SID]: [
+        prompt('u1'),
+        { kind: 'tool_call', id: 'e1', toolName: 'Edit', toolInput: { file_path: 'a.ts', old_string: 'let a = 1;', new_string: 'let a = 2;' }, toolUseId: 'tu-e1', uuid: '', pending: false, result: 'ok' },
+        bash('b1', 'npm test'),
+        reply('a1'), done('r1'),
+      ],
+    };
+    const { container, getByRole } = render(OutputPanel, { sessionId: SID });
+    await tick();
+    await fireEvent.click(getByRole('button', { name: /Worked 41s/ }));
+
+    const editLine = container.querySelector('[data-msg-id="e1"]')!;
+    expect(editLine).toHaveTextContent('edit');
+    expect(editLine).toHaveTextContent('a.ts');
+    expect(editLine).toHaveTextContent('+1 −1');
+    // The diff waits for a click.
+    expect(editLine).not.toHaveTextContent('let a = 2;');
+    await fireEvent.click(within(editLine as HTMLElement).getByRole('button', { name: /a\.ts/ }));
+    expect(editLine).toHaveTextContent('let a = 2;');
+    expect(container.querySelector('[data-msg-id="b1"]')).toHaveTextContent('$ npm test');
+  });
+
+  it('shows only the last five steps of a running turn, and the rest on asking', async () => {
+    const steps = Array.from({ length: 8 }, (_, i) => bash(`b${i}`, `step ${i}`));
+    messageStore.messagesBySession = { [SID]: [prompt('u1'), ...steps] };
+    messageStore.setIsRunning(SID, true);
+    const { container, getByRole } = render(OutputPanel, { sessionId: SID });
+    await tick();
+
+    const drawnSteps = () => steps.filter((s) => container.querySelector(`[data-msg-id="${s.id}"]`)).map((s) => s.id);
+    expect(drawnSteps()).toEqual(['b3', 'b4', 'b5', 'b6', 'b7']);
+    await fireEvent.click(getByRole('button', { name: 'Show 3 earlier steps' }));
+    expect(drawnSteps()).toHaveLength(8);
   });
 
   it("opens a folded turn and its steps to jump to a message in them", async () => {

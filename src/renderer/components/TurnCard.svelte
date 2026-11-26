@@ -3,8 +3,10 @@
    * One turn in the Summary view: your prompt; a strip that says what the
    * agent did, with its steps folded behind it; its answer and anything that
    * needs you; then the files it changed, its time and its cost. Messages stay
-   * in the order they came: folding the steps only hides them. A command that
-   * failed and then passed when run again links to that run, and back.
+   * in the order they came: folding the steps only hides them. Each step is
+   * one line (TurnStep); while the turn runs, only its last few show. A
+   * command that failed and then passed when run again links to that run,
+   * and back.
    * OutputPanel draws each message through `row`, so search, bookmarks and
    * the reader's place work as in the other views.
    */
@@ -20,6 +22,7 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import CopyButton from './CopyButton.svelte';
+  import TurnStep from './TurnStep.svelte';
   import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
   import ChevronUpIcon from '@lucide/svelte/icons/chevron-up';
 
@@ -32,6 +35,8 @@
     onfold,
     workOpen,
     onwork,
+    allSteps = false,
+    onallsteps,
     showCost = true,
     row,
     live,
@@ -47,10 +52,14 @@
     /** Its steps are shown. */
     workOpen: boolean;
     onwork: (open: boolean) => void;
+    /** While it runs, show all its steps, not just the last LIVE_STEPS. */
+    allSteps?: boolean;
+    onallsteps?: () => void;
     /** Off on a plan, whose cost isn't billed (coveredByPlan). */
     showCost?: boolean;
-    /** Draws one message, in the view mode given. */
-    row: Snippet<[ChatMessage, MessageViewMode]>;
+    /** Draws one message: in the view mode given, or as `content` draws it
+     *  (a step's line). */
+    row: Snippet<[ChatMessage, MessageViewMode, Snippet | undefined]>;
     /** The live reply, thinking or working line, while this turn runs. */
     live?: Snippet;
   } = $props();
@@ -65,26 +74,40 @@
   /** A turn's end shows in its strip and footer, unless it went wrong. */
   let shown = $derived(turn.msgs.filter((m) => m.kind !== 'result' || m.isError));
 
-  /** Runs of steps and of what stays in view, in order. With the steps
-   *  folded, only a step's images stay (showsImagesFolded). */
-  type Segment = { work: boolean; msgs: ChatMessage[] };
+  /** While a turn runs, only its last few steps show; the earlier ones are
+   *  one line that shows them all (onallsteps). */
+  const LIVE_STEPS = 5;
+  let earlierSteps = $derived.by(() => {
+    if (!running || allSteps || !workOpen) return 0;
+    return Math.max(0, shown.filter((m) => isWorkStep(m, notes)).length - LIVE_STEPS);
+  });
+
+  /** Runs of steps and of what stays in view, in order, and where earlier
+   *  steps are left out. With the steps folded, only a step's images stay
+   *  (showsImagesFolded). */
+  type Segment = { kind: 'work' | 'view'; msgs: ChatMessage[] } | { kind: 'earlier'; count: number };
   let segments = $derived.by(() => {
     const out: Segment[] = [];
+    let skip = earlierSteps;
     for (const msg of shown) {
       const step = isWorkStep(msg, notes);
+      if (step && skip > 0) {
+        if (skip === earlierSteps) out.push({ kind: 'earlier', count: earlierSteps });
+        skip--;
+        continue;
+      }
       if (step && !workOpen && !showsImagesFolded(msg)) continue;
-      const work = step && workOpen;
+      const kind = step && workOpen ? 'work' : 'view';
       const last = out[out.length - 1];
-      if (last && last.work === work) last.msgs.push(msg);
-      else out.push({ work, msgs: [msg] });
+      if (last && last.kind === kind) last.msgs.push(msg);
+      else out.push({ kind, msgs: [msg] });
     }
     return out;
   });
 
-  /** How a message is drawn here: steps on one line each, with their output
-   *  behind "show"; a folded step's images alone, as Focus draws them. */
-  function modeFor(msg: ChatMessage, work: boolean): MessageViewMode {
-    if (work) return 'summary';
+  /** How a message in view is drawn: in full, or a folded step's images
+   *  alone, as Focus draws them. (Steps shown are TurnStep lines.) */
+  function modeFor(msg: ChatMessage): MessageViewMode {
     return isWorkStep(msg, notes) ? 'focus' : 'detailed';
   }
 
@@ -189,7 +212,7 @@
     {#if turn.prompt}
       <!-- The prompt's own tint and edge give way to the card's. -->
       <div class="flex items-start bg-primary/8 [&_.user-prompt]:bg-transparent [&_.user-prompt]:border-l-0 [&_.user-prompt]:my-0">
-        <div class="flex-1 min-w-0">{@render row(turn.prompt, 'detailed')}</div>
+        <div class="flex-1 min-w-0">{@render row(turn.prompt, 'detailed', undefined)}</div>
         {#if !running}
           <Button
             variant="quiet"
@@ -243,22 +266,29 @@
       </button>
     {/if}
 
-    {#each segments as seg (seg.msgs[0].id)}
-      <div class="border-t border-border px-3 {seg.work ? 'py-1 bg-background/40' : 'py-1.5'}">
-        {#each seg.msgs as msg (msg.id)}
-          {@const link = seg.work ? links.get(msg.id) : undefined}
-          {@render row(msg, modeFor(msg, seg.work))}
-          {#if link}
-            <div class="pl-4 -mt-0.5 mb-1 text-caption">
-              {#if link.kind === 'passed'}
-                <Button variant="link" size="inline" class="text-green-400" onclick={() => showRun(link.to)}>Passed on retry ↓</Button>
-              {:else}
-                <Button variant="quiet" size="inline" onclick={() => showRun(link.to)}>Retry of the run that failed ↑</Button>
-              {/if}
-            </div>
-          {/if}
-        {/each}
-      </div>
+    {#each segments as seg (seg.kind === 'earlier' ? 'earlier' : seg.msgs[0].id)}
+      {#if seg.kind === 'earlier'}
+        <div class="border-t border-border px-3 py-0.5 bg-background/40 text-xs">
+          <Button variant="quiet" size="inline" onclick={() => onallsteps?.()}>
+            {seg.count === 1 ? 'Show 1 earlier step' : `Show ${seg.count} earlier steps`}
+          </Button>
+        </div>
+      {:else if seg.kind === 'work'}
+        <div class="border-t border-border px-3 py-1 bg-background/40">
+          {#each seg.msgs as msg (msg.id)}
+            {#snippet step()}
+              <TurnStep {sessionId} {msg} link={links.get(msg.id)} onlink={showRun} />
+            {/snippet}
+            {@render row(msg, 'summary', step)}
+          {/each}
+        </div>
+      {:else}
+        <div class="border-t border-border px-3 py-1.5">
+          {#each seg.msgs as msg (msg.id)}
+            {@render row(msg, modeFor(msg), undefined)}
+          {/each}
+        </div>
+      {/if}
     {/each}
 
     {#if live}
