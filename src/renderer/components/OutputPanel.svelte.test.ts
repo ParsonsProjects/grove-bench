@@ -1814,7 +1814,14 @@ describe('OutputPanel: turns in Summary', () => {
     expect(editLine).not.toHaveTextContent('let a = 2;');
     await fireEvent.click(within(editLine as HTMLElement).getByRole('button', { name: /a\.ts/ }));
     expect(editLine).toHaveTextContent('let a = 2;');
-    expect(container.querySelector('[data-msg-id="b1"]')).toHaveTextContent('$ npm test');
+    // Opened, it doesn't name the file again: the line already does.
+    expect(editLine.textContent!.split('a.ts').length - 1).toBe(1);
+
+    const runLine = container.querySelector('[data-msg-id="b1"]')!;
+    expect(runLine).toHaveTextContent('$ npm test');
+    await fireEvent.click(within(runLine as HTMLElement).getByRole('button', { name: /npm test/ }));
+    expect(runLine).toHaveTextContent('PASS');
+    expect(runLine.textContent!.split('npm test').length - 1).toBe(1);
   });
 
   it('shows only the last five steps of a running turn, and the rest on asking', async () => {

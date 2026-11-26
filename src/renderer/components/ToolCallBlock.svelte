@@ -20,6 +20,7 @@
     pending,
     images,
     summaryMode = false,
+    headless = false,
   }: {
     sessionId: string;
     /** The call's id; an Agent call's subagent is found by it. */
@@ -34,6 +35,9 @@
     /** Images the tool returned (a screenshot, an image file it read). */
     images?: StoredImage[];
     summaryMode?: boolean;
+    /** Only the body (output, diff, input): a turn card's step line already
+     *  says what the call is (TurnStep). */
+    headless?: boolean;
   } = $props();
 
   let view = $derived(toolViewOf({ toolName, toolInput, toolView }));
@@ -49,15 +53,15 @@
 </script>
 
 {#if view.kind === 'shell'}
-  <BashBlock {toolInput} command={view.command ?? ''} {result} {isError} {pending} {summaryMode} />
+  <BashBlock {toolInput} command={view.command ?? ''} {result} {isError} {pending} {summaryMode} {headless} />
 {:else if view.kind === 'edit' && (view.edits?.length || view.write !== undefined)}
-  <DiffBlock {sessionId} {view} {result} {pending} {isError} {summaryMode} />
+  <DiffBlock {sessionId} {view} {result} {pending} {isError} {summaryMode} {headless} />
 {:else if (view.kind === 'read' || view.kind === 'search') && (view.path || view.pattern)}
-  <FileOpBlock {sessionId} {toolName} {view} {result} {pending} {isError} />
+  <FileOpBlock {sessionId} {toolName} {view} {result} {pending} {isError} {headless} />
 {:else if view.kind === 'agent' && toolUseId}
   <AgentCallBlock {sessionId} {toolUseId} {toolName} summary={view.summary} agentType={view.agentType} {result} {pending} {isError} />
 {:else}
-  <GenericToolBlock {toolName} {toolInput} summary={toolView?.summary} {result} {pending} {isError} />
+  <GenericToolBlock {toolName} {toolInput} summary={toolView?.summary} {result} {pending} {isError} {headless} />
 {/if}
 {#if images?.length}
   <ImageAttachments {sessionId} {images} class="pl-4 mb-1" />

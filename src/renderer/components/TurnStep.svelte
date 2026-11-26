@@ -2,8 +2,8 @@
   /**
    * One step of a turn's work on one line, in a turn card's steps
    * (TurnCard): what kind of step, what it worked on and how it went. Click
-   * it for the whole step as Detailed draws it (the command's output, the
-   * edit's diff, the file read). A note the agent wrote while working is
+   * it for the rest of the step under the line, without its header again
+   * (the command's output, the edit's diff, the file read). A note the agent wrote while working is
    * smaller text; thinking shows its first line. A command that failed and
    * then passed when run again links to that run (`link`).
    */
@@ -111,8 +111,12 @@
     <div class="pl-14 pb-1">
       {#if msg.kind === 'thinking'}
         <div class="text-xs text-muted-foreground italic whitespace-pre-wrap">{msg.thinking}</div>
+      {:else if msg.kind === 'permission'}
+        <!-- What was asked, in full, and why it was decided so. -->
+        <div class="text-xs whitespace-pre-wrap break-all">{line.target}</div>
+        {#if msg.decisionReason}<div class="text-xs text-muted-foreground mt-0.5">{msg.decisionReason}</div>{/if}
       {:else}
-        <ThreadMessage {sessionId} {msg} viewMode="detailed" />
+        <ThreadMessage {sessionId} {msg} viewMode="detailed" headless />
       {/if}
     </div>
   {:else if images.length}

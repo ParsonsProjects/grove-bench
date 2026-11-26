@@ -18,6 +18,7 @@
     pending,
     isError,
     summaryMode = false,
+    headless = false,
   }: {
     sessionId: string;
     /** The edit call (see shared/tool-view.ts). */
@@ -26,6 +27,9 @@
     pending: boolean;
     isError?: boolean;
     summaryMode?: boolean;
+    /** Only the body (output, diff, input): a turn card's step line already
+     *  says what the call is (TurnStep). */
+    headless?: boolean;
   } = $props();
 
   let sideBySide = $state(false);
@@ -96,19 +100,21 @@
     {/if}
   </div>
 {:else}
-  <div class="py-1 my-1 border-l-4 border-primary pl-3">
-    <!-- Header -->
+  <div class={headless ? 'py-0.5' : 'py-1 my-1 border-l-4 border-primary pl-3'}>
+    <!-- Header: headless, only the actions (the step's line names the file) -->
     <div class="flex items-center gap-2 text-xs mb-1 group/diff-hdr">
-      <span class="text-primary font-bold">{isWrite ? '+ new file' : 'edit'}</span>
-      <button
-        onclick={openInEditor}
-        class="text-foreground/80 hover:text-primary hover:underline cursor-pointer"
-        title="Open in editor"
-      >{filePath}</button>
-      <CopyButton text={filePath} class="opacity-0 group-hover/diff-hdr:opacity-100 shrink-0" />
-      {#if pending}
+      {#if !headless}
+        <span class="text-primary font-bold">{isWrite ? '+ new file' : 'edit'}</span>
+        <button
+          onclick={openInEditor}
+          class="text-foreground/80 hover:text-primary hover:underline cursor-pointer"
+          title="Open in editor"
+        >{filePath}</button>
+        <CopyButton text={filePath} class="opacity-0 group-hover/diff-hdr:opacity-100 shrink-0" />
+      {/if}
+      {#if pending && !headless}
         <Pulse />
-      {:else if isError}
+      {:else if isError && !headless}
         <span class="text-destructive">error</span>
       {:else if heldBack || diffLines.length > 0}
         <div class="ml-auto flex items-center gap-1">
