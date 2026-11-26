@@ -1800,7 +1800,10 @@ describe('OutputPanel: turns in Summary', () => {
     await tick();
 
     const strip = getByRole('button', { name: /Worked 41s/ });
+    // In words for screen readers and the tooltip; shown as an icon, a
+    // count and the failure.
     expect(strip).toHaveTextContent('2 commands, 1 failed, passed on retry');
+    expect(strip.querySelector('[title="2 commands, 1 failed, passed on retry"]')).toHaveTextContent('2 (1 failed → passed)');
     expect(strip).toHaveAttribute('aria-expanded', 'false');
 
     await fireEvent.click(strip);
@@ -1825,7 +1828,8 @@ describe('OutputPanel: turns in Summary', () => {
     await fireEvent.click(getByRole('button', { name: /Worked 41s/ }));
 
     const editLine = container.querySelector('[data-msg-id="e1"]')!;
-    expect(editLine).toHaveTextContent('edit');
+    // The kind of step is an icon, with its word as the tooltip.
+    expect(within(editLine as HTMLElement).getByTitle('Edited')).toBeInTheDocument();
     expect(editLine).toHaveTextContent('a.ts');
     expect(editLine).toHaveTextContent('+1 −1');
     // The diff waits for a click.
@@ -1836,7 +1840,9 @@ describe('OutputPanel: turns in Summary', () => {
     expect(editLine.textContent!.split('a.ts').length - 1).toBe(1);
 
     const runLine = container.querySelector('[data-msg-id="b1"]')!;
-    expect(runLine).toHaveTextContent('$ npm test');
+    expect(within(runLine as HTMLElement).getByTitle('Ran')).toBeInTheDocument();
+    expect(runLine).toHaveTextContent('npm test');
+    expect(runLine).not.toHaveTextContent('$');
     await fireEvent.click(within(runLine as HTMLElement).getByRole('button', { name: /npm test/ }));
     expect(runLine).toHaveTextContent('PASS');
     expect(runLine.textContent!.split('npm test').length - 1).toBe(1);

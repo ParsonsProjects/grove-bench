@@ -1,16 +1,19 @@
 <script lang="ts">
   /**
    * One step of a turn's work on one line, in a turn card's steps
-   * (ThreadTurn): what kind of step, what it worked on and how it went. Click
-   * it for the rest of the step under the line, without its header again
-   * (the command's output, the edit's diff, the file read). A note the agent wrote while working is
-   * smaller text; thinking shows its first line. A command that failed and
-   * then passed when run again links to that run (`link`).
+   * (ThreadTurn): what kind of step (a pixel icon, StepIcon), what it worked
+   * on and how it went. Click it for the rest of the step under the line,
+   * without its header again (the command's output, the edit's diff, the
+   * file read). A note the agent wrote while working is smaller text;
+   * thinking shows its first line. A command that failed and then passed
+   * when run again links to that run (`link`).
    */
   import type { ChatMessage } from '../stores/messages.svelte.js';
   import ThreadMessage from './ThreadMessage.svelte';
   import ImageAttachments from './ImageAttachments.svelte';
   import MarkdownBlock from './MarkdownBlock.svelte';
+  import StepIcon from './StepIcon.svelte';
+  import { stepIconFor, type StepIconKind } from '$lib/step-icons.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { toolLabel } from '$lib/tool-names.js';
@@ -32,28 +35,30 @@
 
   let open = $state(false);
 
-  type Line = { word: string; tone: string; target: string; command?: boolean };
+  /** `word` is what the icon stands for, for its tooltip and screen readers. */
+  type Line = { icon: StepIconKind; word: string; tone: string; target: string };
 
   /** What the line says for a tool call or an answered permission. */
   let line = $derived.by((): Line | null => {
     if (msg.kind === 'thinking') {
-      return { word: 'think', tone: 'text-purple-400', target: msg.thinking.trim().split('\n')[0] ?? '' };
+      return { icon: 'think', word: 'Thought', tone: 'text-purple-400', target: msg.thinking.trim().split('\n')[0] ?? '' };
     }
     if (msg.kind === 'permission') {
       const view = toolViewOf(msg);
-      return { word: 'asked', tone: 'text-muted-foreground', target: `${toolLabel(msg.toolName)} ${toolViewSummary(view)}`.trim() };
+      return { icon: 'asked', word: 'Asked you', tone: 'text-muted-foreground', target: `${toolLabel(msg.toolName)} ${toolViewSummary(view)}`.trim() };
     }
     if (msg.kind !== 'tool_call') return null;
     const view = toolViewOf(msg);
     const target = toolViewSummary(view);
+    const icon = stepIconFor(view);
     switch (view.kind) {
-      case 'read': return { word: 'read', tone: 'text-muted-foreground', target };
-      case 'search': return { word: 'search', tone: 'text-muted-foreground', target: view.path && view.pattern ? `${view.pattern} in ${view.path}` : target };
-      case 'edit': return { word: view.edits?.length ? 'edit' : 'write', tone: 'text-primary', target: target || msg.toolName };
-      case 'shell': return { word: 'run', tone: 'text-cyan-400', target, command: true };
-      case 'fetch': return { word: 'fetch', tone: 'text-yellow-400', target };
-      case 'web_search': return { word: 'web', tone: 'text-yellow-400', target };
-      default: return { word: 'tool', tone: 'text-yellow-400', target: [toolLabel(msg.toolName), target].filter(Boolean).join(' ') };
+      case 'read': return { icon, word: 'Read', tone: 'text-muted-foreground', target };
+      case 'search': return { icon, word: 'Searched', tone: 'text-muted-foreground', target: view.path && view.pattern ? `${view.pattern} in ${view.path}` : target };
+      case 'edit': return { icon, word: view.edits?.length ? 'Edited' : 'Wrote', tone: 'text-primary', target: target || msg.toolName };
+      case 'shell': return { icon, word: 'Ran', tone: 'text-cyan-400', target };
+      case 'fetch': return { icon, word: 'Fetched', tone: 'text-yellow-400', target };
+      case 'web_search': return { icon, word: 'Searched the web', tone: 'text-yellow-400', target };
+      default: return { icon, word: 'Used a tool', tone: 'text-yellow-400', target: [toolLabel(msg.toolName), target].filter(Boolean).join(' ') };
     }
   });
 
@@ -65,7 +70,7 @@
 
 {#if msg.kind === 'text'}
   <!-- A note while working: smaller than the answer it leads to. -->
-  <div class="py-0.5 pl-14 text-xs text-foreground">
+  <div class="py-0.5 pl-5 text-xs text-foreground">
     <MarkdownBlock content={msg.text} {sessionId} />
   </div>
 {:else if line}
@@ -77,10 +82,9 @@
       title={open ? 'Hide this step' : 'Show this step in full'}
       onclick={() => (open = !open)}
     >
-      <span class="w-12 shrink-0 truncate {line.tone}">{line.word}</span>
-      <span class="min-w-0 truncate {msg.kind === 'thinking' ? 'italic text-muted-foreground' : 'text-foreground'}">
-        {#if line.command}<span class="text-cyan-400">$</span>{' '}{/if}{line.target}
-      </span>
+      <span class="flex shrink-0 {line.tone}" title={line.word}><StepIcon kind={line.icon} /></span>
+      <span class="sr-only">{line.word}:</span>
+      <span class="min-w-0 truncate {msg.kind === 'thinking' ? 'italic text-muted-foreground' : 'text-foreground'}">{line.target}</span>
     </button>
     <span class="shrink-0 flex items-center gap-2 text-muted-foreground">
       {#if msg.kind === 'tool_call'}
@@ -108,7 +112,7 @@
     </span>
   </div>
   {#if open}
-    <div class="pl-14 pb-1">
+    <div class="pl-5 pb-1">
       {#if msg.kind === 'thinking'}
         <div class="text-xs text-muted-foreground italic whitespace-pre-wrap">{msg.thinking}</div>
       {:else if msg.kind === 'permission'}
@@ -120,7 +124,7 @@
       {/if}
     </div>
   {:else if images.length}
-    <ImageAttachments {sessionId} {images} class="pl-14 mb-1" />
+    <ImageAttachments {sessionId} {images} class="pl-5 mb-1" />
   {/if}
 {:else}
   <!-- A plain status line: small already. -->

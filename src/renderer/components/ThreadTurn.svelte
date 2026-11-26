@@ -22,6 +22,7 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { Pulse } from '$lib/components/ui/pulse/index.js';
   import TurnStep from './TurnStep.svelte';
+  import StepIcon from './StepIcon.svelte';
   import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
   import ChevronUpIcon from '@lucide/svelte/icons/chevron-up';
 
@@ -177,11 +178,17 @@
     if (first) return first;
     return p.images?.length || p.files?.length || p.attachments?.length ? 'Attached files' : '';
   });
-  let foldedMeta = $derived([
-    edited.length ? plural(edited.length, 'file', 'files') + ' changed' : '',
-    took,
-    cost,
-  ].filter(Boolean).join(' · '));
+  /** The folded turn's time and cost, after its files changed. */
+  let foldedMeta = $derived([took, cost].filter(Boolean).join(' · '));
+  let filesChanged = $derived(`${plural(edited.length, 'file', 'files')} changed`);
+  /** What the commands came to, in words, for the tooltip and screen readers. */
+  let commandsText = $derived.by(() => {
+    let text = plural(tally.commands, 'command', 'commands');
+    if (tally.failed) text += `, ${tally.failed} failed`;
+    if (tally.failed && tally.passedOnRetry === tally.failed) text += ', passed on retry';
+    else if (tally.passedOnRetry) text += `, ${tally.passedOnRetry} passed on retry`;
+    return text;
+  });
 
   /** Scroll to the other run of a command, and mark it for a moment. */
   function showRun(id: string) {
@@ -193,7 +200,9 @@
   }
 
   /** A dot before each part of the summary line after the first. */
-  const DOT = "before:content-['·'] before:mr-2 before:text-muted-foreground";
+  const DOT = "before:content-['·'] before:mr-1 before:text-muted-foreground";
+  /** A count on the summary line: its icon and number together. */
+  const COUNT = 'inline-flex items-center gap-1';
 </script>
 
 <section bind:this={section} data-turn={turn.id} class="my-3">
@@ -209,7 +218,12 @@
       <ChevronRightIcon class="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
       <span class="text-primary select-none" aria-hidden="true">&gt;</span>
       <span class="flex-1 min-w-0 truncate text-muted-foreground">{promptLine}</span>
-      {#if foldedMeta}<span class="shrink-0 text-caption text-muted-foreground">{foldedMeta}</span>{/if}
+      {#if edited.length}
+        <span class="shrink-0 inline-flex items-center gap-1 text-caption text-muted-foreground" title={filesChanged}>
+          <span class="sr-only">{filesChanged}</span><StepIcon kind="edit" class="text-primary" /><span aria-hidden="true">{edited.length}</span>
+        </span>
+      {/if}
+      {#if foldedMeta}<span class="shrink-0 text-caption text-muted-foreground {edited.length ? DOT : ''}">{foldedMeta}</span>{/if}
       {@render statusMark()}
       {#if time}<time class="shrink-0 text-caption text-muted-foreground tabular-nums">{time}</time>{/if}
     </button>
@@ -242,20 +256,34 @@
       >
         <ChevronRightIcon class="size-3 shrink-0 transition-transform {workOpen ? 'rotate-90' : ''}" aria-hidden="true" />
         <span class="flex items-center gap-1.5 {LABEL_TONE[status]}">{@render statusMark()}{label}{#if elapsed}<span class="tabular-nums">· {elapsed}</span>{/if}</span>
-        {#if tally.filesRead}<span class={DOT}>{plural(tally.filesRead, 'file', 'files')} read</span>{/if}
-        {#if tally.searches}<span class={DOT}>{plural(tally.searches, 'search', 'searches')}</span>{/if}
-        {#if edited.length}
-          <span class={DOT} title={editedList}>{plural(edited.length, 'file', 'files')} changed <span class="text-green-400">+{tally.add}</span> <span class="text-red-400">−{tally.del}</span></span>
+        <!-- Each count is an icon and a number; the words are in its tooltip
+             and for screen readers. -->
+        {#if tally.filesRead}
+          {@const text = `${plural(tally.filesRead, 'file', 'files')} read`}
+          <span class="{DOT} {COUNT}" title={text}><span class="sr-only">{text}</span><StepIcon kind="read" /><span aria-hidden="true">{tally.filesRead}</span></span>
         {/if}
-        {#if tally.commands}
-          <span class={DOT}>
-            {plural(tally.commands, 'command', 'commands')}{#if tally.failed},
-              <span class="text-destructive">{tally.failed} failed</span>{#if tally.passedOnRetry === tally.failed},
-                <span class="text-green-400">passed on retry</span>{:else if tally.passedOnRetry},
-                <span class="text-green-400">{tally.passedOnRetry} passed on retry</span>{/if}{/if}
+        {#if tally.searches}
+          {@const text = plural(tally.searches, 'search', 'searches')}
+          <span class="{DOT} {COUNT}" title={text}><span class="sr-only">{text}</span><StepIcon kind="search" /><span aria-hidden="true">{tally.searches}</span></span>
+        {/if}
+        {#if edited.length}
+          <span class="{DOT} {COUNT}" title={`${filesChanged}:\n${editedList}`}>
+            <span class="sr-only">{filesChanged}</span><StepIcon kind="edit" class="text-primary" /><span aria-hidden="true">{edited.length}</span>
+            <span class="text-green-400">+{tally.add}</span><span class="text-red-400">−{tally.del}</span>
           </span>
         {/if}
-        {#if tally.other}<span class={DOT}>{plural(tally.other, 'other tool', 'other tools')}</span>{/if}
+        {#if tally.commands}
+          <span class="{DOT} {COUNT}" title={commandsText}>
+            <span class="sr-only">{commandsText}</span><StepIcon kind="run" class="text-cyan-400" /><span aria-hidden="true">{tally.commands}</span>
+            {#if tally.failed}
+              <span aria-hidden="true">(<span class="text-destructive">{tally.failed} failed</span>{#if tally.passedOnRetry}{' '}<span class="text-green-400">→ {tally.passedOnRetry === tally.failed ? '' : `${tally.passedOnRetry} `}passed</span>{/if})</span>
+            {/if}
+          </span>
+        {/if}
+        {#if tally.other}
+          {@const text = plural(tally.other, 'other tool', 'other tools')}
+          <span class="{DOT} {COUNT}" title={text}><span class="sr-only">{text}</span><StepIcon kind="tool" class="text-yellow-400" /><span aria-hidden="true">{tally.other}</span></span>
+        {/if}
         {#if cost && !running}<span class={DOT}>{cost}</span>{/if}
       </button>
     {/if}
