@@ -95,13 +95,11 @@ describe("OutputPanel: a turn's end", () => {
     expect(getByText(/done/)).toHaveTextContent('0.8s');
   });
 
-  it("puts a turn's time and cost in its card's footer in Summary", () => {
+  it("puts a turn's time and cost on its summary line in Summary", () => {
     messageStore.setViewMode(SID, 'summary');
     messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'Fix it' }, { ...done, totalCostUsd: 0.41, durationMs: 192_000 }] };
-    const { container, queryByText } = render(OutputPanel, { sessionId: SID });
-    const card = container.querySelector('[data-turn="u1"]')!;
-    expect(card).toHaveTextContent('3m 12s');
-    expect(card).toHaveTextContent('$0.41');
+    const { getByRole, queryByText } = render(OutputPanel, { sessionId: SID });
+    expect(getByRole('button', { name: /Worked 3m 12s/ })).toHaveTextContent('$0.41');
     expect(queryByText(/done/)).toBeNull();
   });
 
@@ -1753,11 +1751,11 @@ describe('OutputPanel: turns in Summary', () => {
     expect(first.querySelector('[data-msg-id="a1"]')).toBeNull();
   });
 
-  it("shows the running turn's steps, what it waits on and its live output in its card", async () => {
+  it("keeps a running turn's steps folded and says what it waits on, with a timer", async () => {
     messageStore.messagesBySession = {
       [SID]: [
         prompt('u1'), reply('a1'), done('r1'),
-        prompt('u2'), bash('b1', 'ls'),
+        { ...prompt('u2'), sentAt: Date.now() - 64_000 } as ChatMessage, bash('b1', 'ls'),
         { kind: 'permission', id: 'p1', requestId: 'rq', toolName: 'Bash', toolInput: { command: 'npm run migrate' }, toolUseId: 'tu-p', resolved: false },
       ],
     };
@@ -1765,13 +1763,33 @@ describe('OutputPanel: turns in Summary', () => {
     const { container } = render(OutputPanel, { sessionId: SID });
     await tick();
 
-    const live = container.querySelector('[data-turn="u2"]')!;
-    expect(live).toHaveTextContent('Waiting for you');
-    expect(live.querySelector('[data-msg-id="b1"]')).not.toBeNull();
+    const live = container.querySelector('[data-turn="u2"]') as HTMLElement;
+    const summary = within(live).getByRole('button', { name: /Waiting for you/ });
+    expect(summary).toHaveTextContent('1m 4s');
+    expect(summary).toHaveAttribute('aria-expanded', 'false');
+    // Worded as the sidebar words it.
+    expect(live).toHaveTextContent('Wants to run a command: npm run migrate');
+    expect(live.querySelector('[data-msg-id="b1"]')).toBeNull();
     expect(live.querySelector('[data-msg-id="p1"]')).not.toBeNull();
-    expect(live).toHaveTextContent('Working...');
     // A running turn can't be folded away.
-    expect(within(live as HTMLElement).queryByRole('button', { name: 'Fold this turn' })).toBeNull();
+    expect(within(live).queryByRole('button', { name: 'Fold this turn' })).toBeNull();
+
+    await fireEvent.click(summary);
+    expect(live.querySelector('[data-msg-id="b1"]')).not.toBeNull();
+  });
+
+  it('says what a running turn is doing under its summary line', async () => {
+    messageStore.messagesBySession = { [SID]: [prompt('u1'), bash('b1', 'ls')] };
+    messageStore.setIsRunning(SID, true);
+    messageStore.activityBySession = { [SID]: { activity: 'tool_starting', toolName: 'Bash', toolSummary: 'npm test' } };
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await tick();
+
+    const live = container.querySelector('[data-turn="u1"]') as HTMLElement;
+    expect(live).toHaveTextContent('Running Bash npm test');
+    // Once, in the turn: not again under the thread.
+    expect(container.textContent!.split('Running Bash').length - 1).toBe(1);
+    messageStore.activityBySession = {};
   });
 
   it('links a command that failed to the run that passed, and says so in the strip', async () => {
@@ -1824,7 +1842,7 @@ describe('OutputPanel: turns in Summary', () => {
     expect(runLine.textContent!.split('npm test').length - 1).toBe(1);
   });
 
-  it('shows only the last five steps of a running turn, and the rest on asking', async () => {
+  it('shows only the last five steps of a running turn when opened, and the rest on asking', async () => {
     const steps = Array.from({ length: 8 }, (_, i) => bash(`b${i}`, `step ${i}`));
     messageStore.messagesBySession = { [SID]: [prompt('u1'), ...steps] };
     messageStore.setIsRunning(SID, true);
@@ -1832,6 +1850,8 @@ describe('OutputPanel: turns in Summary', () => {
     await tick();
 
     const drawnSteps = () => steps.filter((s) => container.querySelector(`[data-msg-id="${s.id}"]`)).map((s) => s.id);
+    expect(drawnSteps()).toEqual([]);
+    await fireEvent.click(getByRole('button', { name: /Working/ }));
     expect(drawnSteps()).toEqual(['b3', 'b4', 'b5', 'b6', 'b7']);
     await fireEvent.click(getByRole('button', { name: 'Show 3 earlier steps' }));
     expect(drawnSteps()).toHaveLength(8);

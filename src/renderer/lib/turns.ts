@@ -1,5 +1,5 @@
 /**
- * The Summary view's turns (TurnCard): a thread split into each prompt and
+ * The Summary view's turns (ThreadTurn): a thread split into each prompt and
  * what followed it, and what a turn's work comes to (its steps, the files it
  * changed, its commands and the ones that passed on a retry). Detailed and
  * Focus draw the thread as rows instead (message-view.ts).
@@ -7,7 +7,7 @@
 import { diffArrays } from 'diff';
 import type { ChatMessage } from '../stores/messages.svelte.js';
 import { actsOutsideProject, isAgentCall, isMessageVisible } from './message-view.js';
-import { toolViewOf, toolViewSummary, type ToolView } from '../../shared/tool-view.js';
+import { toolViewOf, type ToolView } from '../../shared/tool-view.js';
 
 type UserMessage = Extract<ChatMessage, { kind: 'user' }>;
 type ResultMessage = Extract<ChatMessage, { kind: 'result' }>;
@@ -157,19 +157,8 @@ export function retryLinks(msgs: readonly ChatMessage[]): Map<string, RetryLink>
   return links;
 }
 
-/** A step in a turn's pixel trail. */
-export interface StepMark {
-  id: string;
-  kind: 'read' | 'search' | 'edit' | 'shell' | 'thinking' | 'other';
-  failed?: boolean;
-  pending?: boolean;
-  /** What it did, for the square's tooltip. */
-  label: string;
-}
-
-/** What a turn's work comes to, for its work strip and footer. */
+/** What a turn's work comes to, for its summary line. */
 export interface TurnTally {
-  marks: StepMark[];
   /** Distinct files read. */
   filesRead: number;
   searches: number;
@@ -185,35 +174,26 @@ export interface TurnTally {
   other: number;
 }
 
-/** Tool kinds that aren't steps of their own: a question shows as its own
+/** Tool kinds that aren't counted as steps: a question shows as its own
  *  block, and a subagent as its line. */
 const NOT_A_STEP: ReadonlySet<ToolView['kind']> = new Set(['question', 'agent']);
 
 export function tallyTurn(msgs: readonly ChatMessage[], links: ReadonlyMap<string, RetryLink>): TurnTally {
   const tally: TurnTally = {
-    marks: [], filesRead: 0, searches: 0, edits: new Map(), add: 0, del: 0,
+    filesRead: 0, searches: 0, edits: new Map(), add: 0, del: 0,
     commands: 0, failed: 0, passedOnRetry: 0, other: 0,
   };
   const read = new Set<string>();
   for (const msg of msgs) {
-    if (msg.kind === 'thinking') {
-      tally.marks.push({ id: msg.id, kind: 'thinking', label: 'Thinking' });
-      continue;
-    }
     if (msg.kind !== 'tool_call') continue;
     const view = toolViewOf(msg);
     if (NOT_A_STEP.has(view.kind)) continue;
-    const target = toolViewSummary(view);
-    const label = target ? `${msg.toolName} ${target}` : msg.toolName;
-    const pending = msg.pending || undefined;
     switch (view.kind) {
       case 'read':
         if (view.path) read.add(view.path);
-        tally.marks.push({ id: msg.id, kind: 'read', label, pending });
         break;
       case 'search':
         tally.searches++;
-        tally.marks.push({ id: msg.id, kind: 'search', label, pending });
         break;
       case 'edit': {
         const path = view.path ?? msg.toolName;
@@ -222,23 +202,18 @@ export function tallyTurn(msgs: readonly ChatMessage[], links: ReadonlyMap<strin
         if (file) { file.add += add; file.del += del; } else tally.edits.set(path, { add, del });
         tally.add += add;
         tally.del += del;
-        // Only a command's failure shows red: the strip's words count those.
-        tally.marks.push({ id: msg.id, kind: 'edit', label, pending });
         break;
       }
       case 'shell': {
         tally.commands++;
-        const failed = !!msg.isError && !pending;
-        if (failed) {
+        if (msg.isError && !msg.pending) {
           tally.failed++;
           if (links.get(msg.id)?.kind === 'passed') tally.passedOnRetry++;
         }
-        tally.marks.push({ id: msg.id, kind: 'shell', label, pending, failed: failed || undefined });
         break;
       }
       default:
         tally.other++;
-        tally.marks.push({ id: msg.id, kind: 'other', label, pending });
     }
   }
   tally.filesRead = read.size;

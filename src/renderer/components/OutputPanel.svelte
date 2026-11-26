@@ -8,7 +8,7 @@
   import XIcon from '@lucide/svelte/icons/x';
   import MarkdownBlock from './MarkdownBlock.svelte';
   import ThreadMessage from './ThreadMessage.svelte';
-  import TurnCard from './TurnCard.svelte';
+  import ThreadTurn from './ThreadTurn.svelte';
   import MessageSearchBar from './MessageSearchBar.svelte';
   import SelectionMenu from './SelectionMenu.svelte';
   import BookmarkLinks from './BookmarkLinks.svelte';
@@ -56,8 +56,8 @@
   // unanswered permissions.
   // The toggle lives in the status bar; the default comes from settings.
   let viewMode = $derived(messageStore.getViewMode(sessionId));
-  // Summary draws each turn as a card (TurnCard), its steps folded behind a
-  // strip rather than left out.
+  // Summary draws each turn as its prompt, a summary line and its answer
+  // (ThreadTurn), its steps folded behind the line rather than left out.
   let turnView = $derived(viewMode === 'summary');
   // Subagents' messages are in their own threads (SubagentPanel).
   let thread = $derived(threadMessages(allMessages));
@@ -233,8 +233,8 @@
     return last?.kind === 'turn' && (isRunning || !!streamingText) ? last.turn.id : null;
   });
   /** Turns the reader folded or opened, and turns whose steps they showed
-   *  or hid, by turn id. Others follow foldsByDefault, and show their steps
-   *  while they run. */
+   *  or hid, by turn id. Others follow foldsByDefault, with their steps
+   *  folded; a running one says what it's doing instead. */
   let foldedByReader = $state<Record<string, boolean>>({});
   let stepsByReader = $state<Record<string, boolean>>({});
   /** Running turns the reader asked to see every step of, not the last few. */
@@ -249,7 +249,7 @@
       state.set(turn.id, {
         status,
         folded: !running && (foldedByReader[turn.id] ?? foldsByDefault(i, turns.length, status)),
-        workOpen: stepsByReader[turn.id] ?? live,
+        workOpen: stepsByReader[turn.id] ?? false,
       });
     });
     return state;
@@ -946,7 +946,7 @@
         {#if at}
           <div data-turn-row use:watchRow>
             {#if day}{@render dayDivider(day)}{/if}
-            <TurnCard
+            <ThreadTurn
               {sessionId}
               {turn}
               status={at.status}
@@ -959,7 +959,8 @@
               onallsteps={() => { allStepsByReader[turn.id] = true; }}
               {showCost}
               row={turnRow}
-              live={turn.id === liveTurnId && arrival === null ? liveOutput : undefined}
+              activity={turn.id === liveTurnId && arrival === null ? liveActivity : undefined}
+              live={turn.id === liveTurnId && arrival === null ? liveText : undefined}
             />
           </div>
         {/if}
@@ -969,9 +970,11 @@
     {@render threadRows(rows)}
   {/if}
 
-  <!-- The live reply, its thinking and the working line: in the running
-       turn's card in Summary, else under the thread. -->
-  {#snippet liveOutput()}
+  <!-- What the agent is doing now (its thinking, or the working line) and
+       the reply it's writing: in the running turn in Summary (the first
+       under its summary line, the second where its answer goes), else
+       under the thread. -->
+  {#snippet liveActivity()}
     <!-- Streaming thinking (live) — suppressed in focus mode -->
     {#if streamingThinking && viewMode !== 'focus' && arrival === null}
       {@const trimmed = streamingThinking.trimEnd()}
@@ -982,13 +985,7 @@
       </div>
     {/if}
 
-    <!-- Streaming text (live) -->
-    {#if streamingText}
-      <div class="py-1 text-sm text-foreground">
-        {#if paneShown}<MarkdownBlock content={streamingText} streaming {sessionId} />{/if}
-        <span class="inline-block w-1.5 h-4 bg-muted-foreground animate-pulse ml-0.5 align-text-bottom"></span>
-      </div>
-    {:else if arrival === null && isRunning && (!streamingThinking || viewMode === 'focus')}
+    {#if !streamingText && arrival === null && isRunning && (!streamingThinking || viewMode === 'focus')}
       <div class="py-2 flex items-center gap-2 text-xs text-muted-foreground">
         <Pulse motion="spin" />
         {@render activityLabel()}
@@ -996,8 +993,19 @@
     {/if}
   {/snippet}
 
+  {#snippet liveText()}
+    <!-- Streaming text (live) -->
+    {#if streamingText}
+      <div class="py-1 text-sm text-foreground">
+        {#if paneShown}<MarkdownBlock content={streamingText} streaming {sessionId} />{/if}
+        <span class="inline-block w-1.5 h-4 bg-muted-foreground animate-pulse ml-0.5 align-text-bottom"></span>
+      </div>
+    {/if}
+  {/snippet}
+
   {#if !(turnView && liveTurnId !== null && arrival === null)}
-    {@render liveOutput()}
+    {@render liveActivity()}
+    {@render liveText()}
   {/if}
 
   {#if !streamingText && arrival !== null}

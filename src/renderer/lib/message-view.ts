@@ -16,7 +16,7 @@ export const VIEW_MODE_LABELS: Record<MessageViewMode, string> = {
 /** Short description of what each mode shows, for pickers and hints. */
 export const VIEW_MODE_DESCRIPTIONS: Record<MessageViewMode, string> = {
   detailed: 'Everything: thinking, every tool call, system notes',
-  summary: 'Each prompt and what the agent did for it as one card: its steps fold into one line you can open, then its answer, the files it changed and its time; turns before the last two fold to one line',
+  summary: 'Each prompt, one line of what the agent did for it (its steps folded behind it, with the files it changed, its time and cost), then its answer; turns before the last two fold to one line',
   focus: 'Agent responses, questions and your answers only (no tool calls or thinking; notes while working fold into one line; images stay; subagents show as one line)',
 };
 

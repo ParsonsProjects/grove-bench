@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * One step of a turn's work on one line, in a turn card's steps
-   * (TurnCard): what kind of step, what it worked on and how it went. Click
+   * (ThreadTurn): what kind of step, what it worked on and how it went. Click
    * it for the rest of the step under the line, without its header again
    * (the command's output, the edit's diff, the file read). A note the agent wrote while working is
    * smaller text; thinking shows its first line. A command that failed and

@@ -148,9 +148,6 @@ describe('tallyTurn', () => {
     expect([t.add, t.del]).toEqual([4, 1]);
     expect([t.commands, t.failed, t.passedOnRetry]).toEqual([3, 2, 1]);
     expect(t.other).toBe(1);
-    // A square per step, in order; the subagent has its own line instead.
-    expect(t.marks.map((m) => m.kind)).toEqual(['thinking', 'read', 'read', 'read', 'search', 'edit', 'edit', 'shell', 'shell', 'shell', 'other']);
-    expect(t.marks.filter((m) => m.failed).map((m) => m.id)).toEqual(['f1', 'f2']);
   });
 });
 

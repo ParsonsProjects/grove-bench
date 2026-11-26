@@ -52,3 +52,5 @@ A is the strongest base: it fixes turn boundaries and scanning at once, and need
 | Weak spot | Weaker turn edges; files are only a count | Long turns stay long | One step at a time while live; two boxes when a permission waits |
 
 My take: D fixes "too boxy" with the least change from the build. F's live line (current step and timer) is calmer than the last five steps and could pair with D.
+
+**Decision:** D, with F's live line, built as the Summary view (`ThreadTurn.svelte`). A running turn keeps its steps folded and shows what it's doing now, with a timer from the prompt; opened, it still shows its last five steps.
