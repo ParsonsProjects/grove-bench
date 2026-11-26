@@ -1808,10 +1808,12 @@ describe('OutputPanel: turns in Summary', () => {
 
     await fireEvent.click(strip);
     Element.prototype.scrollIntoView = vi.fn();
-    await fireEvent.click(getByRole('button', { name: 'passed on retry ↓' }));
+    const passed = getByRole('button', { name: 'Passed on retry: show the run that passed' });
+    expect(passed).toHaveTextContent('→ passed ↓');
+    await fireEvent.click(passed);
     expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
     expect(container.querySelector('[data-msg-id="p1"]')).toHaveClass('ring-1');
-    expect(getByRole('button', { name: 'retry of the run that failed ↑' })).toBeInTheDocument();
+    expect(getByRole('button', { name: 'A retry of a run that failed: show that run' })).toHaveTextContent('← retry ↑');
   });
 
   it('draws each step on one line, with the whole step a click away', async () => {

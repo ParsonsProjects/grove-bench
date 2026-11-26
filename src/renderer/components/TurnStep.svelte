@@ -105,9 +105,23 @@
         {/if}
       {/if}
       {#if link?.kind === 'passed'}
-        <Button variant="link" size="inline" class="text-green-400" onclick={() => onlink?.(link.to)}>passed on retry ↓</Button>
+        <!-- Short on the line; the label and tooltip say it in full. -->
+        <Button
+          variant="link"
+          size="inline"
+          class="text-green-400"
+          aria-label="Passed on retry: show the run that passed"
+          title="Passed on retry: show the run that passed"
+          onclick={() => onlink?.(link.to)}
+        >→ passed ↓</Button>
       {:else if link}
-        <Button variant="quiet" size="inline" onclick={() => onlink?.(link.to)}>retry of the run that failed ↑</Button>
+        <Button
+          variant="quiet"
+          size="inline"
+          aria-label="A retry of a run that failed: show that run"
+          title="A retry of a run that failed: show that run"
+          onclick={() => onlink?.(link.to)}
+        >← retry ↑</Button>
       {/if}
     </span>
   </div>
