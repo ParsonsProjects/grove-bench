@@ -38,7 +38,7 @@ Click **Start thread**. The new thread opens in the follow-up's project with the
 
 If you are already writing a new thread, Grove Bench shows that one instead and leaves your message as it is. Send or discard it, then start the follow-up.
 
-Once the thread starts, the follow-up says **Started in** with a link to it, and the button becomes **Start another**.
+Once the thread starts, the follow-up says **Started in** with a link to it, and the button becomes **Start another**. If that thread is closed before the work is done, the follow-up says **Started before** instead, as it does on the board.
 
 ## Marking one done
 
@@ -48,7 +48,7 @@ When the thread's agent finishes the work, it marks the follow-up done and says 
 
 **Close** is for a follow-up that won't be done: it isn't needed any more, it was fixed another way, or you decided against it. A closed follow-up isn't counted as open and leaves the board, but it is kept: it folds under **Show closed** (or **Show done and closed**) in its project, marked **Closed** rather than crossed out, with the reason when an agent closed it and the thread it was in. **Reopen** puts it back on the list.
 
-Agents close follow-ups too, when one turns out not to be needed or you tell them to drop it, and they say why. An agent that later finishes the work of a closed one can still mark it done.
+Agents close follow-ups too, when one of their project's turns out not to be needed or you tell them to drop it, and they say why. They are told to close another project's only when you ask. An agent that later finishes the work of a closed one can still mark it done.
 
 Grove Bench keeps the 50 most recent done and closed follow-ups in each project, counted together.
 
@@ -62,7 +62,7 @@ Agents use four tools from Grove Bench's `grove-followups` server: `followup_add
 
 ## Across projects
 
-An agent isn't limited to its own project's follow-ups. `followup_list` takes a project, by its name (its folder's name, as the sidebar shows it) or its path, or `all` for every project's; each one listed then says which project it is in. `followup_add` takes a project too, to add work the agent found for another project there: the follow-up says which thread and project it came from. `followup_done` and `followup_close` work on any project's follow-up by its id. If two projects have the same folder name, the agent is asked for the path. A follow-up can only be added to a project Grove Bench lists, but a removed project's can still be read and closed.
+An agent isn't limited to its own project's follow-ups. `followup_list` takes a project, by its name (its folder's name, as the sidebar shows it) or its path, or `all` for every project's; each one listed then says which project it is in. `followup_add` takes a project too, to add work the agent found for another project there: the follow-up says which thread and project it came from. `followup_done` and `followup_close` work on any project's follow-up by its id (agents are told to close another project's only when you ask). If two projects have the same folder name, the agent is asked for the path. A follow-up can only be added to a project Grove Bench lists, but a removed project's can still be read and closed; a listed project wins over a removed one with the same name.
 
 The list of open titles a new thread is given is still only its own project's.
 

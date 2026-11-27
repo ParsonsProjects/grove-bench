@@ -580,15 +580,16 @@ const api: Record<string, unknown> = {
   setFollowUpDone: async (id: string, done: boolean) => {
     const f = demoFollowUps.find((x) => x.id === id);
     if (!f) return;
+    // As main does: done replaces closed, and reopening drops both.
+    delete f.closedAt;
+    delete f.closedBySessionId;
+    delete f.closeReason;
     if (done) {
       f.doneAt = Date.now();
-      delete f.closedAt;
-      delete f.closeReason;
     } else {
       delete f.doneAt;
+      delete f.doneBySessionId;
       delete f.doneNote;
-      delete f.closedAt;
-      delete f.closeReason;
     }
     changeFollowUp(f);
   },

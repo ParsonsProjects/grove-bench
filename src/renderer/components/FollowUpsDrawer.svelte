@@ -144,19 +144,22 @@
   {@const from = threadName(f.fromSessionId)}
   <div class="mt-0.5 text-caption text-muted-foreground">
     {formatAge(f.createdAt)}
+    <!-- Added from another project's thread: that project is named after
+         the thread, or alone when the thread had no name. -->
     {#if f.fromSessionId && from}
-      · from <Button variant="link" size="inline" class="text-caption" onclick={() => jumpTo(f.fromSessionId!)} title="Open the thread that added it">{from}</Button>
+      · from <Button variant="link" size="inline" class="text-caption" onclick={() => jumpTo(f.fromSessionId!)} title="Open the thread that added it">{from}</Button>{#if f.fromRepoPath}{' '}in {store.repoDisplayName(f.fromRepoPath)}{/if}
     {:else if f.fromLabel}
-      · from {f.fromLabel}
-    {/if}
-    {#if f.fromRepoPath}
-      in {store.repoDisplayName(f.fromRepoPath)}
+      · from {f.fromLabel}{#if f.fromRepoPath}{' '}in {store.repoDisplayName(f.fromRepoPath)}{/if}
+    {:else if f.fromRepoPath}
+      · from project {store.repoDisplayName(f.fromRepoPath)}
     {/if}
   </div>
 {/snippet}
 
 {#snippet openCard(f: FollowUp, started: string | null)}
   {@const long = f.details.length > 220 || f.details.split('\n').length > 4}
+  <!-- A thread was started from it and closed before the work was done. -->
+  {@const startedBefore = !started && !!f.startedSessionIds?.length}
   <article
     class="mb-2 border bg-card/80 p-2 {followUpsStore.revealId === f.id ? 'border-ring' : followUpPriority(f) === 'high' ? 'border-amber-500/50' : 'border-border'}"
     aria-label={f.title}
@@ -170,9 +173,10 @@
           variant="quiet"
           size="icon-2xs"
           class="-mt-0.5 -mr-1 shrink-0"
-          onclick={() => (followUpsStore.unfolded = toggle(followUpsStore.unfolded, f.id))}
+          onclick={() => followUpsStore.toggleUnfolded(f.id)}
           title="Show it on two lines again: a thread is working on it"
           aria-label="Show less of {f.title}"
+          aria-expanded="true"
         ><ChevronUpIcon /></Button>
       {/if}
     </div>
@@ -191,6 +195,8 @@
       <div class="mt-1 text-caption text-muted-foreground">
         Started in <Button variant="link" size="inline" class="text-caption" onclick={() => jumpTo(started)}>{threadName(started)}</Button>
       </div>
+    {:else if startedBefore}
+      <div class="mt-1 text-caption text-muted-foreground">Started before: its thread was closed before the work was done</div>
     {/if}
 
     <!-- Wraps in a narrow drawer, so Delete goes under the rest rather
@@ -201,18 +207,21 @@
         size="2xs"
         onclick={() => startThread(f)}
         title="Open a new thread with this follow-up as its first message, to look over and send"
-      >{started ? 'Start another' : 'Start thread'}</Button>
+      >{started || startedBefore ? 'Start another' : 'Start thread'}</Button>
       <Button
         variant="subtle"
         size="2xs"
         onclick={() => run(() => followUpsStore.setDone(f.id, true))}
-        title="Mark it done: the work is finished"
+        title="Mark this follow-up done: the work is finished"
       >Done</Button>
+      <!-- Named for the follow-up, so it isn't taken for the ✕ that
+           closes the list. -->
       <Button
         variant="subtle"
         size="2xs"
         onclick={() => run(() => followUpsStore.close(f.id))}
-        title="Close it without doing it: it isn't needed, or won't be done. You can reopen it."
+        title="Close this follow-up without doing it: it isn't needed, or won't be done. You can reopen it."
+        aria-label="Close follow-up {f.title}"
       >Close</Button>
       <CopyButton text={followUpPrompt(f)} class="size-5" />
       <span class="ml-auto flex items-center gap-1">
@@ -244,7 +253,7 @@
     <button
       type="button"
       class="w-full flex items-center gap-1.5 min-w-0 text-left text-caption text-foreground/90 hover:text-foreground"
-      onclick={() => (followUpsStore.unfolded = toggle(followUpsStore.unfolded, f.id))}
+      onclick={() => followUpsStore.toggleUnfolded(f.id)}
       title="Show all of it"
       aria-expanded="false"
     >
@@ -266,18 +275,16 @@
         <Button
           variant="quiet"
           size="2xs"
-          class="h-4 px-1 text-micro"
           onclick={() => run(() => followUpsStore.setDone(f.id, true))}
-          title="Mark it done: the work is finished"
+          title="Mark this follow-up done: the work is finished"
           aria-label="Mark {f.title} done"
         >Done</Button>
         <Button
           variant="quiet"
           size="2xs"
-          class="h-4 px-1 text-micro"
           onclick={() => run(() => followUpsStore.close(f.id))}
-          title="Close it without doing it: it isn't needed, or won't be done. You can reopen it."
-          aria-label="Close {f.title}"
+          title="Close this follow-up without doing it: it isn't needed, or won't be done. You can reopen it."
+          aria-label="Close follow-up {f.title}"
         >Close</Button>
       </span>
     </div>
@@ -349,7 +356,7 @@
           variant="quiet"
           size="icon-2xs"
           onclick={() => followUpsStore.toggleDrawer(false)}
-          title="Close (Esc)"
+          title="Close the list (Esc)"
           aria-label="Close follow-ups"
         ><XIcon /></Button>
       {/snippet}

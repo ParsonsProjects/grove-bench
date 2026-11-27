@@ -161,7 +161,8 @@ const PRIORITY_TEXT: Record<FollowUpPriority, string> = {
  *  FOLLOW_UP_LIMITS.detailsInList when it lists several. `withProject`
  *  names its project, for a list that isn't only the thread's own. */
 function describeFollowUp(f: FollowUp, now: number, full: boolean, withProject = false): string {
-  const from = f.fromLabel ? ` in "${f.fromLabel}"${followUpOriginDetail(f)}` : '';
+  const from = f.fromLabel ? ` in "${f.fromLabel}"${followUpOriginDetail(f)}`
+    : f.fromRepoPath ? ` from project ${projectName(f.fromRepoPath)}` : '';
   const project = withProject ? ` Project ${projectName(f.repoPath)}.` : '';
   const lines = [`## ${f.id}: ${f.title}`, `${PRIORITY_TEXT[followUpPriority(f)]}.${project} Added ${formatAge(f.createdAt, { now, long: true })}${from}.`];
   if (f.startedSessionIds?.length) lines.push(`A thread was started from it ${f.startedSessionIds.length === 1 ? 'once' : `${f.startedSessionIds.length} times`}.`);
@@ -284,8 +285,8 @@ export function followUpsServer(ops: FollowUpOperations): GroveServer {
       {
         name: 'followup_close',
         description: 'Close a follow-up that won\'t be done: it isn\'t needed any more (already fixed, or no longer applies), '
-          + 'or the user said to drop it. Works on any project\'s follow-up. The user can reopen it. '
-          + 'For one whose work is finished, use followup_done instead.',
+          + 'or the user said to drop it. Works on any project\'s follow-up, but close another project\'s only when the user asks. '
+          + 'The user can reopen it. For one whose work is finished, use followup_done instead.',
         shape: {
           id: z.string().min(1).describe('The follow-up\'s id, e.g. "3fa2c1".'),
           reason: z.string().optional().describe(`One or two sentences on why it is closed, shown to the user. Cut to ${FOLLOW_UP_LIMITS.note} characters.`),

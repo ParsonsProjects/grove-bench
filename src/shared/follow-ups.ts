@@ -156,7 +156,8 @@ export function followUpOriginDetail(f: Pick<FollowUp, 'fromBranch' | 'fromRepoP
  *  mark it done, or close it if it turns out not to be needed. You can edit
  *  it before sending. */
 export function followUpPrompt(f: Pick<FollowUp, 'id' | 'title' | 'details' | 'fromLabel' | 'fromBranch' | 'fromRepoPath'>): string {
-  const from = f.fromLabel ? ` It was added in the thread "${f.fromLabel}"${followUpOriginDetail(f)}.` : '';
+  const from = f.fromLabel ? ` It was added in the thread "${f.fromLabel}"${followUpOriginDetail(f)}.`
+    : f.fromRepoPath ? ` It was added from project ${projectName(f.fromRepoPath)}.` : '';
   const parts = [f.title.trim(), f.details.trim()].filter(Boolean);
   parts.push(`(This is follow-up ${f.id}.${from} When it's done, mark it done with followup_done. `
     + "If it turns out it isn't needed, close it with followup_close and say why.)");

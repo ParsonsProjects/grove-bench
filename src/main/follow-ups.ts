@@ -308,17 +308,26 @@ function pathKey(p: string): string {
   return p.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 }
 
-/** The project an agent named, from `projects`: its path, or its name (the
- *  folder's, as the sidebar shows it) when no other project has that name.
- *  Throws a message for the agent that lists the names it can use. */
-export function resolveProject(named: string, projects: readonly string[]): string {
+/** The paths in `projects` an agent's words name: the one with that path,
+ *  or else every one with that name (the folder's, as the sidebar shows it). */
+function matchProjects(named: string, projects: readonly string[]): string[] {
   const key = pathKey(named);
   const byPath = projects.find((p) => pathKey(p) === key);
-  if (byPath) return byPath;
-  const byName = projects.filter((p) => projectName(p).toLowerCase() === named.trim().toLowerCase());
-  if (byName.length === 1) return byName[0];
-  if (byName.length > 1) {
-    throw new Error(`More than one project is named "${named.trim()}": ${byName.join(', ')}. Give the path of the one you mean.`);
+  if (byPath) return [byPath];
+  return projects.filter((p) => projectName(p).toLowerCase() === named.trim().toLowerCase());
+}
+
+/** The project an agent named, from `projects`: its path, or its name when
+ *  no other project has that name. Only when none of `projects` matches,
+ *  from `fallback` (a removed project's, whose follow-ups can still be
+ *  read), so a removed project never makes a current one's name ambiguous.
+ *  Throws a message for the agent that lists the names it can use. */
+export function resolveProject(named: string, projects: readonly string[], fallback: readonly string[] = []): string {
+  let found = matchProjects(named, projects);
+  if (found.length === 0) found = matchProjects(named, fallback);
+  if (found.length === 1) return found[0];
+  if (found.length > 1) {
+    throw new Error(`More than one project is named "${named.trim()}": ${found.join(', ')}. Give the path of the one you mean.`);
   }
   const names = projects.map(projectName);
   throw new Error(`There is no project "${named.trim()}" in Grove Bench. `
@@ -363,9 +372,12 @@ export function followUpOperationsFor(
       const all = forUpdate();
       const named = project?.trim();
       if (named?.toLowerCase() === ALL_PROJECTS) return forListing(all, includeDone);
+      if (!named) return forListing(all.filter((f) => f.repoPath === thread.repoPath), includeDone);
       // A removed project's follow-ups can still be read and closed, so its
-      // name counts as well as the listed projects'.
-      const repoPath = named ? resolveProject(named, [...new Set([...await projects(), ...all.map((f) => f.repoPath)])]) : thread.repoPath;
+      // name counts too, when no listed project has it.
+      const listed = await projects();
+      const removed = [...new Set(all.map((f) => f.repoPath))].filter((p) => !listed.includes(p));
+      const repoPath = resolveProject(named, listed, removed);
       return forListing(all.filter((f) => f.repoPath === repoPath), includeDone);
     },
     done: (id, note) => markFollowUpDone(id, { sessionId: thread.id, note }),
@@ -393,7 +405,8 @@ export function followUpsForSystemPrompt(repoPath: string): string {
     + 'Write the details so a new thread with none of this thread\'s context can start on it: what, where (files), why, and what done looks like. '
     + 'Don\'t add one for work you are about to do in this thread. '
     + 'If this thread\'s first message names a follow-up, or your work finishes one listed below, mark it with followup_done when it is done. '
-    + 'If one turns out not to be needed (already fixed, or no longer applies), or the user says to drop it, close it with followup_close and say why. '
+    + 'If one of this project\'s turns out not to be needed (already fixed, or no longer applies), or the user says to drop one, close it with followup_close and say why. '
+    + 'Close another project\'s only when the user asks. '
     + 'They work across projects: followup_list and followup_add take a project (its name or path; "all" lists every project\'s), '
     + 'and followup_done and followup_close take any project\'s id. '
     + 'Don\'t start on a follow-up unless the user asks.';

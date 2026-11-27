@@ -66,16 +66,37 @@ class FollowUpsStore {
   /** Changes that arrived before the list was read, applied to it once it is. */
   private pending: FollowUpsChange[] = [];
   private collapsedLoad: Promise<void> | null = null;
+  /** The saved folds have been read (or couldn't be): changes are saved. */
+  private collapsedReady = false;
+  /** Folds and unfolds made while the saved ones load: true folded. Laid
+   *  over the saved list once it is read, then saved, so neither undoes the
+   *  other. */
+  private foldsWhileLoading = new Map<string, boolean>();
+  /** The in-progress follow-up reveal unfolded, to fold again as the drawer
+   *  closes. Null when it was already unfolded (you did that). */
+  private revealUnfolded: string | null = null;
 
   /** The folded projects, read once. A fold made while it loads wins. */
   loadCollapsed(): Promise<void> {
     this.collapsedLoad ??= (async () => {
+      let saved: string[] = [];
       try {
-        const saved = await window.groveBench.getCollapsedFollowUpProjects();
-        if (Array.isArray(saved) && saved.length > 0) this.collapsed = new Set([...saved, ...this.collapsed]);
+        const read = await window.groveBench.getCollapsedFollowUpProjects();
+        if (Array.isArray(read)) saved = read;
       } catch (e) {
         console.warn('[follow-ups] could not read the folded projects:', e);
       }
+      const next = new Set(saved);
+      for (const [repoPath, fold] of this.foldsWhileLoading) {
+        if (fold) next.add(repoPath);
+        else next.delete(repoPath);
+      }
+      const changed = this.foldsWhileLoading.size > 0;
+      this.foldsWhileLoading.clear();
+      this.collapsed = next;
+      this.collapsedReady = true;
+      if (changed) this.saveCollapsed();
+      this.pruneCollapsed();
     })();
     return this.collapsedLoad;
   }
@@ -85,14 +106,36 @@ class FollowUpsStore {
   }
 
   /** Fold a project down to its heading, or open it (`collapse` unset: the
-   *  other way from now). */
+   *  other way from now). Saved, once the saved folds have been read. */
   toggleCollapsed(repoPath: string, collapse = !this.collapsed.has(repoPath)): void {
     if (collapse === this.collapsed.has(repoPath)) return;
     const next = new Set(this.collapsed);
     if (collapse) next.add(repoPath);
     else next.delete(repoPath);
     this.collapsed = next;
-    window.groveBench.setCollapsedFollowUpProjects([...next]);
+    // Saving now would replace the saved list with only this fold.
+    if (this.collapsedLoad && !this.collapsedReady) {
+      this.foldsWhileLoading.set(repoPath, collapse);
+      return;
+    }
+    this.saveCollapsed();
+  }
+
+  /** The folds, less projects with no follow-ups (the drawer doesn't list
+   *  those), so a project removed while folded isn't kept for good. */
+  private saveCollapsed(): void {
+    const kept = this.ready ? [...this.collapsed].filter((p) => this.list.some((f) => f.repoPath === p)) : [...this.collapsed];
+    window.groveBench.setCollapsedFollowUpProjects(kept);
+  }
+
+  /** Once both the folds and the follow-ups are read: drop and save away
+   *  folds of projects that have no follow-ups left. */
+  private pruneCollapsed(): void {
+    if (!this.collapsedReady || !this.ready) return;
+    const kept = [...this.collapsed].filter((p) => this.list.some((f) => f.repoPath === p));
+    if (kept.length === this.collapsed.size) return;
+    this.collapsed = new Set(kept);
+    this.saveCollapsed();
   }
 
   async load(retryMs = LOAD_RETRY_MS): Promise<void> {
@@ -116,6 +159,7 @@ class FollowUpsStore {
           this.list = this.pending.reduce(applyFollowUpsChange, list);
           this.pending = [];
           this.ready = true;
+          this.pruneCollapsed();
           return;
         }
       } catch (e) {
@@ -176,7 +220,11 @@ class FollowUpsStore {
     const f = this.get(id);
     if (!f) return;
     this.expanded = new Set([...this.expanded, id]);
-    this.unfolded = new Set([...this.unfolded, id]);
+    this.foldRevealed();
+    if (!this.unfolded.has(id)) {
+      this.unfolded = new Set([...this.unfolded, id]);
+      this.revealUnfolded = id;
+    }
     this.toggleCollapsed(f.repoPath, false);
     if (!isFollowUpOpen(f)) this.showEnded = new Set([...this.showEnded, f.repoPath]);
     this.notice = null;
@@ -247,7 +295,29 @@ class FollowUpsStore {
     if (!this.drawerOpen) {
       this.notice = null;
       this.revealId = null;
+      this.foldRevealed();
     }
+  }
+
+  /** Show an in-progress follow-up in full, or on two lines again. Yours
+   *  to keep: closing the drawer doesn't undo it. */
+  toggleUnfolded(id: string): void {
+    if (this.revealUnfolded === id) this.revealUnfolded = null;
+    const next = new Set(this.unfolded);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    this.unfolded = next;
+  }
+
+  /** Back to two lines: the in-progress follow-up the last reveal showed
+   *  in full, if it did that and you haven't since. */
+  private foldRevealed(): void {
+    const id = this.revealUnfolded;
+    this.revealUnfolded = null;
+    if (!id || !this.unfolded.has(id)) return;
+    const next = new Set(this.unfolded);
+    next.delete(id);
+    this.unfolded = next;
   }
 }
 

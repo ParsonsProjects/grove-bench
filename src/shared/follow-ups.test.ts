@@ -41,6 +41,7 @@ describe('followUpPrompt', () => {
     const text = followUpPrompt(fu('a1b2c3', { title: 'Fix it', fromLabel: 'Web work', fromBranch: 'feat/x', fromRepoPath: 'C:\\Code\\web' }));
     expect(text).toContain('It was added in the thread "Web work" (branch feat/x in project web).');
     expect(followUpPrompt(fu('a1b2c3', { fromLabel: 'Web work', fromRepoPath: '/web' }))).toContain('"Web work" (in project web).');
+    expect(followUpPrompt(fu('a1b2c3', { fromRepoPath: '/web' }))).toContain('(This is follow-up a1b2c3. It was added from project web.');
   });
 
   it('tells the agent how to finish it, or close it if it is not needed', () => {

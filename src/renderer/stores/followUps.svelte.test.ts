@@ -135,18 +135,65 @@ describe('followUpsStore folded projects', () => {
     expect(mockGroveBench.setCollapsedFollowUpProjects).not.toHaveBeenCalled();
   });
 
-  it('reads the saved ones once, keeping one folded while they load', async () => {
+  /** A fresh store whose saved folds arrive when `answer` is called. */
+  async function loadingFolds() {
     let answer: (list: string[]) => void = () => {};
     mockGroveBench.getCollapsedFollowUpProjects.mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
     vi.resetModules();
     const { followUpsStore: fresh } = await import('./followUps.svelte.js');
     const loading = fresh.loadCollapsed();
+    return { fresh, loading, answer: (list: string[]) => answer(list) };
+  }
+
+  it('reads the saved ones once, keeping a fold made while they load, and saves both together', async () => {
+    const { fresh, loading, answer } = await loadingFolds();
     fresh.toggleCollapsed('/new');
+    // Not saved yet: that would replace the saved list with this fold alone.
+    expect(mockGroveBench.setCollapsedFollowUpProjects).not.toHaveBeenCalled();
     answer(['/saved']);
     await loading;
     await fresh.loadCollapsed();
     expect([...fresh.collapsed].sort()).toEqual(['/new', '/saved']);
     expect(mockGroveBench.getCollapsedFollowUpProjects).toHaveBeenCalledTimes(1);
+    expect(mockGroveBench.setCollapsedFollowUpProjects).toHaveBeenCalledTimes(1);
+    expect([...mockGroveBench.setCollapsedFollowUpProjects.mock.calls[0][0]].sort()).toEqual(['/new', '/saved']);
+  });
+
+  it("doesn't fold again a saved project opened while they load", async () => {
+    const { fresh, loading, answer } = await loadingFolds();
+    // Folded in memory only, so it can be opened before the answer comes.
+    fresh.collapsed = new Set(['/saved']);
+    fresh.toggleCollapsed('/saved', false);
+    answer(['/saved', '/other']);
+    await loading;
+    expect([...fresh.collapsed]).toEqual(['/other']);
+    expect(mockGroveBench.setCollapsedFollowUpProjects).toHaveBeenLastCalledWith(['/other']);
+  });
+
+  it("saves nothing back when nothing was folded while they loaded", async () => {
+    const { loading, answer } = await loadingFolds();
+    answer(['/saved']);
+    await loading;
+    expect(mockGroveBench.setCollapsedFollowUpProjects).not.toHaveBeenCalled();
+  });
+
+  it('forgets folds of projects with no follow-ups left, once both lists are read', async () => {
+    mockGroveBench.getCollapsedFollowUpProjects.mockResolvedValueOnce(['/kept', '/gone']);
+    mockGroveBench.listFollowUps.mockResolvedValueOnce([fu('a', '/kept')]);
+    vi.resetModules();
+    const { followUpsStore: fresh } = await import('./followUps.svelte.js');
+    await fresh.load(0);
+    await fresh.loadCollapsed();
+    expect([...fresh.collapsed]).toEqual(['/kept']);
+    expect(mockGroveBench.setCollapsedFollowUpProjects).toHaveBeenLastCalledWith(['/kept']);
+  });
+
+  it('saves only folds of projects that have follow-ups', () => {
+    followUpsStore.ready = true;
+    followUpsStore.list = [fu('a', '/a')];
+    followUpsStore.collapsed = new Set(['/stale']);
+    followUpsStore.toggleCollapsed('/a');
+    expect(mockGroveBench.setCollapsedFollowUpProjects).toHaveBeenLastCalledWith(['/a']);
   });
 });
 
@@ -254,13 +301,34 @@ describe('followUpsStore.startedFrom and reveal', () => {
     followUpsStore.toggleDrawer(false);
   });
 
-  it('opens its project if it was folded, and shows it as a whole card if a thread is working on it', () => {
+  it('opens its project if it was folded, and shows it as a whole card until the drawer closes', () => {
     followUpsStore.list = [fu('a', '/r', { startedSessionIds: ['s1'] })];
     followUpsStore.toggleCollapsed('/r', true);
     followUpsStore.reveal('a');
     expect(followUpsStore.isCollapsed('/r')).toBe(false);
     expect(followUpsStore.unfolded.has('a')).toBe(true);
     followUpsStore.toggleDrawer(false);
+    expect(followUpsStore.unfolded.has('a')).toBe(false);
+  });
+
+  it('folds the last one it showed in full when it shows another', () => {
+    followUpsStore.list = [fu('a', '/r'), fu('b', '/r')];
+    followUpsStore.reveal('a');
+    followUpsStore.reveal('b');
+    expect([...followUpsStore.unfolded]).toEqual(['b']);
+    followUpsStore.toggleDrawer(false);
+  });
+
+  it('leaves one you had shown in full as it is', () => {
+    followUpsStore.list = [fu('a', '/r'), fu('b', '/r')];
+    followUpsStore.toggleUnfolded('a');
+    followUpsStore.reveal('a');
+    followUpsStore.reveal('b');
+    // You show this one in full after the reveal did: yours now.
+    followUpsStore.toggleUnfolded('b');
+    followUpsStore.toggleUnfolded('b');
+    followUpsStore.toggleDrawer(false);
+    expect([...followUpsStore.unfolded].sort()).toEqual(['a', 'b']);
   });
 
   it('counts each reveal, the same follow-up again included', () => {

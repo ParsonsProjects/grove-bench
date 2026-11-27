@@ -357,6 +357,15 @@ describe('followUpOperationsFor', () => {
     expect((await ops.list({ project: 'legacy' })).map((f) => f.title)).toEqual(['old']);
   });
 
+  it("takes a listed project over a removed one with the same name, and doesn't name removed ones as its projects", async () => {
+    addFollowUp({ repoPath: '/old/app', title: 'old one', details: '' });
+    addFollowUp({ repoPath: '/work/app', title: 'current one', details: '' });
+    const ops = followUpOperationsFor(thread, async () => ['/repo', '/work/app']);
+    expect((await ops.list({ project: 'app' })).map((f) => f.title)).toEqual(['current one']);
+    expect((await ops.list({ project: '/old/app' })).map((f) => f.title)).toEqual(['old one']);
+    await expect(ops.list({ project: 'web' })).rejects.toThrow('There is no project "web" in Grove Bench. Its projects are: repo, app.');
+  });
+
   it('adds to another project, noting the project it came from', async () => {
     const ops = followUpOperationsFor(thread, async () => ['/repo', '/work/api']);
     const { followUp } = await ops.add({ title: 't', details: '', project: 'api' });
@@ -405,6 +414,7 @@ describe('followUpsForSystemPrompt', () => {
     expect(prompt).toContain('followup_add');
     expect(prompt).toContain('followup_done');
     expect(prompt).toContain('close it with followup_close and say why');
+    expect(prompt).toContain("Close another project's only when the user asks.");
     expect(prompt).toContain('They work across projects');
     expect(prompt).not.toContain('<open_follow_ups>');
   });

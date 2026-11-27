@@ -136,6 +136,16 @@ describe('followUpToolHandlers', () => {
     ].join('\n'));
   });
 
+  it('names the project one came from when the thread that added it had no name', async () => {
+    const ops = fakeOps({ list: vi.fn(async () => [followUp({ fromRepoPath: '/work/web' })]) });
+    expect(textOf(await followUpToolHandlers(ops, () => NOW).list({}))).toContain('Added 2 hours ago from project web.');
+  });
+
+  it('tells the agent to close only its own project\'s unless the user asks', () => {
+    const close = followUpsServer(fakeOps()).tools.find((t) => t.name === 'followup_close')!;
+    expect(close.description).toContain("close another project's only when the user asks");
+  });
+
   it('adds one to another project and says which', async () => {
     const ops = fakeOps({ add: vi.fn(async () => ({ followUp: followUp({ repoPath: '/work/api' }), existing: false })) });
     const res = await followUpToolHandlers(ops).add({ title: 'Add tests', project: 'api' });

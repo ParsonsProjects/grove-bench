@@ -173,15 +173,35 @@ describe('FollowUpsDrawer', () => {
     render(FollowUpsDrawer);
     await fireEvent.click(screen.getByRole('button', { name: 'Mark Add tests for refresh done' }));
     expect(setDone).toHaveBeenCalledWith('a1b2c3', true);
-    await fireEvent.click(screen.getByRole('button', { name: 'Close Add tests for refresh' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Close follow-up Add tests for refresh' }));
     expect(close).toHaveBeenCalledWith('a1b2c3');
   });
 
-  it("shows one whose thread was closed as a whole card, as nothing is working on it", () => {
+  it("shows one whose thread was closed as a whole card, saying it was started before, as the board does", () => {
     followUpsStore.list = [fu({ startedSessionIds: ['gone'] })];
     render(FollowUpsDrawer);
-    expect(screen.getByRole('article', { name: 'Add tests for refresh' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Start thread' })).toBeInTheDocument();
+    const card = screen.getByRole('article', { name: 'Add tests for refresh' });
+    expect(within(card).getByText(/Started before/)).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: 'Start another' })).toBeInTheDocument();
+  });
+
+  it('says the chevron of a whole in-progress card folds it', async () => {
+    store.sessions = [{ id: 's2', branch: 'claude/tests', repoPath: '/repo-a', status: 'running', displayName: 'Refresh tests' }];
+    followUpsStore.list = [fu({ startedSessionIds: ['s2'] })];
+    render(FollowUpsDrawer);
+    expect(screen.getByRole('button', { name: 'Add tests for refresh' })).toHaveAttribute('aria-expanded', 'false');
+    await fireEvent.click(screen.getByRole('button', { name: 'Add tests for refresh' }));
+    expect(screen.getByRole('button', { name: 'Show less of Add tests for refresh' })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('names the project one came from, with or without its thread', () => {
+    followUpsStore.list = [
+      fu({ fromLabel: 'Web work', fromRepoPath: '/repo-b' }),
+      fu({ id: 'eeeeee', title: 'No thread name', fromRepoPath: '/repo-b' }),
+    ];
+    render(FollowUpsDrawer);
+    expect(within(screen.getByRole('article', { name: 'Add tests for refresh' })).getByText(/from Web work in repo-b/)).toBeInTheDocument();
+    expect(within(screen.getByRole('article', { name: 'No thread name' })).getByText(/from project repo-b/)).toBeInTheDocument();
   });
 
   it('marks one done, and shows what went wrong when it fails', async () => {
@@ -197,7 +217,7 @@ describe('FollowUpsDrawer', () => {
     const close = vi.spyOn(followUpsStore, 'close').mockResolvedValue();
     followUpsStore.list = [fu()];
     render(FollowUpsDrawer);
-    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Close follow-up Add tests for refresh' }));
     expect(close).toHaveBeenCalledWith('a1b2c3');
   });
 
