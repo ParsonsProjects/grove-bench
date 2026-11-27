@@ -18,6 +18,7 @@
     pending,
     isError,
     summaryMode = false,
+    headless = false,
   }: {
     sessionId: string;
     /** The edit call (see shared/tool-view.ts). */
@@ -26,9 +27,14 @@
     pending: boolean;
     isError?: boolean;
     summaryMode?: boolean;
+    /** Only the body (output, diff, input): a Summary turn's step line
+     *  already says what the call is (TurnStep). */
+    headless?: boolean;
   } = $props();
 
   let sideBySide = $state(false);
+  /** Summary's one line, opened to show the diff under it. */
+  let summaryOpen = $state(false);
   let filePath = $derived(view.path || 'file');
   /** A whole-file write rather than replacements within the file. */
   let isWrite = $derived(!view.edits?.length && view.write !== undefined);
@@ -76,23 +82,41 @@
         <Pulse />
       {:else if isError}
         <span class="text-destructive">error</span>
+      {:else}
+        <!-- Offered without working the diff out: that waits for a click
+             (quickEditDiff can take 50 ms an edit). -->
+        <Button
+          variant="quiet"
+          size="inline"
+          onclick={() => summaryOpen = !summaryOpen}
+          class="ml-auto shrink-0 select-none"
+          aria-expanded={summaryOpen}
+          title={summaryOpen ? 'Hide the edit' : `Show the edit to ${filePath}`}
+        >
+          {summaryOpen ? 'hide' : 'show'}
+        </Button>
       {/if}
     </div>
+    {#if summaryOpen}
+      <div class="mt-1">{@render diffBody()}</div>
+    {/if}
   </div>
 {:else}
-  <div class="py-1 my-1 border-l-4 border-primary pl-3">
-    <!-- Header -->
+  <div class={headless ? 'py-0.5' : 'py-1 my-1 border-l-4 border-primary pl-3'}>
+    <!-- Header: headless, only the actions (the step's line names the file) -->
     <div class="flex items-center gap-2 text-xs mb-1 group/diff-hdr">
-      <span class="text-primary font-bold">{isWrite ? '+ new file' : 'edit'}</span>
-      <button
-        onclick={openInEditor}
-        class="text-foreground/80 hover:text-primary hover:underline cursor-pointer"
-        title="Open in editor"
-      >{filePath}</button>
-      <CopyButton text={filePath} class="opacity-0 group-hover/diff-hdr:opacity-100 shrink-0" />
-      {#if pending}
+      {#if !headless}
+        <span class="text-primary font-bold">{isWrite ? '+ new file' : 'edit'}</span>
+        <button
+          onclick={openInEditor}
+          class="text-foreground/80 hover:text-primary hover:underline cursor-pointer"
+          title="Open in editor"
+        >{filePath}</button>
+        <CopyButton text={filePath} class="opacity-0 group-hover/diff-hdr:opacity-100 shrink-0" />
+      {/if}
+      {#if pending && !headless}
         <Pulse />
-      {:else if isError}
+      {:else if isError && !headless}
         <span class="text-destructive">error</span>
       {:else if heldBack || diffLines.length > 0}
         <div class="ml-auto flex items-center gap-1">
@@ -123,15 +147,19 @@
       {/if}
     </div>
 
-    {#if heldBack}
-      <LargeDiffNotice kind="edit" size={editSize(view)} label={view.path ? `Show edit to ${view.path}` : undefined} onShow={() => (shown = true)} />
-    {:else}
-      {#if shownDiff && !shownDiff.linedUp}<OldThenNewNotice diff={shownDiff} label={view.path ? `Compare edit to ${view.path} line by line` : undefined} onCompare={() => (compared = true)} />{/if}
-      <DiffView lines={diffLines} {sideBySide} {filePath} deferHighlight />
-    {/if}
+    {@render diffBody()}
 
     {#if isError && result}
       <div class="text-xs text-destructive mt-1">{result}</div>
     {/if}
   </div>
 {/if}
+
+{#snippet diffBody()}
+  {#if heldBack}
+    <LargeDiffNotice kind="edit" size={editSize(view)} label={view.path ? `Show edit to ${view.path}` : undefined} onShow={() => (shown = true)} />
+  {:else}
+    {#if shownDiff && !shownDiff.linedUp}<OldThenNewNotice diff={shownDiff} label={view.path ? `Compare edit to ${view.path} line by line` : undefined} onCompare={() => (compared = true)} />{/if}
+    <DiffView lines={diffLines} {sideBySide} {filePath} deferHighlight />
+  {/if}
+{/snippet}

@@ -11,6 +11,7 @@
     result,
     pending,
     isError,
+    headless = false,
   }: {
     sessionId: string;
     toolName: string;
@@ -19,6 +20,9 @@
     result?: string;
     pending: boolean;
     isError?: boolean;
+    /** Only the body (output, diff, input): a Summary turn's step line
+     *  already says what the call is (TurnStep). */
+    headless?: boolean;
   } = $props();
 
   /** A file read, which can open in the editor (a search names a folder or nothing). */
@@ -43,7 +47,8 @@
   let resultLines = $derived(result ? result.split('\n') : []);
 </script>
 
-<div class="py-1 my-1 border-l-4 border-border pl-3">
+<div class={headless ? 'py-0.5' : 'py-1 my-1 border-l-4 border-border pl-3'}>
+  {#if !headless}
   <div class="flex items-center gap-2 text-xs group/fop-hdr">
     <span class="text-muted-foreground font-bold">{toolName}</span>
     {#if isFileRead}
@@ -74,7 +79,9 @@
     {/if}
   </div>
 
-  {#if result !== undefined && !collapsed}
+  {/if}
+
+  {#if result !== undefined && (headless || !collapsed)}
     <div class="relative group/fop-out">
       <CopyButton text={result} class="absolute top-1 right-1 opacity-0 group-hover/fop-out:opacity-100" />
       <pre class="mt-1 text-xs overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap

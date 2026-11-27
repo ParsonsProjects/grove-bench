@@ -20,7 +20,13 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { focusImagesOnly, type MessageViewMode } from '$lib/message-view.js';
 
-  let { sessionId, msg, viewMode }: { sessionId: string; msg: ChatMessage; viewMode: MessageViewMode } = $props();
+  let { sessionId, msg, viewMode, headless = false }: {
+    sessionId: string;
+    msg: ChatMessage;
+    viewMode: MessageViewMode;
+    /** A tool call's body only, under its step's line in a Summary turn (TurnStep). */
+    headless?: boolean;
+  } = $props();
   let summaryMode = $derived(viewMode !== 'detailed');
 </script>
 
@@ -55,6 +61,7 @@
     pending={msg.pending}
     images={msg.images}
     {summaryMode}
+    {headless}
   />
 
 {:else if msg.kind === 'permission'}

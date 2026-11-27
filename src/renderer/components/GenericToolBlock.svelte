@@ -9,6 +9,7 @@
     result,
     pending,
     isError,
+    headless = false,
   }: {
     toolName: string;
     toolInput: unknown;
@@ -17,6 +18,9 @@
     result?: string;
     pending: boolean;
     isError?: boolean;
+    /** Only the body (output, diff, input): a Summary turn's step line
+     *  already says what the call is (TurnStep). */
+    headless?: boolean;
   } = $props();
 
   let expanded = $state(false);
@@ -40,7 +44,8 @@
   }
 </script>
 
-<div class="py-1 my-1 border-l-4 border-border pl-3">
+<div class={headless ? 'py-0.5' : 'py-1 my-1 border-l-4 border-border pl-3'}>
+  {#if !headless}
   <button
     onclick={() => expanded = !expanded}
     class="w-full flex items-center gap-2 text-left text-xs hover:bg-accent/30 -ml-1 pl-1 py-0.5"
@@ -56,8 +61,9 @@
     {/if}
     <span class="text-muted-foreground transition-transform {expanded ? 'rotate-90' : ''}">&rsaquo;</span>
   </button>
+  {/if}
 
-  {#if expanded}
+  {#if expanded || headless}
     <div class="mt-1 text-xs">
       <div class="text-muted-foreground mb-0.5">input</div>
       <pre class="text-muted-foreground bg-card p-2 overflow-x-auto max-h-48 overflow-y-auto">{formatInput(toolInput)}</pre>

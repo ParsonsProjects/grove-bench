@@ -12,6 +12,7 @@
     isError,
     pending,
     summaryMode = false,
+    headless = false,
   }: {
     toolInput: unknown;
     /** The command, when the caller already knows it (from the tool's view). */
@@ -20,6 +21,9 @@
     isError?: boolean;
     pending: boolean;
     summaryMode?: boolean;
+    /** Only the body (output, diff, input): a Summary turn's step line
+     *  already says what the call is (TurnStep). */
+    headless?: boolean;
   } = $props();
 
 
@@ -77,7 +81,8 @@
   }
 </script>
 
-<div class="py-1 my-1 border-l-4 border-border pl-3">
+<div class={headless ? 'py-0.5' : 'py-1 my-1 border-l-4 border-border pl-3'}>
+  {#if !headless}
   <!-- Command -->
   <div class="flex items-center gap-2 group/cmd">
     <span class="text-cyan-400 text-xs select-none font-bold">$</span>
@@ -112,6 +117,8 @@
       {/if}
     {/if}
   </div>
+
+  {/if}
 
   <!-- Output -->
   {#if result !== undefined && summaryMode}

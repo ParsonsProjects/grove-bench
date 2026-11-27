@@ -41,6 +41,21 @@ describe('DiffBlock', () => {
   });
 });
 
+describe('DiffBlock on one line (Summary)', () => {
+  afterEach(() => vi.mocked(createPatch).mockClear());
+
+  it("offers the diff without working it out until it's opened", async () => {
+    vi.mocked(createPatch).mockClear();
+    const { container } = render(DiffBlock, { sessionId: 's1', view: edit, pending: false, summaryMode: true });
+    expect(createPatch).not.toHaveBeenCalled();
+    expect(container).not.toHaveTextContent('let retries = 3;');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'show' }));
+    expect(createPatch).toHaveBeenCalled();
+    expect(container).toHaveTextContent('let retries = 3;');
+  });
+});
+
 describe('DiffBlock Markdown preview', () => {
   it('offers to read a Markdown file as it renders', async () => {
     mockGroveBench.openWorktreeFile.mockResolvedValueOnce({ kind: 'markdown', content: '# Notes' });
