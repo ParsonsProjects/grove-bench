@@ -8,6 +8,7 @@ import { diffArrays } from 'diff';
 import type { ChatMessage } from '../stores/messages.svelte.js';
 import { actsOutsideProject, isAgentCall, isMessageVisible } from './message-view.js';
 import { toolViewOf, type ToolView } from '../../shared/tool-view.js';
+import { writtenImageOf } from './written-image.js';
 
 type UserMessage = Extract<ChatMessage, { kind: 'user' }>;
 type ResultMessage = Extract<ChatMessage, { kind: 'result' }>;
@@ -88,36 +89,46 @@ function waitsForUser(msg: ChatMessage): boolean {
  *  (cut off, or history without one). */
 export type TurnStatus = 'working' | 'attention' | 'done' | 'error' | 'ended';
 
-/** `live`: the thread's last turn, while the agent runs it. */
+/** `live`: the thread's last turn, while the agent runs it. A turn with a
+ *  result went as the result says: an error note along the way (a checkpoint
+ *  that couldn't be captured, say) doesn't mean the turn failed. Without one,
+ *  an error message is why it stopped. */
 export function turnStatus(turn: Turn, live: boolean): TurnStatus {
   if (live) return turn.msgs.some(waitsForUser) ? 'attention' : 'working';
-  if (turn.result?.isError || turn.msgs.some((m) => m.kind === 'error')) return 'error';
-  return turn.result ? 'done' : 'ended';
+  if (turn.result) return turn.result.isError ? 'error' : 'done';
+  return turn.msgs.some((m) => m.kind === 'error') ? 'error' : 'ended';
 }
 
 /**
- * Whether a message is part of a turn's work, which the card folds behind
- * its work strip: tool calls, thinking, notes written while working
+ * Whether a message is part of a turn's work, which the turn folds behind
+ * its summary line: tool calls, thinking, notes written while working
  * (narrationIds), answered permissions and plain status lines. The rest
  * stays in view: the answer, anything that waits for you or went wrong, your
  * own words, each subagent's line (shown in every view), and tools that may
  * act outside the project, such as an MCP server's (actsOutsideProject).
+ *
+ * `running`: the turn is still under way, so any text may yet turn out to
+ * be a note (a tool call after it makes it one). It counts as a step until
+ * the turn ends, rather than showing and then folding away; ThreadTurn
+ * shows the newest in a slot of its own meanwhile.
  */
-export function isWorkStep(msg: ChatMessage, notes: ReadonlySet<string>): boolean {
+export function isWorkStep(msg: ChatMessage, notes: ReadonlySet<string>, running = false): boolean {
   switch (msg.kind) {
     case 'tool_call': return !isAgentCall(msg) && !actsOutsideProject(msg);
     case 'thinking': return true;
-    case 'text': return notes.has(msg.id);
+    case 'text': return running || notes.has(msg.id);
     case 'permission': return msg.resolved;
     case 'system': return msg.level !== 'warning';
     default: return false;
   }
 }
 
-/** A step of work that shows the images its tool returned while the work is
- *  folded: they're output to look at, as Focus shows them. */
+/** A step of work that shows its images while the work is folded: ones its
+ *  tool returned, or an image file it wrote (writtenImageOf). They're output
+ *  to look at, as Focus and the old Summary showed them. */
 export function showsImagesFolded(msg: ChatMessage): boolean {
-  return msg.kind === 'tool_call' && !isAgentCall(msg) && !!msg.images?.length;
+  if (msg.kind !== 'tool_call' || isAgentCall(msg)) return false;
+  return !!msg.images?.length || !!writtenImageOf(toolViewOf(msg), msg.pending, msg.isError);
 }
 
 /** A command linked to another run of the same command in its turn: a
@@ -188,6 +199,11 @@ export function tallyTurn(msgs: readonly ChatMessage[], links: ReadonlyMap<strin
     if (msg.kind !== 'tool_call') continue;
     const view = toolViewOf(msg);
     if (NOT_A_STEP.has(view.kind)) continue;
+    // A read, search or edit that failed, was denied or hasn't finished read
+    // or changed nothing (yet). A command counts either way: its failures
+    // are counted.
+    const happened = !msg.pending && !msg.isError;
+    if (!happened && (view.kind === 'read' || view.kind === 'search' || view.kind === 'edit')) continue;
     switch (view.kind) {
       case 'read':
         if (view.path) read.add(view.path);

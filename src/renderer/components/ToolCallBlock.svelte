@@ -7,7 +7,7 @@
   import ImageAttachments from './ImageAttachments.svelte';
   import type { StoredImage } from '../../shared/types.js';
   import { toolViewOf, type ToolView } from '../../shared/tool-view.js';
-  import { worktreeImageType } from '../../shared/attachments.js';
+  import { writtenImageOf } from '$lib/written-image.js';
 
   let {
     sessionId,
@@ -35,21 +35,15 @@
     /** Images the tool returned (a screenshot, an image file it read). */
     images?: StoredImage[];
     summaryMode?: boolean;
-    /** Only the body (output, diff, input): a turn card's step line already
-     *  says what the call is (TurnStep). */
+    /** Only the body (output, diff, input): a Summary turn's step line
+     *  already says what the call is (TurnStep). */
     headless?: boolean;
   } = $props();
 
   let view = $derived(toolViewOf({ toolName, toolInput, toolView }));
-  // An image file the call wrote or edited (an SVG, mostly: Write writes
-  // text), as it is in the worktree now. Not one it deleted or moved; and
+  // An image file the call wrote or edited, as it is in the worktree now;
   // left out if it won't load (gone since, or outside the worktree).
-  let writtenImage = $derived(
-    view.kind === 'edit' && view.path && (view.write !== undefined || view.edits?.length) && !pending && !isError
-      && worktreeImageType(view.path)
-      ? { name: view.path, path: view.path }
-      : null,
-  );
+  let writtenImage = $derived(writtenImageOf(view, pending, isError));
 </script>
 
 {#if view.kind === 'shell'}

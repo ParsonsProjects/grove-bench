@@ -18,8 +18,8 @@
     result?: string;
     pending: boolean;
     isError?: boolean;
-    /** Only the body (output, diff, input): a turn card's step line already
-     *  says what the call is (TurnStep). */
+    /** Only the body (output, diff, input): a Summary turn's step line
+     *  already says what the call is (TurnStep). */
     headless?: boolean;
   } = $props();
 

@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * One step of a turn's work on one line, in a turn card's steps
+   * One step of a turn's work on one line, in a Summary turn's steps
    * (ThreadTurn): what kind of step (a pixel icon, StepIcon), what it worked
    * on and how it went. Click it for the rest of the step under the line,
    * without its header again (the command's output, the edit's diff, the
@@ -18,6 +18,7 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { toolLabel } from '$lib/tool-names.js';
   import { editLineCounts, type RetryLink } from '$lib/turns.js';
+  import { writtenImageOf } from '$lib/written-image.js';
   import { toolViewOf, toolViewSummary } from '../../shared/tool-view.js';
 
   let {
@@ -25,12 +26,15 @@
     msg,
     link,
     onlink,
+    flash = false,
   }: {
     sessionId: string;
     msg: ChatMessage;
     /** The other run of this command, when one failed and the other passed. */
     link?: RetryLink;
     onlink?: (to: string) => void;
+    /** Marked for a moment: a retry link just scrolled here. */
+    flash?: boolean;
   } = $props();
 
   let open = $state(false);
@@ -64,8 +68,17 @@
 
   /** Lines of a tool's output, as its block counts them. */
   let outputLines = $derived(msg.kind === 'tool_call' && msg.result ? msg.result.split('\n').length : 0);
-  let edit = $derived(msg.kind === 'tool_call' && toolViewOf(msg).kind === 'edit' ? editLineCounts(msg, toolViewOf(msg)) : null);
+  /** Lines added and removed, for an edit that carries its changes (a
+   *  delete or move by another agent carries none: no +0 −0). */
+  let edit = $derived.by(() => {
+    if (msg.kind !== 'tool_call') return null;
+    const view = toolViewOf(msg);
+    if (view.kind !== 'edit' || (view.write === undefined && !view.edits?.length)) return null;
+    return editLineCounts(msg, view);
+  });
   let images = $derived(msg.kind === 'tool_call' ? msg.images ?? [] : []);
+  /** An image file it wrote, shown under the line as the thread shows it. */
+  let written = $derived(msg.kind === 'tool_call' ? writtenImageOf(toolViewOf(msg), msg.pending, msg.isError) : null);
 </script>
 
 {#if msg.kind === 'text'}
@@ -74,7 +87,7 @@
     <MarkdownBlock content={msg.text} {sessionId} />
   </div>
 {:else if line}
-  <div class="flex items-center gap-2 text-xs leading-5 min-w-0">
+  <div class="flex items-center gap-2 text-xs leading-5 min-w-0 {flash ? 'ring-1 ring-ring' : ''}">
     <button
       type="button"
       class="flex-1 min-w-0 flex items-center gap-2 -mx-1 px-1 text-left hover:bg-accent/50"
@@ -137,8 +150,9 @@
         <ThreadMessage {sessionId} {msg} viewMode="detailed" headless />
       {/if}
     </div>
-  {:else if images.length}
-    <ImageAttachments {sessionId} {images} class="pl-5 mb-1" />
+  {:else}
+    {#if images.length}<ImageAttachments {sessionId} {images} class="pl-5 mb-1" />{/if}
+    {#if written}<ImageAttachments {sessionId} images={[written]} hideUnavailable class="pl-5 mb-1" />{/if}
   {/if}
 {:else}
   <!-- A plain status line: small already. -->

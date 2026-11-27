@@ -86,8 +86,8 @@ function shownInSummary(call: Extract<ChatMessage, { kind: 'tool_call' }>): bool
   return changesFiles(toolViewOf(call), call.toolCategory) || actsOutsideProject(call);
 }
 
-/** A call that may act outside the project, so Summary keeps it in view (in
- *  a turn card too, rather than folded with the steps): an MCP tool other
+/** A call that may act outside the project, so Summary keeps it in view,
+ *  not folded with its turn's steps (lib/turns.ts): an MCP tool other
  *  than Grove's own, or Grove's follow-up tools; or another agent's call
  *  Grove can't place (see shownInSummary). */
 export function actsOutsideProject(call: Extract<ChatMessage, { kind: 'tool_call' }>): boolean {

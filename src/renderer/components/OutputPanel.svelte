@@ -22,6 +22,7 @@
   import { filterVisibleMessages, foldNarration, hasAgentReply, narrationIds, threadMessages, type MessageViewMode, type ThreadRow } from '$lib/message-view.js';
   import { foldsByDefault, groupTurns, isPrompt, isWorkStep, turnStatus, turnViewMessages, type TurnStatus } from '$lib/turns.js';
   import { coveredByPlan } from '$lib/plan-cost.svelte.js';
+  import { usageStore } from '../stores/usage.svelte.js';
   import { dayDividers, dayStart } from '$lib/message-dates.js';
   import { whileShown } from '$lib/while-shown.js';
   import { sessionRepoColor } from '$lib/session-repo-color.js';
@@ -254,8 +255,16 @@
     });
     return state;
   });
-  /** On a plan, a turn's cost isn't billed, so cards leave it out. */
+  /** On a plan, a turn's cost isn't billed, so turns leave it out. */
   let showCost = $derived(coveredByPlan(sessionId) !== true);
+  // Whether it's a plan isn't known until plan usage is asked for, which a
+  // live turn's end does, but not a thread opened from history: ask, as the
+  // status bar does (the store throttles and shares it across threads).
+  $effect(() => {
+    if (!paneShown || coveredByPlan(sessionId) !== null) return;
+    if (!groups.some((g) => g.kind === 'turn' && g.turn.result?.totalCostUsd !== undefined)) return;
+    void untrack(() => usageStore.refresh(sessionId).catch(() => {}));
+  });
 
   /** Open the turn a message is in, and its steps if it's one, so a jump
    *  can scroll to it. */
@@ -265,7 +274,8 @@
       const msg = g.turn.prompt?.id === id ? g.turn.prompt : g.turn.msgs.find((m) => m.id === id);
       if (!msg) continue;
       foldedByReader[g.turn.id] = false;
-      if (isWorkStep(msg, notes)) {
+      const status = turnState.get(g.turn.id)?.status;
+      if (isWorkStep(msg, notes, status === 'working' || status === 'attention')) {
         stepsByReader[g.turn.id] = true;
         allStepsByReader[g.turn.id] = true;
       }
@@ -299,9 +309,10 @@
 
   // ─── First turn: the agent walks to its bench (stores/arrivalScene) ───
   // Stands in for the empty chat and the working row until the first reply
-  // shows, as the view mode shows it: in Summary, say, a first turn of reads
-  // keeps the scene up. Live thinking doesn't end it; the caption says
-  // "Thinking..." instead.
+  // shows, as the view mode shows it: in Focus, say, a first turn of reads
+  // keeps the scene up. In Summary the turn's first step ends it, as the turn
+  // then says what the agent is doing (ThreadTurn). Live thinking doesn't
+  // end it; the caption says "Thinking..." instead.
   let session = $derived(store.sessions.find((s) => s.id === sessionId));
   let agentLive = $derived(session?.status === 'starting' || session?.status === 'installing' || session?.status === 'running');
   // A turn's end counts even where Focus hides it (it went fine).
@@ -903,8 +914,8 @@
     </div>
   {/snippet}
 
-  <!-- A message in a turn card: the card is the row watched, and its day
-       divider goes above the card. -->
+  <!-- A message in a Summary turn: the turn is the row watched, and its day
+       divider goes above the turn. -->
   {#snippet turnRow(msg: ChatMessage, mode: MessageViewMode, content: Snippet | undefined)}
     <div
       data-msg-id={msg.id}
@@ -958,6 +969,8 @@
               allSteps={allStepsByReader[turn.id] ?? false}
               onallsteps={() => { allStepsByReader[turn.id] = true; }}
               {showCost}
+              visible={paneShown}
+              streaming={!!streamingText}
               row={turnRow}
               activity={turn.id === liveTurnId && arrival === null ? liveActivity : undefined}
               live={turn.id === liveTurnId && arrival === null ? liveText : undefined}

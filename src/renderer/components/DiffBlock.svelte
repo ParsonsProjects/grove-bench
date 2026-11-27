@@ -27,8 +27,8 @@
     pending: boolean;
     isError?: boolean;
     summaryMode?: boolean;
-    /** Only the body (output, diff, input): a turn card's step line already
-     *  says what the call is (TurnStep). */
+    /** Only the body (output, diff, input): a Summary turn's step line
+     *  already says what the call is (TurnStep). */
     headless?: boolean;
   } = $props();
 
@@ -82,7 +82,9 @@
         <Pulse />
       {:else if isError}
         <span class="text-destructive">error</span>
-      {:else if heldBack || diffLines.length > 0}
+      {:else}
+        <!-- Offered without working the diff out: that waits for a click
+             (quickEditDiff can take 50 ms an edit). -->
         <Button
           variant="quiet"
           size="inline"

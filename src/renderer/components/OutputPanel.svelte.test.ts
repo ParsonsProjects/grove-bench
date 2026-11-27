@@ -22,6 +22,7 @@ import { store } from '../stores/sessions.svelte.js';
 import { settingsStore } from '../stores/settings.svelte.js';
 import { arrivalScene } from '../stores/arrivalScene.svelte.js';
 import { bookmarkStore } from '../stores/bookmarks.svelte.js';
+import { usageStore } from '../stores/usage.svelte.js';
 
 const SID = 'panel-session';
 
@@ -98,8 +99,10 @@ describe("OutputPanel: a turn's end", () => {
   it("puts a turn's time and cost on its summary line in Summary", () => {
     messageStore.setViewMode(SID, 'summary');
     messageStore.messagesBySession = { [SID]: [{ kind: 'user', id: 'u1', text: 'Fix it' }, { ...done, totalCostUsd: 0.41, durationMs: 192_000 }] };
-    const { getByRole, queryByText } = render(OutputPanel, { sessionId: SID });
-    expect(getByRole('button', { name: /Worked 3m 12s/ })).toHaveTextContent('$0.41');
+    const { container, queryByText } = render(OutputPanel, { sessionId: SID });
+    // No steps, so the line is text rather than a button that opens them.
+    const turn = container.querySelector('[data-turn="u1"]')!;
+    expect(turn).toHaveTextContent('Worked 3m 12s $0.41');
     expect(queryByText(/done/)).toBeNull();
   });
 
@@ -1727,6 +1730,9 @@ describe('OutputPanel: turns in Summary', () => {
   afterEach(() => {
     messageStore.isRunning = {};
     messageStore.viewModeBySession = {};
+    messageStore.activityBySession = {};
+    messageStore.streamingText = {};
+    vi.restoreAllMocks();
   });
 
   it('folds turns before the last two to one line, and opens one when clicked', async () => {
@@ -1789,7 +1795,60 @@ describe('OutputPanel: turns in Summary', () => {
     expect(live).toHaveTextContent('Running Bash npm test');
     // Once, in the turn: not again under the thread.
     expect(container.textContent!.split('Running Bash').length - 1).toBe(1);
-    messageStore.activityBySession = {};
+  });
+
+  it("keeps a running turn's newest note in view, replaced as the next comes, not shown and then folded", async () => {
+    const note = (id: string, text: string): ChatMessage => ({ kind: 'text', id, text, uuid: `u-${id}` });
+    messageStore.messagesBySession = { [SID]: [prompt('u1'), note('n1', 'Let me check the config')] };
+    messageStore.setIsRunning(SID, true);
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await tick();
+    expect(container.querySelector('[data-msg-id="n1"]')).toHaveTextContent('Let me check the config');
+
+    // A tool call after it makes it a note: it stays where it was.
+    messageStore.messagesBySession = { [SID]: [prompt('u1'), note('n1', 'Let me check the config'), bash('b1', 'cat config.json')] };
+    await tick();
+    expect(container.querySelector('[data-msg-id="n1"]')).not.toBeNull();
+    expect(container.querySelector('[data-msg-id="b1"]')).toBeNull();
+
+    // The next note takes its place.
+    messageStore.messagesBySession = { [SID]: [prompt('u1'), note('n1', 'Let me check the config'), bash('b1', 'cat config.json'), note('n2', 'Now the tests')] };
+    await tick();
+    expect(container.querySelector('[data-msg-id="n1"]')).toBeNull();
+    expect(container.querySelector('[data-msg-id="n2"]')).toHaveTextContent('Now the tests');
+
+    // The turn ends: the answer is in view; the earlier note folds with the steps.
+    messageStore.messagesBySession = { [SID]: [prompt('u1'), note('n1', 'Let me check the config'), bash('b1', 'cat config.json'), note('n2', 'Fixed it'), done('r1')] };
+    messageStore.setIsRunning(SID, false);
+    await tick();
+    expect(container.querySelector('[data-msg-id="n2"]')).toHaveTextContent('Fixed it');
+    expect(container.querySelector('[data-msg-id="n1"]')).toBeNull();
+  });
+
+  it("shows an image the agent wrote while the turn's steps are folded", async () => {
+    messageStore.messagesBySession = {
+      [SID]: [prompt('u1'), { kind: 'tool_call', id: 'w1', toolName: 'Write', toolInput: { file_path: 'chart.svg', content: '<svg/>' }, toolUseId: 'tu-w1', uuid: '', pending: false, result: 'ok' }, reply('a1'), done('r1')],
+    };
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await tick();
+    expect(container.querySelector('[data-msg-id="w1"] img')).toHaveAttribute('src', `grove-attachment://worktree/${SID}/chart.svg`);
+  });
+
+  it('draws the summary line as text, not a button, for a turn with no steps', async () => {
+    messageStore.messagesBySession = { [SID]: [prompt('u1'), reply('a1'), done('r1')] };
+    const { container } = render(OutputPanel, { sessionId: SID });
+    await tick();
+    const turn = container.querySelector('[data-turn="u1"]') as HTMLElement;
+    expect(turn).toHaveTextContent('Worked 41s');
+    expect(within(turn).queryByRole('button', { name: /Worked 41s/ })).toBeNull();
+  });
+
+  it("asks whether it's a plan when a turn has a cost and that isn't known yet", async () => {
+    const refresh = vi.spyOn(usageStore, 'refresh').mockResolvedValue();
+    messageStore.messagesBySession = { [SID]: [prompt('u1'), reply('a1'), { ...done('r1'), totalCostUsd: 0.41 } as ChatMessage] };
+    render(OutputPanel, { sessionId: SID });
+    await tick();
+    expect(refresh).toHaveBeenCalledWith(SID);
   });
 
   it('links a command that failed to the run that passed, and says so in the strip', async () => {
@@ -1812,7 +1871,7 @@ describe('OutputPanel: turns in Summary', () => {
     expect(passed).toHaveTextContent('→ passed ↓');
     await fireEvent.click(passed);
     expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
-    expect(container.querySelector('[data-msg-id="p1"]')).toHaveClass('ring-1');
+    expect(container.querySelector('[data-msg-id="p1"] .ring-1')).not.toBeNull();
     expect(getByRole('button', { name: 'A retry of a run that failed: show that run' })).toHaveTextContent('← retry ↑');
   });
 
@@ -1881,7 +1940,6 @@ describe('OutputPanel: turns in Summary', () => {
     // Still Summary: nothing had to switch views to find it.
     expect(messageStore.getViewMode(SID)).toBe('summary');
     await vi.waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
-    vi.restoreAllMocks();
   });
 
   it('draws messages before the first prompt as rows, as Summary did', async () => {

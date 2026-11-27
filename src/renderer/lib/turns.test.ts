@@ -71,6 +71,11 @@ describe('turnStatus', () => {
     expect(turnStatus(turn([{ kind: 'error', id: 'e', text: 'API error' }]), false)).toBe('error');
     expect(turnStatus(turn([text('a')]), false)).toBe('ended');
   });
+
+  it('goes by the result when there is one, not an error note along the way', () => {
+    const note: ChatMessage = { kind: 'error', id: 'e', text: 'Checkpoint could not be captured for this message' };
+    expect(turnStatus(turn([note, text('a'), result('r')]), false)).toBe('done');
+  });
 });
 
 describe('isWorkStep', () => {
@@ -98,9 +103,16 @@ describe('isWorkStep', () => {
     expect(isWorkStep(tool('m', 'mcp__grove-memory__memory_read', {}), notes)).toBe(true);
   });
 
-  it("shows a tool's images while its work is folded", () => {
+  it("shows a tool's images, and an image file it wrote, while its work is folded", () => {
     expect(showsImagesFolded(tool('s', 'screenshot', {}, { images: [{ file: 'a.png', mediaType: 'image/png' }] }))).toBe(true);
+    expect(showsImagesFolded(tool('w', 'Write', { file_path: 'chart.svg', content: '<svg/>' }))).toBe(true);
+    expect(showsImagesFolded(tool('f', 'Write', { file_path: 'chart.svg', content: '<svg/>' }, { isError: true }))).toBe(false);
     expect(showsImagesFolded(tool('r', 'Read', { file_path: 'a' }))).toBe(false);
+  });
+
+  it('counts any text as a step while the turn runs', () => {
+    expect(isWorkStep(text('answer'), notes, true)).toBe(true);
+    expect(isWorkStep(text('answer'), notes, false)).toBe(false);
   });
 });
 
@@ -148,6 +160,20 @@ describe('tallyTurn', () => {
     expect([t.add, t.del]).toEqual([4, 1]);
     expect([t.commands, t.failed, t.passedOnRetry]).toEqual([3, 2, 1]);
     expect(t.other).toBe(1);
+  });
+
+  it("doesn't count reads, searches or edits that failed, were denied or haven't finished", () => {
+    const msgs = [
+      tool('e1', 'Edit', { file_path: 'a.ts', old_string: 'x', new_string: 'y' }, { isError: true, result: 'String to replace not found' }),
+      tool('e2', 'Edit', { file_path: 'a.ts', old_string: 'a', new_string: 'b' }),
+      tool('w1', 'Write', { file_path: 'denied.ts', content: 'z' }, { isError: true, result: 'Permission denied' }),
+      tool('e3', 'Edit', { file_path: 'b.ts', old_string: 'a', new_string: 'b' }, { pending: true, result: undefined }),
+      tool('r1', 'Read', { file_path: 'missing.ts' }, { isError: true }),
+      tool('g1', 'Grep', { pattern: 'x' }, { pending: true, result: undefined }),
+    ];
+    const t = tallyTurn(msgs, retryLinks(msgs));
+    expect([...t.edits]).toEqual([['a.ts', { add: 1, del: 1 }]]);
+    expect([t.filesRead, t.searches]).toEqual([0, 0]);
   });
 });
 

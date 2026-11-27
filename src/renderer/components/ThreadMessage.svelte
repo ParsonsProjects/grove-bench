@@ -24,7 +24,7 @@
     sessionId: string;
     msg: ChatMessage;
     viewMode: MessageViewMode;
-    /** A tool call's body only, under its step's line in a turn card (TurnStep). */
+    /** A tool call's body only, under its step's line in a Summary turn (TurnStep). */
     headless?: boolean;
   } = $props();
   let summaryMode = $derived(viewMode !== 'detailed');
