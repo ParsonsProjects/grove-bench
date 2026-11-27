@@ -6,7 +6,7 @@
 export const GROVE_TOOL_NAMES = {
   'grove-memory': ['memory_list', 'memory_read', 'memory_write', 'memory_delete'],
   'grove-preview': ['preview_open', 'preview_screenshot', 'preview_read', 'preview_logs', 'preview_click', 'preview_type'],
-  'grove-followups': ['followup_add', 'followup_list', 'followup_done'],
+  'grove-followups': ['followup_add', 'followup_list', 'followup_done', 'followup_close'],
 } as const;
 
 export type GroveServerName = keyof typeof GROVE_TOOL_NAMES;
@@ -14,10 +14,10 @@ export type GroveServerName = keyof typeof GROVE_TOOL_NAMES;
 type GroveToolName = (typeof GROVE_TOOL_NAMES)[GroveServerName][number];
 
 /** Grove's tools the Thread tab's Summary still shows, where it hides the
- *  rest of Grove's: adding a follow-up and marking one done change what is
- *  left for later threads. Typed against the table, so a rename there
+ *  rest of Grove's: adding a follow-up, marking one done and closing one
+ *  change what is left for later threads. Typed against the table, so a rename there
  *  can't leave this list behind. */
-export const GROVE_TOOLS_IN_SUMMARY: ReadonlySet<string> = new Set<GroveToolName>(['followup_add', 'followup_done']);
+export const GROVE_TOOLS_IN_SUMMARY: ReadonlySet<string> = new Set<GroveToolName>(['followup_add', 'followup_done', 'followup_close']);
 
 export const GROVE_SERVER_NAMES = Object.keys(GROVE_TOOL_NAMES) as GroveServerName[];
 

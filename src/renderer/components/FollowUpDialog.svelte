@@ -57,7 +57,7 @@
     if (followUpsStore.openIn(repo) >= FOLLOW_UP_LIMITS.openPerProject) {
       message = {
         tone: 'warning',
-        text: `${store.repoDisplayName(repo)} already has ${FOLLOW_UP_LIMITS.openPerProject} open follow-ups, the most a project can have. Mark finished ones done, or delete some, first.`,
+        text: `${store.repoDisplayName(repo)} already has ${FOLLOW_UP_LIMITS.openPerProject} open follow-ups, the most a project can have. Mark finished ones done, or close or delete some, first.`,
       };
       return;
     }

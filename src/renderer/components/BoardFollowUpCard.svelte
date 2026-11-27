@@ -8,11 +8,12 @@
    * A follow-up in the board's first column: work for a later thread, not
    * started yet. A dashed edge, like the new thread's mark in the sidebar:
    * nothing is running for it. Start thread opens the new thread with it as
-   * the first message (draftStore.openFollowUp), as the drawer does. Its
+   * the first message (draftStore.openFollowUp), as the drawer does. Done
+   * and Close take it off the board (Close: it won't be done). Its
    * priority, on the right of the buttons, can be changed there; high
    * gives the card an amber edge.
    */
-  let { followUp, startedBefore, projectName, projectColor, showProject, onstart, ondone, onpriority }: {
+  let { followUp, startedBefore, projectName, projectColor, showProject, onstart, ondone, onclose, onpriority }: {
     followUp: FollowUp;
     /** A thread was started from it and closed before the work was done. */
     startedBefore: boolean;
@@ -22,6 +23,7 @@
     showProject: boolean;
     onstart: () => void;
     ondone: () => void;
+    onclose: () => void;
     onpriority: (priority: FollowUpPriority) => void;
   } = $props();
 
@@ -56,7 +58,13 @@
       onclick={onstart}
       title="Open a new thread with this follow-up as its first message, to look over and send"
     >{startedBefore ? 'Start another' : 'Start thread'}</Button>
-    <Button variant="subtle" size="2xs" onclick={ondone} title="Mark it done">Done</Button>
+    <Button variant="subtle" size="2xs" onclick={ondone} title="Mark it done: the work is finished">Done</Button>
+    <Button
+      variant="subtle"
+      size="2xs"
+      onclick={onclose}
+      title="Close it without doing it: it isn't needed, or won't be done. You can reopen it in Follow-ups."
+    >Close</Button>
     <span class="ml-auto"><FollowUpPriorityPicker value={priority} title={followUp.title} onchange={onpriority} /></span>
   </span>
 </article>

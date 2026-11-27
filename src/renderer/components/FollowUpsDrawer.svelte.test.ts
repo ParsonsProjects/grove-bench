@@ -22,7 +22,10 @@ beforeEach(() => {
   followUpsStore.loadFailed = false;
   followUpsStore.notice = null;
   followUpsStore.expanded = new Set();
-  followUpsStore.showDone = new Set();
+  followUpsStore.unfolded = new Set();
+  followUpsStore.showEnded = new Set();
+  followUpsStore.collapsed = new Set();
+  followUpsStore.scrollTop = 0;
   followUpsStore.drawerOpen = true;
   store.repos = ['/repo-a', '/repo-b'];
   store.sessions = [];
@@ -136,13 +139,49 @@ describe('FollowUpsDrawer', () => {
     expect(screen.getByText(/project was removed/)).toBeInTheDocument();
   });
 
-  it('shows the thread started from one, and offers another', () => {
+  it('shows one a thread is working on as two lines, after the ones not started, and in full when its title is clicked', async () => {
+    store.sessions = [{ id: 's2', branch: 'claude/tests', repoPath: '/repo-a', status: 'running', displayName: 'Refresh tests' }];
+    followUpsStore.list = [
+      fu({ startedSessionIds: ['s2'], priority: 'high' }),
+      fu({ id: 'dddddd', title: 'Not started', priority: 'low' }),
+    ];
+    render(FollowUpsDrawer);
+    const titles = screen.getAllByRole('article').map((a) => a.getAttribute('aria-label'));
+    expect(titles).toEqual(['Not started', 'Add tests for refresh, in progress']);
+    const small = screen.getByRole('article', { name: 'Add tests for refresh, in progress' });
+    expect(within(small).getByText(/In progress in/)).toBeInTheDocument();
+    expect(within(small).queryByText('Cover the expired token path.')).not.toBeInTheDocument();
+    expect(within(small).queryByRole('button', { name: 'Start another' })).not.toBeInTheDocument();
+
+    await fireEvent.click(within(small).getByRole('button', { name: 'Add tests for refresh' }));
+    const full = screen.getByRole('article', { name: 'Add tests for refresh' });
+    expect(within(full).getByText('Cover the expired token path.')).toBeInTheDocument();
+    expect(within(full).getByText(/Started in/)).toBeInTheDocument();
+    expect(within(full).getByRole('button', { name: 'Start another' })).toBeInTheDocument();
+    await fireEvent.click(within(full).getByRole('button', { name: 'Show less of Add tests for refresh' }));
+    const again = screen.getByRole('article', { name: 'Add tests for refresh, in progress' });
+
+    await fireEvent.click(within(again).getByRole('button', { name: 'Refresh tests' }));
+    expect(store.activeSessionId).toBe('s2');
+  });
+
+  it('marks done or closes one a thread is working on from its two lines', async () => {
+    const setDone = vi.spyOn(followUpsStore, 'setDone').mockResolvedValue();
+    const close = vi.spyOn(followUpsStore, 'close').mockResolvedValue();
     store.sessions = [{ id: 's2', branch: 'claude/tests', repoPath: '/repo-a', status: 'running', displayName: 'Refresh tests' }];
     followUpsStore.list = [fu({ startedSessionIds: ['s2'] })];
     render(FollowUpsDrawer);
-    expect(screen.getByText(/Started in/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Refresh tests' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Start another' })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Mark Add tests for refresh done' }));
+    expect(setDone).toHaveBeenCalledWith('a1b2c3', true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Close Add tests for refresh' }));
+    expect(close).toHaveBeenCalledWith('a1b2c3');
+  });
+
+  it("shows one whose thread was closed as a whole card, as nothing is working on it", () => {
+    followUpsStore.list = [fu({ startedSessionIds: ['gone'] })];
+    render(FollowUpsDrawer);
+    expect(screen.getByRole('article', { name: 'Add tests for refresh' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start thread' })).toBeInTheDocument();
   });
 
   it('marks one done, and shows what went wrong when it fails', async () => {
@@ -152,6 +191,14 @@ describe('FollowUpsDrawer', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     expect(setDone).toHaveBeenCalledWith('a1b2c3', true);
     expect(await screen.findByText("Couldn't read them")).toBeInTheDocument();
+  });
+
+  it('closes one without doing it', async () => {
+    const close = vi.spyOn(followUpsStore, 'close').mockResolvedValue();
+    followUpsStore.list = [fu()];
+    render(FollowUpsDrawer);
+    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(close).toHaveBeenCalledWith('a1b2c3');
   });
 
   it('deletes one', async () => {
@@ -172,6 +219,63 @@ describe('FollowUpsDrawer', () => {
     expect(screen.getByText('Added three tests')).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Reopen' }));
     expect(setDone).toHaveBeenCalledWith('a1b2c3', false);
+  });
+
+  it('keeps closed ones with done ones, saying which is which and why one was closed', async () => {
+    const setDone = vi.spyOn(followUpsStore, 'setDone').mockResolvedValue();
+    store.sessions = [{ id: 's3', branch: 'claude/auth', repoPath: '/repo-a', status: 'stopped', displayName: 'Auth work' }];
+    followUpsStore.list = [
+      fu({ id: 'aaaaaa', title: 'Finished', doneAt: Date.now() - 1000 }),
+      fu({ id: 'bbbbbb', title: 'Dropped', closedAt: Date.now(), closedBySessionId: 's3', closeReason: 'Fixed upstream' }),
+    ];
+    render(FollowUpsDrawer);
+    await fireEvent.click(screen.getByRole('button', { name: 'Show done and closed (2)' }));
+    const closed = screen.getByRole('article', { name: 'Dropped, closed' });
+    expect(within(closed).getByText(/Closed/)).toBeInTheDocument();
+    expect(within(closed).getByText('Fixed upstream')).toBeInTheDocument();
+    expect(within(closed).getByRole('button', { name: 'Auth work' })).toBeInTheDocument();
+    expect(screen.getByRole('article', { name: 'Finished, done' })).toBeInTheDocument();
+    await fireEvent.click(within(closed).getByRole('button', { name: 'Reopen' }));
+    expect(setDone).toHaveBeenCalledWith('bbbbbb', false);
+    expect(screen.getByRole('button', { name: 'Hide done and closed' })).toBeInTheDocument();
+  });
+
+  it('says "closed" when every one of them was closed', () => {
+    followUpsStore.list = [fu({ closedAt: Date.now() })];
+    render(FollowUpsDrawer);
+    expect(screen.getByRole('button', { name: 'Show closed (1)' })).toBeInTheDocument();
+  });
+
+  it('folds a project down to its heading, saying how many are in progress', async () => {
+    store.sessions = [{ id: 's2', branch: 'claude/tests', repoPath: '/repo-a', status: 'running', displayName: 'Refresh tests' }];
+    followUpsStore.list = [
+      fu(),
+      fu({ id: 'bbbbbb', title: 'Being done', startedSessionIds: ['s2'] }),
+      fu({ id: 'cccccc', repoPath: '/repo-b', title: 'Other project' }),
+    ];
+    render(FollowUpsDrawer);
+    const heading = screen.getByRole('button', { name: /repo-a/ });
+    expect(heading).toHaveAttribute('aria-expanded', 'true');
+    await fireEvent.click(heading);
+    expect(heading).toHaveAttribute('aria-expanded', 'false');
+    expect(mockGroveBench.setCollapsedFollowUpProjects).toHaveBeenLastCalledWith(['/repo-a']);
+    expect(screen.queryByRole('article', { name: 'Add tests for refresh' })).not.toBeInTheDocument();
+    expect(within(heading).getByText('1 in progress')).toBeInTheDocument();
+    expect(screen.getByRole('article', { name: 'Other project' })).toBeInTheDocument();
+    await fireEvent.click(heading);
+    expect(screen.getByRole('article', { name: 'Add tests for refresh' })).toBeInTheDocument();
+  });
+
+  it('opens where the list was scrolled to when it closed', async () => {
+    followUpsStore.list = [fu()];
+    const first = render(FollowUpsDrawer);
+    const list = first.container.querySelector<HTMLElement>('aside > .overflow-y-auto')!;
+    list.scrollTop = 140;
+    await fireEvent.scroll(list);
+    expect(followUpsStore.scrollTop).toBe(140);
+    first.unmount();
+    const again = render(FollowUpsDrawer);
+    expect(again.container.querySelector<HTMLElement>('aside > .overflow-y-auto')!.scrollTop).toBe(140);
   });
 
   it('closes on Esc', async () => {
@@ -206,7 +310,7 @@ describe('FollowUpsDrawer: showing one follow-up', () => {
     followUpsStore.drawerOpen = false;
     followUpsStore.reveal('aa0002');
     render(FollowUpsDrawer);
-    const shown = screen.getByRole('article', { name: 'Finished one' });
+    const shown = screen.getByRole('article', { name: 'Finished one, done' });
     expect(shown).toHaveAttribute('aria-current', 'true');
     expect(screen.getByRole('article', { name: 'Open one' })).not.toHaveAttribute('aria-current');
     followUpsStore.toggleDrawer(false);

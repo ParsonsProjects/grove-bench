@@ -54,7 +54,7 @@ import { deleteSchedule, listSchedules, recordScheduleRun, saveSchedule } from '
 import { linkSkills, setSkillReach, skillSharing } from './skill-sharing.js';
 import { CLAUDE_SKILL_DIRS, markWorktreeOnly, readSkillFile, readsSharedSkills, saveSkillFile, type SkillDirs } from './skills.js';
 import { accountLinkDirs } from './session-skills.js';
-import { listProjects, lastAddedProject, rememberProject, forgetProject, loadOpenTabs, saveOpenTabs, loadCollapsedRepos, saveCollapsedRepos, loadSessionSort, saveSessionSort, loadBoardLayout, saveBoardLayout, loadSidebarWidth, saveSidebarWidth, loadCollapsedPanels, saveCollapsedPanels, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, saveTodoSessionIds, loadTodoSessionIds, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
+import { listProjects, lastAddedProject, rememberProject, forgetProject, loadOpenTabs, saveOpenTabs, loadCollapsedRepos, saveCollapsedRepos, loadSessionSort, saveSessionSort, loadBoardLayout, saveBoardLayout, loadSidebarWidth, saveSidebarWidth, loadCollapsedPanels, saveCollapsedPanels, loadCollapsedFollowUpProjects, saveCollapsedFollowUpProjects, loadConversationGroups, saveConversationGroups, saveUnreadSessionIds, loadUnreadSessionIds, saveTodoSessionIds, loadTodoSessionIds, loadPrerequisiteCache, savePrerequisiteCache, loadUsageSnapshot } from './app-state.js';
 import { logRendererError } from './crash-handling.js';
 import { freezeLog } from './freeze-log.js';
 import { isThreadId } from './session-event-store.js';
@@ -2676,6 +2676,10 @@ export function registerHandlers() {
     else followUps.reopenFollowUp(id);
   });
 
+  ipcMain.handle(IPC.FOLLOW_UP_CLOSE, (_event, id: string) => {
+    followUps.closeFollowUp(id);
+  });
+
   ipcMain.handle(IPC.FOLLOW_UP_SET_PRIORITY, (_event, id: string, priority: unknown) => {
     if (!isFollowUpPriority(priority)) throw new Error('That is not a follow-up priority.');
     followUps.setFollowUpPriority(id, priority);
@@ -2754,6 +2758,12 @@ export function registerHandlers() {
 
   ipcMain.on(IPC.APP_STATE_SET_COLLAPSED_PANELS, (_event, panels: unknown) => {
     saveCollapsedPanels(panels);
+  });
+
+  ipcMain.handle(IPC.APP_STATE_GET_COLLAPSED_FOLLOW_UP_PROJECTS, () => loadCollapsedFollowUpProjects());
+
+  ipcMain.on(IPC.APP_STATE_SET_COLLAPSED_FOLLOW_UP_PROJECTS, (_event, repoPaths: unknown) => {
+    saveCollapsedFollowUpProjects(repoPaths);
   });
 
   ipcMain.handle(IPC.APP_STATE_GET_GROUPS, () => loadConversationGroups());

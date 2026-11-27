@@ -66,6 +66,11 @@ const demoFollowUps: FollowUp[] = [
     id: '51ee02', repoPath: REPO_B, title: 'Drop the unused retry helper', details: '',
     createdAt: now - 2 * 24 * 60 * min, doneAt: now - 26 * 60 * min, doneBySessionId: 's-perf', doneNote: 'Removed retryWithJitter and its test.',
   },
+  {
+    id: '9a04bd', repoPath: REPO_B, title: 'Cache the JWKS response between refreshes', details: '',
+    createdAt: now - 3 * 24 * 60 * min, closedAt: now - 30 * 60 * min, closedBySessionId: 's-oauth',
+    closeReason: 'The key rotation fix fetches the keys once per process, so there is nothing left to cache.',
+  },
 ];
 
 const followUpListeners = new Set<(change: FollowUpsChange) => void>();
@@ -563,7 +568,7 @@ const api: Record<string, unknown> = {
     return () => followUpListeners.delete(callback);
   },
   addFollowUp: async (repoPath: string, title: string, details: string, priority?: FollowUpPriority) => {
-    const same = demoFollowUps.find((f) => f.repoPath === repoPath && f.doneAt === undefined && f.title.toLowerCase() === title.trim().toLowerCase());
+    const same = demoFollowUps.find((f) => f.repoPath === repoPath && f.doneAt === undefined && f.closedAt === undefined && f.title.toLowerCase() === title.trim().toLowerCase());
     if (same) return { followUp: structuredClone(same), existing: true };
     const followUp: FollowUp = {
       id: Math.random().toString(16).slice(2, 8), repoPath, title: title.trim(), details: details.trim(), createdAt: Date.now(), priority: priority ?? 'normal',
@@ -575,8 +580,22 @@ const api: Record<string, unknown> = {
   setFollowUpDone: async (id: string, done: boolean) => {
     const f = demoFollowUps.find((x) => x.id === id);
     if (!f) return;
-    if (done) f.doneAt = Date.now();
-    else delete f.doneAt;
+    if (done) {
+      f.doneAt = Date.now();
+      delete f.closedAt;
+      delete f.closeReason;
+    } else {
+      delete f.doneAt;
+      delete f.doneNote;
+      delete f.closedAt;
+      delete f.closeReason;
+    }
+    changeFollowUp(f);
+  },
+  closeFollowUp: async (id: string) => {
+    const f = demoFollowUps.find((x) => x.id === id);
+    if (!f || f.doneAt !== undefined || f.closedAt !== undefined) return;
+    f.closedAt = Date.now();
     changeFollowUp(f);
   },
   setFollowUpPriority: async (id: string, priority: FollowUpPriority) => {
@@ -598,6 +617,7 @@ const api: Record<string, unknown> = {
   setBoardLayout: () => {},
   getSidebarWidth: async () => 320,
   getCollapsedPanels: async () => ({}),
+  getCollapsedFollowUpProjects: async () => [],
   // One piece of work across both projects: the API fix and the sign-in UI that uses it.
   getConversationGroups: async () => [
     { id: 'g-oauth', name: 'OAuth refresh', sessionIds: ['s-oauth', 's-oauth-ui'] },

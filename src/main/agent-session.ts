@@ -7,7 +7,7 @@ import { userEventText } from '../shared/prompt-text.js';
 import { openCutOff } from '../shared/cut-off.js';
 import { errorMessage } from '../shared/error-message.js';
 import { applyRateLimit } from '../shared/usage.js';
-import { loadUsageSnapshot, saveUsageSnapshot } from './app-state.js';
+import { listProjects, loadUsageSnapshot, saveUsageSnapshot } from './app-state.js';
 import { handoffTranscript, isSlashCommand, lastAgentChange, pendingHandoff } from './agent-handoff.js';
 import { attachmentsFolder, imagePath, pruneAttachments, removeAttachments, saveFiles, saveImages, storeMadeFiles, storeToolImages } from './attachments.js';
 import { TurnFiles } from './turn-files.js';
@@ -649,7 +649,7 @@ class AgentSessionManager {
         write: (p, c) => memory.writeMemoryFile(session.repoPath, p, c),
         delete: (p) => memory.deleteMemoryFile(session.repoPath, p),
       },
-      followUpOperations: followUps.followUpOperationsFor(session),
+      followUpOperations: followUps.followUpOperationsFor(session, async () => listProjects(await worktreeManager.listRepos())),
       previewOperations: currentSettings.previewAgentTools
         ? previewManager.operationsFor(id, session.worktreePath, session.repoPath)
         : null,

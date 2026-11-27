@@ -4,17 +4,22 @@
  * follow-up tools (grove-followups, wired up in agent-session.ts), the window
  * through IPC; either way every window is told what changed
  * (onFollowUpsChanged), so the drawer shows a follow-up the moment an agent
- * adds it.
+ * adds it. An agent's tools reach every project's follow-ups, not only its
+ * own thread's project (followUpOperationsFor).
  */
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { app } from 'electron';
 import {
+  ALL_PROJECTS,
   FOLLOW_UP_LIMITS,
   byFollowUpPriority,
+  followUpEndedAt,
   followUpPriority,
   followUpPriorityRank,
+  isFollowUpOpen,
   isFollowUpPriority,
+  projectName,
   type FollowUp,
   type FollowUpPriority,
   type FollowUpsChange,
@@ -73,21 +78,21 @@ function forUpdate(): FollowUp[] {
 }
 
 /** Keep `next`, whose new or changed entries are `upserted`: drop the
- *  oldest done ones past the cap in each project, save, and tell the
- *  windows what changed. Throws when it can't be saved, leaving the list as
- *  it was, so no one is told a change was made that a restart would lose. */
+ *  oldest done and closed ones past the cap in each project, save, and tell
+ *  the windows what changed. Throws when it can't be saved, leaving the list
+ *  as it was, so no one is told a change was made that a restart would lose. */
 function save(next: FollowUp[], upserted: FollowUp[]): void {
-  const doneByRepo = new Map<string, FollowUp[]>();
+  const endedByRepo = new Map<string, FollowUp[]>();
   for (const f of next) {
-    if (f.doneAt === undefined) continue;
-    const list = doneByRepo.get(f.repoPath) ?? [];
+    if (isFollowUpOpen(f)) continue;
+    const list = endedByRepo.get(f.repoPath) ?? [];
     list.push(f);
-    doneByRepo.set(f.repoPath, list);
+    endedByRepo.set(f.repoPath, list);
   }
   const dropped = new Set<string>();
-  for (const done of doneByRepo.values()) {
-    done.sort((a, b) => (b.doneAt ?? 0) - (a.doneAt ?? 0));
-    for (const f of done.slice(FOLLOW_UP_LIMITS.donePerProject)) dropped.add(f.id);
+  for (const ended of endedByRepo.values()) {
+    ended.sort((a, b) => (followUpEndedAt(b) ?? 0) - (followUpEndedAt(a) ?? 0));
+    for (const f of ended.slice(FOLLOW_UP_LIMITS.endedPerProject)) dropped.add(f.id);
   }
   const kept = dropped.size > 0 ? next.filter((f) => !dropped.has(f.id)) : next;
   try {
@@ -137,6 +142,8 @@ export interface FollowUpInput {
   fromSessionId?: string;
   fromLabel?: string;
   fromBranch?: string;
+  /** The adding thread's project, when it isn't `repoPath`. */
+  fromRepoPath?: string;
   /** Normal when unset or not a priority. */
   priority?: FollowUpPriority;
   /** Added by hand (the New follow-up dialog): a refusal speaks to the
@@ -154,7 +161,7 @@ export function addFollowUp(input: FollowUpInput, now = Date.now()): { followUp:
   const title = oneLine(input.title, FOLLOW_UP_LIMITS.title);
   if (!title) throw new Error('A follow-up needs a title.');
   const list = forUpdate();
-  const open = list.filter((f) => f.repoPath === input.repoPath && f.doneAt === undefined);
+  const open = list.filter((f) => f.repoPath === input.repoPath && isFollowUpOpen(f));
   const same = open.find((f) => f.title.toLowerCase() === title.toLowerCase());
   if (same) {
     const wanted = isFollowUpPriority(input.priority) ? input.priority : undefined;
@@ -168,8 +175,8 @@ export function addFollowUp(input: FollowUpInput, now = Date.now()): { followUp:
   if (open.length >= FOLLOW_UP_LIMITS.openPerProject) {
     throw new Error(`This project already has ${open.length} open follow-ups, the most it can have. `
       + (input.byUser
-        ? 'Mark finished ones done, or delete some, first.'
-        : 'Ask the user to clear some in the Follow-ups drawer, or mark finished ones done.'));
+        ? 'Mark finished ones done, or close or delete some, first.'
+        : 'Ask the user to clear some in the Follow-ups drawer, or mark finished ones done or close ones that aren\'t needed.'));
   }
   const followUp: FollowUp = {
     id: newId(list),
@@ -181,17 +188,18 @@ export function addFollowUp(input: FollowUpInput, now = Date.now()): { followUp:
     ...(input.fromSessionId ? { fromSessionId: input.fromSessionId } : {}),
     ...(input.fromLabel?.trim() ? { fromLabel: oneLine(input.fromLabel, 200) } : {}),
     ...(input.fromBranch?.trim() ? { fromBranch: input.fromBranch.trim() } : {}),
+    ...(input.fromRepoPath && input.fromRepoPath !== input.repoPath ? { fromRepoPath: input.fromRepoPath } : {}),
   };
   save([...list, followUp], [followUp]);
   return { followUp, existing: false };
 }
 
-/** The follow-up with `id`, from `repoPath` when given: an agent can only
- *  change its own project's. Throws a message the agent or the user reads. */
-function find(list: readonly FollowUp[], id: string, repoPath?: string): FollowUp {
+/** The follow-up with `id`, in any project: ids are unique across them.
+ *  Throws a message the agent or the user reads. */
+function find(list: readonly FollowUp[], id: string): FollowUp {
   const key = id.trim().toLowerCase();
-  const found = list.find((f) => f.id === key && (repoPath === undefined || f.repoPath === repoPath));
-  if (!found) throw new Error(`There is no follow-up ${id.trim()}${repoPath === undefined ? '' : ' in this project'}.`);
+  const found = list.find((f) => f.id === key);
+  if (!found) throw new Error(`There is no follow-up ${id.trim()}.`);
   return found;
 }
 
@@ -199,19 +207,35 @@ function replace(list: readonly FollowUp[], next: FollowUp): FollowUp[] {
   return list.map((f) => (f.id === next.id ? next : f));
 }
 
+/** `f` open again: without what marked it done or closed it. */
+function opened(f: FollowUp): FollowUp {
+  const {
+    doneAt: _doneAt, doneBySessionId: _doneBy, doneNote: _note,
+    closedAt: _closedAt, closedBySessionId: _closedBy, closeReason: _reason,
+    ...open
+  } = f;
+  return open;
+}
+
+/** Text an agent gave, cut to the note limit; empty when it gave none. */
+function noteText(text: string | undefined): string {
+  return text ? text.trim().slice(0, FOLLOW_UP_LIMITS.note) : '';
+}
+
 /** Mark it done, by a thread's agent (`sessionId`, with what it said it
- *  did) or by you. Done already: left as it was. */
+ *  did) or by you. Done already: left as it was. Closed: done instead, as
+ *  the work got done after all. */
 export function markFollowUpDone(
   id: string,
-  by: { repoPath?: string; sessionId?: string; note?: string } = {},
+  by: { sessionId?: string; note?: string } = {},
   now = Date.now(),
 ): FollowUp {
   const list = forUpdate();
-  const found = find(list, id, by.repoPath);
+  const found = find(list, id);
   if (found.doneAt !== undefined) return found;
-  const note = by.note ? by.note.trim().slice(0, FOLLOW_UP_LIMITS.note) : '';
+  const note = noteText(by.note);
   const next: FollowUp = {
-    ...found,
+    ...opened(found),
     doneAt: now,
     ...(by.sessionId ? { doneBySessionId: by.sessionId } : {}),
     ...(note ? { doneNote: note } : {}),
@@ -220,10 +244,33 @@ export function markFollowUpDone(
   return next;
 }
 
-/** Open it again (you marked it done by mistake, or the work wasn't finished). */
+/** Close it without doing it (it isn't needed, or won't be done), by a
+ *  thread's agent (`sessionId`, with why) or by you. Done or closed
+ *  already: left as it was, so closing can't hide finished work. */
+export function closeFollowUp(
+  id: string,
+  by: { sessionId?: string; reason?: string } = {},
+  now = Date.now(),
+): FollowUp {
+  const list = forUpdate();
+  const found = find(list, id);
+  if (!isFollowUpOpen(found)) return found;
+  const reason = noteText(by.reason);
+  const next: FollowUp = {
+    ...found,
+    closedAt: now,
+    ...(by.sessionId ? { closedBySessionId: by.sessionId } : {}),
+    ...(reason ? { closeReason: reason } : {}),
+  };
+  save(replace(list, next), [next]);
+  return next;
+}
+
+/** Open it again (you marked it done or closed it by mistake, or the work
+ *  wasn't finished). */
 export function reopenFollowUp(id: string): FollowUp {
   const list = forUpdate();
-  const { doneAt: _doneAt, doneBySessionId: _by, doneNote: _note, ...open } = find(list, id);
+  const open = opened(find(list, id));
   save(replace(list, open), [open]);
   return open;
 }
@@ -255,28 +302,74 @@ export function removeFollowUp(id: string): void {
   save(list.filter((f) => f.id !== key), []);
 }
 
+/** A path as typed, for comparing: forward slashes, no slash at the end,
+ *  lower case (Windows paths ignore case). */
+function pathKey(p: string): string {
+  return p.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+/** The project an agent named, from `projects`: its path, or its name (the
+ *  folder's, as the sidebar shows it) when no other project has that name.
+ *  Throws a message for the agent that lists the names it can use. */
+export function resolveProject(named: string, projects: readonly string[]): string {
+  const key = pathKey(named);
+  const byPath = projects.find((p) => pathKey(p) === key);
+  if (byPath) return byPath;
+  const byName = projects.filter((p) => projectName(p).toLowerCase() === named.trim().toLowerCase());
+  if (byName.length === 1) return byName[0];
+  if (byName.length > 1) {
+    throw new Error(`More than one project is named "${named.trim()}": ${byName.join(', ')}. Give the path of the one you mean.`);
+  }
+  const names = projects.map(projectName);
+  throw new Error(`There is no project "${named.trim()}" in Grove Bench. `
+    + (names.length > 0 ? `Its projects are: ${names.join(', ')}.` : 'It has no projects.'));
+}
+
+/** Open ones highest priority first (oldest first inside each), then, with
+ *  `includeDone`, done and closed ones, most recent first. */
+function forListing(list: readonly FollowUp[], includeDone: boolean | undefined): FollowUp[] {
+  const open = byFollowUpPriority(list.filter(isFollowUpOpen));
+  if (!includeDone) return open;
+  const ended = list.filter((f) => !isFollowUpOpen(f)).sort((a, b) => (followUpEndedAt(b) ?? 0) - (followUpEndedAt(a) ?? 0));
+  return [...open, ...ended];
+}
+
 /** A thread's view of follow-ups, as its agent's tools use them
  *  (FollowUpOperations): read from `thread` at each call, so a follow-up is
- *  recorded under the thread's name and branch at the time. */
-export function followUpOperationsFor(thread: Readonly<{ id: string; repoPath: string; branch: string; displayName?: string | null }>): FollowUpOperations {
+ *  recorded under the thread's name and branch at the time. Every project's
+ *  can be listed, finished and closed, and one can be added to another
+ *  project (`projects` lists the ones Grove Bench has, for naming one). */
+export function followUpOperationsFor(
+  thread: Readonly<{ id: string; repoPath: string; branch: string; displayName?: string | null }>,
+  projects: () => Promise<readonly string[]>,
+): FollowUpOperations {
   return {
-    add: ({ title, details, priority }) => addFollowUp({
-      repoPath: thread.repoPath,
-      title,
-      details,
-      priority,
-      fromSessionId: thread.id,
-      fromLabel: thread.displayName || thread.branch || undefined,
-      fromBranch: thread.branch || undefined,
-    }),
-    list: ({ includeDone }) => {
-      const mine = forUpdate().filter((f) => f.repoPath === thread.repoPath);
-      const open = byFollowUpPriority(mine.filter((f) => f.doneAt === undefined));
-      if (!includeDone) return open;
-      const done = mine.filter((f) => f.doneAt !== undefined).sort((a, b) => (b.doneAt ?? 0) - (a.doneAt ?? 0));
-      return [...open, ...done];
+    add: async ({ title, details, priority, project }) => {
+      // Only a project Grove Bench lists, as for one you add: one for any
+      // other path would never show, in the drawer or on the board.
+      const repoPath = project?.trim() ? resolveProject(project, await projects()) : thread.repoPath;
+      return addFollowUp({
+        repoPath,
+        title,
+        details,
+        priority,
+        fromSessionId: thread.id,
+        fromLabel: thread.displayName || thread.branch || undefined,
+        fromBranch: thread.branch || undefined,
+        fromRepoPath: thread.repoPath,
+      });
     },
-    done: (id, note) => markFollowUpDone(id, { repoPath: thread.repoPath, sessionId: thread.id, note }),
+    list: async ({ includeDone, project }) => {
+      const all = forUpdate();
+      const named = project?.trim();
+      if (named?.toLowerCase() === ALL_PROJECTS) return forListing(all, includeDone);
+      // A removed project's follow-ups can still be read and closed, so its
+      // name counts as well as the listed projects'.
+      const repoPath = named ? resolveProject(named, [...new Set([...await projects(), ...all.map((f) => f.repoPath)])]) : thread.repoPath;
+      return forListing(all.filter((f) => f.repoPath === repoPath), includeDone);
+    },
+    done: (id, note) => markFollowUpDone(id, { sessionId: thread.id, note }),
+    close: (id, reason) => closeFollowUp(id, { sessionId: thread.id, reason }),
   };
 }
 
@@ -291,15 +384,18 @@ const PROMPT_LIST_MAX = 10;
  *  not instructions, with nothing in them that could close it. */
 export function followUpsForSystemPrompt(repoPath: string): string {
   const open = byFollowUpPriority((listFollowUps() ?? [])
-    .filter((f) => f.repoPath === repoPath && f.doneAt === undefined)
+    .filter((f) => f.repoPath === repoPath && isFollowUpOpen(f))
     .sort((a, b) => b.createdAt - a.createdAt));
   let prompt = 'FOLLOW-UPS: Grove Bench keeps a list of follow-ups for this project: work for a later thread. '
-    + 'Use the grove-followups tools (followup_add, followup_list, followup_done). '
+    + 'Use the grove-followups tools (followup_add, followup_list, followup_done, followup_close). '
     + 'When you find work outside what the user asked for in this thread that shouldn\'t be lost (a bug you noticed, a refactor or test you left out, something the user said to do later), '
     + 'add it with followup_add instead of doing it now or only mentioning it, and tell the user you added it. '
     + 'Write the details so a new thread with none of this thread\'s context can start on it: what, where (files), why, and what done looks like. '
     + 'Don\'t add one for work you are about to do in this thread. '
     + 'If this thread\'s first message names a follow-up, or your work finishes one listed below, mark it with followup_done when it is done. '
+    + 'If one turns out not to be needed (already fixed, or no longer applies), or the user says to drop it, close it with followup_close and say why. '
+    + 'They work across projects: followup_list and followup_add take a project (its name or path; "all" lists every project\'s), '
+    + 'and followup_done and followup_close take any project\'s id. '
     + 'Don\'t start on a follow-up unless the user asks.';
   if (open.length > 0) {
     const shown = open.slice(0, PROMPT_LIST_MAX);

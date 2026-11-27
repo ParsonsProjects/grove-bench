@@ -194,6 +194,7 @@
   }
 
   const markDone = (f: FollowUp) => save(() => followUpsStore.setDone(f.id, true));
+  const close = (f: FollowUp) => save(() => followUpsStore.close(f.id));
   const setPriority = (f: FollowUp, priority: FollowUpPriority) => save(() => followUpsStore.setPriority(f.id, priority));
 </script>
 
@@ -334,6 +335,7 @@
                     {showProject}
                     onstart={() => startFollowUp(item.followUp)}
                     ondone={() => void markDone(item.followUp)}
+                    onclose={() => void close(item.followUp)}
                     onpriority={(p: FollowUpPriority) => void setPriority(item.followUp, p)}
                   />
                 {:else}

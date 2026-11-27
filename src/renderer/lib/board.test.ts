@@ -175,7 +175,7 @@ describe('boardFollowUps', () => {
   const open = new Set(['running-thread']);
 
   it('keeps open follow-ups in known projects, oldest first', () => {
-    const list = [f('a'), f('b', { doneAt: 1 }), f('c', { repoPath: '/removed' }), f('d')];
+    const list = [f('a'), f('b', { doneAt: 1 }), f('e', { closedAt: 1 }), f('c', { repoPath: '/removed' }), f('d')];
     expect(boardFollowUps(list, ['/web'], (id) => open.has(id)).map((x) => x.followUp.id)).toEqual(['a', 'd']);
   });
 

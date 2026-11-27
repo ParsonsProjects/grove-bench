@@ -149,6 +149,7 @@ const api: GroveBenchAPI = {
   addFollowUp: (repoPath: string, title: string, details: string, priority?: import('../shared/follow-ups.js').FollowUpPriority) =>
     ipcRenderer.invoke(IPC.FOLLOW_UP_ADD, repoPath, title, details, priority),
   setFollowUpDone: (id: string, done: boolean) => ipcRenderer.invoke(IPC.FOLLOW_UP_SET_DONE, id, done),
+  closeFollowUp: (id: string) => ipcRenderer.invoke(IPC.FOLLOW_UP_CLOSE, id),
   setFollowUpPriority: (id: string, priority: import('../shared/follow-ups.js').FollowUpPriority) =>
     ipcRenderer.invoke(IPC.FOLLOW_UP_SET_PRIORITY, id, priority),
   followUpStarted: (id: string, sessionId: string) => ipcRenderer.invoke(IPC.FOLLOW_UP_STARTED, id, sessionId),
@@ -532,6 +533,10 @@ const api: GroveBenchAPI = {
     ipcRenderer.invoke(IPC.APP_STATE_GET_COLLAPSED_PANELS) as Promise<import('../shared/types.js').CollapsedPanels>,
   setCollapsedPanels: (panels: import('../shared/types.js').CollapsedPanels) =>
     ipcRenderer.send(IPC.APP_STATE_SET_COLLAPSED_PANELS, panels),
+  getCollapsedFollowUpProjects: () =>
+    ipcRenderer.invoke(IPC.APP_STATE_GET_COLLAPSED_FOLLOW_UP_PROJECTS) as Promise<string[]>,
+  setCollapsedFollowUpProjects: (repoPaths: string[]) =>
+    ipcRenderer.send(IPC.APP_STATE_SET_COLLAPSED_FOLLOW_UP_PROJECTS, repoPaths),
   getConversationGroups: () =>
     ipcRenderer.invoke(IPC.APP_STATE_GET_GROUPS) as Promise<import('../shared/types.js').ConversationGroup[] | null>,
   setConversationGroups: (groups: import('../shared/types.js').ConversationGroup[]) =>

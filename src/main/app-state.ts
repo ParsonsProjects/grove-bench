@@ -48,6 +48,8 @@ export interface AppState {
   sidebarWidth?: number | null;
   /** Sidebars folded down to a rail. Absent = all open. */
   collapsedPanels?: CollapsedPanels;
+  /** Projects folded in the Follow-ups drawer, by path. Absent = none. */
+  collapsedFollowUpProjects?: string[];
   /** Last skill-suggestion analysis per repo path, including dismissals. */
   skillSuggestions?: Record<string, SkillSuggestionCache>;
   /** Last prerequisite check, pass or fail. Lets the renderer show the last
@@ -168,6 +170,7 @@ const appStateSchema = z.object({
   boardLayout: savedBoardLayoutSchema.optional().catch(undefined),
   sidebarWidth: z.number().finite().nullable().optional().catch(null),
   collapsedPanels: collapsedPanelsSchema.optional().catch(undefined),
+  collapsedFollowUpProjects: z.array(z.string()).optional().catch(undefined),
   skillSuggestions: z.record(z.string(), z.object({
     suggestions: z.array(z.custom<SkillSuggestion>((v) => typeof v === 'object' && v !== null)),
     dismissedIds: z.array(z.string()),
@@ -584,6 +587,16 @@ export function loadCollapsedPanels(): CollapsedPanels {
 export function saveCollapsedPanels(panels: unknown): void {
   const parsed = collapsedPanelsSchema.safeParse(panels);
   if (parsed.success) setSoon('collapsedPanels', parsed.data);
+}
+
+export function loadCollapsedFollowUpProjects(): string[] {
+  return pick((state) => state.collapsedFollowUpProjects ?? []);
+}
+
+/** Paths from the renderer: anything else (or a bad list) isn't saved. */
+export function saveCollapsedFollowUpProjects(repoPaths: unknown): void {
+  const parsed = z.array(z.string()).safeParse(repoPaths);
+  if (parsed.success) setSoon('collapsedFollowUpProjects', [...new Set(parsed.data)]);
 }
 
 export function loadUnreadSessionIds(): string[] {

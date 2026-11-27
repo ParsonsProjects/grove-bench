@@ -5,7 +5,15 @@
  * Starting a thread from one fills the New thread draft
  * (draftStore.openFollowUp), and the thread is noted against it once it starts.
  */
-import { applyFollowUpsChange, byFollowUpPriority, type FollowUp, type FollowUpPriority, type FollowUpsChange } from '../../shared/follow-ups.js';
+import {
+  applyFollowUpsChange,
+  byFollowUpPriority,
+  followUpEndedAt,
+  isFollowUpOpen,
+  type FollowUp,
+  type FollowUpPriority,
+  type FollowUpsChange,
+} from '../../shared/follow-ups.js';
 import { nextOpening } from './dock.svelte.js';
 
 /** How often, and how many times, to ask again while follow-ups.json can't
@@ -16,7 +24,8 @@ const LOAD_ATTEMPTS = 5;
 export interface FollowUpProject {
   repoPath: string;
   open: FollowUp[];
-  done: FollowUp[];
+  /** Done and closed ones, most recent first. */
+  ended: FollowUp[];
 }
 
 class FollowUpsStore {
@@ -36,8 +45,17 @@ class FollowUpsStore {
   notice = $state<{ tone: 'danger' | 'warning'; text: string } | null>(null);
   /** Follow-ups whose details are shown in full. */
   expanded = $state(new Set<string>());
-  /** Projects whose done follow-ups are shown. */
-  showDone = $state(new Set<string>());
+  /** In-progress follow-ups (a thread started from one is open) shown as a
+   *  full card rather than one line. */
+  unfolded = $state(new Set<string>());
+  /** Projects whose done and closed follow-ups are shown. */
+  showEnded = $state(new Set<string>());
+  /** Projects folded down to their heading, by path. Saved in app state, so
+   *  they stay folded after a restart. */
+  collapsed = $state(new Set<string>());
+  /** Where the drawer's list was scrolled to when it last unmounted, so it
+   *  opens there again. Not reactive: only read as the list mounts. */
+  scrollTop = 0;
   /** The follow-up the drawer was opened to show (reveal): highlighted,
    *  and scrolled to, until the drawer closes or another is shown. */
   revealId = $state<string | null>(null);
@@ -47,8 +65,38 @@ class FollowUpsStore {
   private unsubscribe: (() => void) | null = null;
   /** Changes that arrived before the list was read, applied to it once it is. */
   private pending: FollowUpsChange[] = [];
+  private collapsedLoad: Promise<void> | null = null;
+
+  /** The folded projects, read once. A fold made while it loads wins. */
+  loadCollapsed(): Promise<void> {
+    this.collapsedLoad ??= (async () => {
+      try {
+        const saved = await window.groveBench.getCollapsedFollowUpProjects();
+        if (Array.isArray(saved) && saved.length > 0) this.collapsed = new Set([...saved, ...this.collapsed]);
+      } catch (e) {
+        console.warn('[follow-ups] could not read the folded projects:', e);
+      }
+    })();
+    return this.collapsedLoad;
+  }
+
+  isCollapsed(repoPath: string): boolean {
+    return this.collapsed.has(repoPath);
+  }
+
+  /** Fold a project down to its heading, or open it (`collapse` unset: the
+   *  other way from now). */
+  toggleCollapsed(repoPath: string, collapse = !this.collapsed.has(repoPath)): void {
+    if (collapse === this.collapsed.has(repoPath)) return;
+    const next = new Set(this.collapsed);
+    if (collapse) next.add(repoPath);
+    else next.delete(repoPath);
+    this.collapsed = next;
+    window.groveBench.setCollapsedFollowUpProjects([...next]);
+  }
 
   async load(retryMs = LOAD_RETRY_MS): Promise<void> {
+    void this.loadCollapsed();
     // Listen first, so a change while the list loads isn't missed.
     this.unsubscribe ??= window.groveBench.onFollowUpsChanged((change) => {
       if (this.ready) {
@@ -85,23 +133,23 @@ class FollowUpsStore {
    *  removed project's can't be started, so they aren't counted. */
   openCountIn(repos: readonly string[]): number {
     const projects = new Set(repos);
-    return this.list.filter((f) => f.doneAt === undefined && projects.has(f.repoPath)).length;
+    return this.list.filter((f) => isFollowUpOpen(f) && projects.has(f.repoPath)).length;
   }
 
   /** Each project with follow-ups: open ones highest priority first, oldest
-   *  first inside each (the order they came up), done ones most recent first.
-   *  Projects in `repoOrder` first, in that order, then any others (a removed
-   *  project's). */
+   *  first inside each (the order they came up), done and closed ones most
+   *  recent first. Projects in `repoOrder` first, in that order, then any
+   *  others (a removed project's). */
   byProject(repoOrder: readonly string[]): FollowUpProject[] {
     const projects = new Map<string, FollowUpProject>();
     for (const f of this.list) {
       let p = projects.get(f.repoPath);
-      if (!p) projects.set(f.repoPath, p = { repoPath: f.repoPath, open: [], done: [] });
-      (f.doneAt === undefined ? p.open : p.done).push(f);
+      if (!p) projects.set(f.repoPath, p = { repoPath: f.repoPath, open: [], ended: [] });
+      (isFollowUpOpen(f) ? p.open : p.ended).push(f);
     }
     for (const p of projects.values()) {
       p.open = byFollowUpPriority(p.open);
-      p.done.sort((a, b) => (b.doneAt ?? 0) - (a.doneAt ?? 0));
+      p.ended.sort((a, b) => (followUpEndedAt(b) ?? 0) - (followUpEndedAt(a) ?? 0));
     }
     const rank = (repo: string) => {
       const i = repoOrder.indexOf(repo);
@@ -121,21 +169,30 @@ class FollowUpsStore {
     return this.list.find((f) => f.startedSessionIds?.includes(sessionId));
   }
 
-  /** Open the drawer at one follow-up: its details in full, and its
-   *  project's done ones shown when it is done, so it is on screen. */
+  /** Open the drawer at one follow-up: its card in full with its details,
+   *  its project open, and its project's done and closed ones shown when it
+   *  is one of them, so it is on screen. */
   reveal(id: string): void {
     const f = this.get(id);
     if (!f) return;
     this.expanded = new Set([...this.expanded, id]);
-    if (f.doneAt !== undefined) this.showDone = new Set([...this.showDone, f.repoPath]);
+    this.unfolded = new Set([...this.unfolded, id]);
+    this.toggleCollapsed(f.repoPath, false);
+    if (!isFollowUpOpen(f)) this.showEnded = new Set([...this.showEnded, f.repoPath]);
     this.notice = null;
     this.revealId = id;
     this.revealCount++;
     this.toggleDrawer(true);
   }
 
+  /** Done (true), or open again (false) whether it was done or closed. */
   setDone(id: string, done: boolean): Promise<void> {
     return window.groveBench.setFollowUpDone(id, done);
+  }
+
+  /** Closed without being done. setDone(id, false) opens it again. */
+  close(id: string): Promise<void> {
+    return window.groveBench.closeFollowUp(id);
   }
 
   setPriority(id: string, priority: FollowUpPriority): Promise<void> {
@@ -170,7 +227,7 @@ class FollowUpsStore {
   /** How many open follow-ups a project has: main takes no more than
    *  FOLLOW_UP_LIMITS.openPerProject. */
   openIn(repoPath: string): number {
-    return this.list.filter((f) => f.repoPath === repoPath && f.doneAt === undefined).length;
+    return this.list.filter((f) => f.repoPath === repoPath && isFollowUpOpen(f)).length;
   }
 
   /** Note the thread started from it. Only shown in the drawer, so a
