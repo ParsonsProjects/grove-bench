@@ -3,9 +3,10 @@
  * the same project, such as a bug it noticed on the way or a test it left
  * out. Agents add them with Grove's follow-up tools (grove-followups); you
  * start a thread from one in the Follow-ups drawer, and the agent in that
- * thread marks it done. Main keeps them in follow-ups.json
- * (main/follow-ups.ts), one list for every project, so every thread sees a
- * new one at once whatever branch it is on.
+ * thread marks it done, or closes it if it isn't needed after all. Main
+ * keeps them in follow-ups.json (main/follow-ups.ts), one list for every
+ * project, so every thread sees a new one at once whatever branch it is on.
+ * An agent can read, add, finish and close any project's, not only its own.
  */
 
 /** How soon a follow-up should be picked up. The agent that adds one sets it
@@ -69,12 +70,41 @@ export interface FollowUp {
   fromBranch?: string;
   /** The threads started from it, oldest first. */
   startedSessionIds?: string[];
-  /** Set once it is done: by an agent (followup_done) or by you. */
+  /** The project of the thread that added it, when that isn't `repoPath`:
+   *  an agent can add one to another project (followup_add's project). */
+  fromRepoPath?: string;
+  /** Set once it is done: by an agent (followup_done) or by you. Never set
+   *  with `closedAt`. */
   doneAt?: number;
   /** The thread whose agent marked it done, if one did. */
   doneBySessionId?: string;
   /** What the agent said it did. */
   doneNote?: string;
+  /** Set once it is closed without being done: it isn't needed any more, or
+   *  won't be done. By an agent (followup_close) or by you. */
+  closedAt?: number;
+  /** The thread whose agent closed it, if one did. */
+  closedBySessionId?: string;
+  /** Why, as the agent that closed it said. */
+  closeReason?: string;
+}
+
+/** Still to do: neither done nor closed. */
+export function isFollowUpOpen(f: Pick<FollowUp, 'doneAt' | 'closedAt'>): boolean {
+  return f.doneAt === undefined && f.closedAt === undefined;
+}
+
+/** When it was done or closed, or undefined while it is open. */
+export function followUpEndedAt(f: Pick<FollowUp, 'doneAt' | 'closedAt'>): number | undefined {
+  return f.doneAt ?? f.closedAt;
+}
+
+/** The word an agent gives followup_list for every project's follow-ups. */
+export const ALL_PROJECTS = 'all';
+
+/** A project's name, as the sidebar shows it: its folder's name. */
+export function projectName(repoPath: string): string {
+  return repoPath.split(/[/\\]/).filter(Boolean).pop() || repoPath;
 }
 
 /** What changed in one save, as main tells the windows: the follow-ups
@@ -104,23 +134,32 @@ export const FOLLOW_UP_LIMITS = {
   details: 4000,
   /** Details followup_list shows of each when it lists several. */
   detailsInList: 200,
-  /** Longest note kept when one is marked done. */
+  /** Longest note kept when one is marked done, or reason when one is closed. */
   note: 500,
   /** Open follow-ups one project can have: an agent that adds one per
    *  file it touched is told to stop. */
   openPerProject: 100,
-  /** Done follow-ups kept per project, newest first. */
-  donePerProject: 50,
+  /** Done and closed follow-ups kept per project, together, newest first. */
+  endedPerProject: 50,
 } as const;
+
+/** Where the thread that added it was, in brackets: its branch, and its
+ *  project when that is another one. Empty when neither is known. */
+export function followUpOriginDetail(f: Pick<FollowUp, 'fromBranch' | 'fromRepoPath'>): string {
+  const project = f.fromRepoPath ? `project ${projectName(f.fromRepoPath)}` : '';
+  if (f.fromBranch) return ` (branch ${f.fromBranch}${project ? ` in ${project}` : ''})`;
+  return project ? ` (in ${project})` : '';
+}
 
 /** The first message of a thread started from a follow-up: the title, the
  *  details, and a line telling the agent which follow-up it is, so it can
- *  mark it done. You can edit it before sending. */
-export function followUpPrompt(f: Pick<FollowUp, 'id' | 'title' | 'details' | 'fromLabel' | 'fromBranch'>): string {
-  const from = f.fromLabel
-    ? ` It was added in the thread "${f.fromLabel}"${f.fromBranch ? ` (branch ${f.fromBranch})` : ''}.`
-    : '';
+ *  mark it done, or close it if it turns out not to be needed. You can edit
+ *  it before sending. */
+export function followUpPrompt(f: Pick<FollowUp, 'id' | 'title' | 'details' | 'fromLabel' | 'fromBranch' | 'fromRepoPath'>): string {
+  const from = f.fromLabel ? ` It was added in the thread "${f.fromLabel}"${followUpOriginDetail(f)}.`
+    : f.fromRepoPath ? ` It was added from project ${projectName(f.fromRepoPath)}.` : '';
   const parts = [f.title.trim(), f.details.trim()].filter(Boolean);
-  parts.push(`(This is follow-up ${f.id}.${from} When it's done, mark it done with followup_done.)`);
+  parts.push(`(This is follow-up ${f.id}.${from} When it's done, mark it done with followup_done. `
+    + "If it turns out it isn't needed, close it with followup_close and say why.)");
   return parts.join('\n\n');
 }

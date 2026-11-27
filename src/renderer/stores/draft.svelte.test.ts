@@ -1090,7 +1090,8 @@ describe('draftStore.openFollowUp', () => {
     expect(draftStore.openFollowUp(followUp)).toBe(true);
     expect(draftStore.draft).toMatchObject({ repoPath: '/repo/two', followUpId: 'a1b2c3' });
     expect(draftStore.draft?.text).toBe('Add tests\n\nCover refresh()\n\n'
-      + '(This is follow-up a1b2c3. It was added in the thread "Fix login" (branch claude/login). When it\'s done, mark it done with followup_done.)');
+      + '(This is follow-up a1b2c3. It was added in the thread "Fix login" (branch claude/login). When it\'s done, mark it done with followup_done. '
+      + 'If it turns out it isn\'t needed, close it with followup_close and say why.)');
     expect(draftStore.visible).toBe(true);
   });
 

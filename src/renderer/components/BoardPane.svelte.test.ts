@@ -159,10 +159,11 @@ function fu(id: string, extra: Partial<FollowUp> = {}): FollowUp {
 }
 
 describe('BoardPane follow-ups', () => {
-  it('shows the open follow-ups first, and not the done ones or those being worked on', () => {
+  it('shows the open follow-ups first, and not the done or closed ones or those being worked on', () => {
     followUpsStore.list = [
       fu('f1', { details: 'Cover the expired token path.' }),
       fu('f2', { doneAt: Date.now() }),
+      fu('f5', { closedAt: Date.now() }),
       fu('f3', { startedSessionIds: ['work'] }),
       fu('f4', { repoPath: '/gone' }),
     ];
@@ -211,6 +212,13 @@ describe('BoardPane follow-ups', () => {
     render(BoardPane);
     await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     expect(mockGroveBench.setFollowUpDone).toHaveBeenCalledWith('f1', true);
+  });
+
+  it('closes one without doing it', async () => {
+    followUpsStore.list = [fu('f1')];
+    render(BoardPane);
+    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(mockGroveBench.closeFollowUp).toHaveBeenCalledWith('f1');
   });
 
   it("opens the New follow-up dialog from the column's +", async () => {
@@ -264,6 +272,14 @@ describe('BoardPane: a thread started from a follow-up', () => {
     render(BoardPane);
     const link = document.querySelector<HTMLElement>('[data-board-card-follow-up="f1"]')!;
     expect(within(link).getByText('done')).toBeInTheDocument();
+  });
+
+  it('says when the follow-up was closed', () => {
+    followUpsStore.list = [fu('f1', { startedSessionIds: ['quiet'], closedAt: Date.now() })];
+    render(BoardPane);
+    const link = document.querySelector<HTMLElement>('[data-board-card-follow-up="f1"]')!;
+    expect(within(link).getByText('closed')).toBeInTheDocument();
+    expect(link).toHaveAttribute('aria-label', expect.stringContaining(', closed.'));
   });
 
   it('finds the thread by its follow-up in the filter', async () => {

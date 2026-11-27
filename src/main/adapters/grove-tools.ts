@@ -11,7 +11,7 @@
 import { z } from 'zod';
 import type { FollowUpOperations, MemoryOperations, PreviewOperations } from './types.js';
 import { groveToolOf, type GroveServerName } from '../../shared/grove-tools.js';
-import { FOLLOW_UP_LIMITS, followUpPriority, toFollowUpPriority, type FollowUp, type FollowUpPriority } from '../../shared/follow-ups.js';
+import { ALL_PROJECTS, FOLLOW_UP_LIMITS, followUpOriginDetail, followUpPriority, projectName, toFollowUpPriority, type FollowUp, type FollowUpPriority } from '../../shared/follow-ups.js';
 import { formatAge } from '../../shared/format-age.js';
 
 export { groveToolOf, type GroveServerName };
@@ -55,7 +55,7 @@ export interface GroveServer {
 const AUTO_ALLOWED: Readonly<Record<GroveServerName, readonly string[]>> = {
   'grove-memory': ['memory_list', 'memory_read', 'memory_write', 'memory_delete'],
   'grove-preview': ['preview_open', 'preview_screenshot', 'preview_read', 'preview_logs'],
-  'grove-followups': ['followup_add', 'followup_list', 'followup_done'],
+  'grove-followups': ['followup_add', 'followup_list', 'followup_done', 'followup_close'],
 };
 
 /** Whether a call is one of Grove's own tools that need no prompt
@@ -158,12 +158,16 @@ const PRIORITY_TEXT: Record<FollowUpPriority, string> = {
 };
 
 /** One follow-up as followup_list shows it: its details in full, or cut to
- *  FOLLOW_UP_LIMITS.detailsInList when it lists several. */
-function describeFollowUp(f: FollowUp, now: number, full: boolean): string {
-  const from = f.fromLabel ? ` in "${f.fromLabel}"${f.fromBranch ? ` (branch ${f.fromBranch})` : ''}` : '';
-  const lines = [`## ${f.id}: ${f.title}`, `${PRIORITY_TEXT[followUpPriority(f)]}. Added ${formatAge(f.createdAt, { now, long: true })}${from}.`];
+ *  FOLLOW_UP_LIMITS.detailsInList when it lists several. `withProject`
+ *  names its project, for a list that isn't only the thread's own. */
+function describeFollowUp(f: FollowUp, now: number, full: boolean, withProject = false): string {
+  const from = f.fromLabel ? ` in "${f.fromLabel}"${followUpOriginDetail(f)}`
+    : f.fromRepoPath ? ` from project ${projectName(f.fromRepoPath)}` : '';
+  const project = withProject ? ` Project ${projectName(f.repoPath)}.` : '';
+  const lines = [`## ${f.id}: ${f.title}`, `${PRIORITY_TEXT[followUpPriority(f)]}.${project} Added ${formatAge(f.createdAt, { now, long: true })}${from}.`];
   if (f.startedSessionIds?.length) lines.push(`A thread was started from it ${f.startedSessionIds.length === 1 ? 'once' : `${f.startedSessionIds.length} times`}.`);
   if (f.doneAt !== undefined) lines.push(`Done ${formatAge(f.doneAt, { now, long: true })}${f.doneNote ? `: ${f.doneNote}` : '.'}`);
+  if (f.closedAt !== undefined) lines.push(`Closed without being done ${formatAge(f.closedAt, { now, long: true })}${f.closeReason ? `: ${f.closeReason}` : '.'}`);
   if (f.details) {
     const cut = !full && f.details.length > FOLLOW_UP_LIMITS.detailsInList;
     lines.push('', cut ? `${f.details.slice(0, FOLLOW_UP_LIMITS.detailsInList).trimEnd()}…` : f.details);
@@ -174,27 +178,34 @@ function describeFollowUp(f: FollowUp, now: number, full: boolean): string {
 /** Tool bodies, separate from the tool definitions so they can be tested alone. */
 export function followUpToolHandlers(ops: FollowUpOperations, now: () => number = Date.now) {
   return {
-    add: ({ title, details, priority }: { title: string; details?: string; priority?: string }) => guarded(async () => {
-      const { followUp, existing, raised } = ops.add({ title, details: details ?? '', priority: toFollowUpPriority(priority) });
+    add: ({ title, details, priority, project }: { title: string; details?: string; priority?: string; project?: string }) => guarded(async () => {
+      const { followUp, existing, raised } = await ops.add({ title, details: details ?? '', priority: toFollowUpPriority(priority), project });
       const level = `${followUpPriority(followUp)} priority`;
-      if (raised) return text(`An open follow-up with that title is already listed: ${followUp.id}. It is now ${level}; nothing else was changed.`);
+      const where = project?.trim() ? ` in project ${projectName(followUp.repoPath)}` : '';
+      if (raised) return text(`An open follow-up with that title is already listed${where}: ${followUp.id}. It is now ${level}; nothing else was changed.`);
       return text(existing
-        ? `An open follow-up with that title is already listed: ${followUp.id} (${level}). Nothing was added.`
-        : `Added follow-up ${followUp.id} (${level}): ${followUp.title}. `
+        ? `An open follow-up with that title is already listed${where}: ${followUp.id} (${level}). Nothing was added.`
+        : `Added follow-up ${followUp.id} (${level})${where}: ${followUp.title}. `
           + 'The user can start a thread from it in Grove Bench\'s Follow-ups drawer.');
     }),
 
-    list: ({ includeDone, id }: { includeDone?: boolean; id?: string }) => guarded(async () => {
+    list: ({ includeDone, id, project }: { includeDone?: boolean; id?: string; project?: string }) => guarded(async () => {
       const at = now();
       if (id?.trim()) {
         const key = id.trim().toLowerCase();
-        const one = ops.list({ includeDone: true }).find((f) => f.id === key);
-        if (!one) throw new Error(`There is no follow-up ${id.trim()} in this project.`);
-        return text(describeFollowUp(one, at, true));
+        // Any project's: ids are unique across them.
+        const one = (await ops.list({ includeDone: true, project: ALL_PROJECTS })).find((f) => f.id === key);
+        if (!one) throw new Error(`There is no follow-up ${id.trim()}.`);
+        return text(describeFollowUp(one, at, true, true));
       }
-      const list = ops.list({ includeDone });
-      if (list.length === 0) return text(includeDone ? 'This project has no follow-ups.' : 'This project has no open follow-ups.');
-      const listed = list.map((f) => describeFollowUp(f, at, false)).join('\n\n');
+      const named = project?.trim();
+      const list = await ops.list({ includeDone, project: named });
+      if (list.length === 0) {
+        const what = includeDone ? 'follow-ups' : 'open follow-ups';
+        if (!named) return text(`This project has no ${what}.`);
+        return text(named.toLowerCase() === ALL_PROJECTS ? `No project has ${what}.` : `Project ${named} has no ${what}.`);
+      }
+      const listed = list.map((f) => describeFollowUp(f, at, false, !!named)).join('\n\n');
       const cut = list.some((f) => f.details.length > FOLLOW_UP_LIMITS.detailsInList);
       return text(cut ? `${listed}\n\nDetails longer than ${FOLLOW_UP_LIMITS.detailsInList} characters are cut here; `
         + 'call followup_list with an id to read one in full.' : listed);
@@ -203,6 +214,12 @@ export function followUpToolHandlers(ops: FollowUpOperations, now: () => number 
     done: ({ id, note }: { id: string; note?: string }) => guarded(async () => {
       const f = ops.done(id, note);
       return text(`Marked follow-up ${f.id} done: ${f.title}`);
+    }),
+
+    close: ({ id, reason }: { id: string; reason?: string }) => guarded(async () => {
+      const f = ops.close(id, reason);
+      if (f.doneAt !== undefined) return text(`Follow-up ${f.id} is already done, so it was left as it is: ${f.title}`);
+      return text(`Closed follow-up ${f.id} without doing it: ${f.title}`);
     }),
   };
 }
@@ -218,7 +235,7 @@ export function followUpsServer(ops: FollowUpOperations): GroveServer {
     tools: [
       {
         name: 'followup_add',
-        description: 'Add a follow-up: work for a later thread in this project, which the user can start from Grove Bench\'s '
+        description: 'Add a follow-up: work for a later thread in this project (or another one, with project), which the user can start from Grove Bench\'s '
           + 'Follow-ups drawer. Use it for work outside what this thread is for that shouldn\'t be lost: a bug you noticed, '
           + 'a refactor or test you left out, something the user said to do later. Not for work you are about to do here. '
           + 'The new thread starts with none of this thread\'s context, so the details must stand alone.',
@@ -233,6 +250,8 @@ export function followUpsServer(ops: FollowUpOperations): GroveServer {
             + '(the default, and what any other word means): a bug with a workaround, a missing test, a refactor that would help. '
             + '"high" only for something broken that people will hit, a security or data-loss risk, or something that blocks other '
             + 'work. "low" for tidying and nice-to-haves. Adding one already listed with a higher priority raises its priority.'),
+          project: z.string().optional().describe('Add it to another project in Grove Bench instead of this thread\'s: the project\'s name '
+            + '(its folder\'s name) or its path. Leave it out for this project.'),
         },
         run: run.add,
         searchHint: 'follow-up later task todo backlog next thread',
@@ -240,11 +259,13 @@ export function followUpsServer(ops: FollowUpOperations): GroveServer {
       },
       {
         name: 'followup_list',
-        description: 'List this project\'s follow-ups (work for later threads), highest priority first, then oldest first, with the start of their details. '
-          + 'Give an id to read one in full.',
+        description: 'List this project\'s follow-ups (work for later threads), or another project\'s, highest priority first, then oldest first, with the start of their details. '
+          + 'Give an id to read one in full, from any project.',
         shape: {
-          includeDone: z.boolean().optional().describe('Also list the ones that are done (the most recent ones are kept).'),
-          id: z.string().optional().describe('Show only this follow-up, with its details in full, done or not.'),
+          includeDone: z.boolean().optional().describe('Also list the ones that are done or closed (the most recent ones are kept).'),
+          id: z.string().optional().describe('Show only this follow-up, with its details in full, open or not, whatever its project.'),
+          project: z.string().optional().describe('List another project\'s instead: its name (its folder\'s name) or its path, '
+            + 'or "all" for every project\'s. Leave it out for this project.'),
         },
         run: run.list,
         searchHint: 'list follow-ups later tasks backlog',
@@ -252,13 +273,26 @@ export function followUpsServer(ops: FollowUpOperations): GroveServer {
       },
       {
         name: 'followup_done',
-        description: 'Mark a follow-up done once this thread has finished its work.',
+        description: 'Mark a follow-up done once this thread has finished its work. Works on any project\'s follow-up.',
         shape: {
           id: z.string().min(1).describe('The follow-up\'s id, e.g. "3fa2c1".'),
           note: z.string().optional().describe(`One or two sentences on what was done, shown to the user. Cut to ${FOLLOW_UP_LIMITS.note} characters.`),
         },
         run: run.done,
         searchHint: 'mark follow-up done complete',
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+      },
+      {
+        name: 'followup_close',
+        description: 'Close a follow-up that won\'t be done: it isn\'t needed any more (already fixed, or no longer applies), '
+          + 'or the user said to drop it. Works on any project\'s follow-up, but close another project\'s only when the user asks. '
+          + 'The user can reopen it. For one whose work is finished, use followup_done instead.',
+        shape: {
+          id: z.string().min(1).describe('The follow-up\'s id, e.g. "3fa2c1".'),
+          reason: z.string().optional().describe(`One or two sentences on why it is closed, shown to the user. Cut to ${FOLLOW_UP_LIMITS.note} characters.`),
+        },
+        run: run.close,
+        searchHint: 'close dismiss drop follow-up not needed wont do',
         annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
       },
     ],

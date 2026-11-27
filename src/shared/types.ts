@@ -1828,7 +1828,10 @@ export interface GroveBenchAPI {
   /** Add one by hand to a project. `existing` when an open one already has
    *  that title: it is returned and nothing is added. */
   addFollowUp(repoPath: string, title: string, details: string, priority?: FollowUpPriority): Promise<{ followUp: FollowUp; existing: boolean }>;
+  /** Mark one done (true), or open it again (false), done or closed. */
   setFollowUpDone(id: string, done: boolean): Promise<void>;
+  /** Close one without doing it. setFollowUpDone(id, false) reopens it. */
+  closeFollowUp(id: string): Promise<void>;
   setFollowUpPriority(id: string, priority: FollowUpPriority): Promise<void>;
   followUpStarted(id: string, sessionId: string): Promise<void>;
   removeFollowUp(id: string): Promise<void>;
@@ -2125,6 +2128,9 @@ export interface GroveBenchAPI {
   setSidebarWidth(width: number): void;
   getCollapsedPanels(): Promise<CollapsedPanels>;
   setCollapsedPanels(panels: CollapsedPanels): void;
+  /** Projects folded in the Follow-ups drawer, by path. */
+  getCollapsedFollowUpProjects(): Promise<string[]>;
+  setCollapsedFollowUpProjects(repoPaths: string[]): void;
   /** The saved groups, or null while app-state.json can't be read (a
    *  passing lock), so "none" is never mistaken for the real list. */
   getConversationGroups(): Promise<ConversationGroup[] | null>;
@@ -2960,6 +2966,8 @@ export const IPC = {
   APP_STATE_SET_SIDEBAR_WIDTH: 'appState:setSidebarWidth',
   APP_STATE_GET_COLLAPSED_PANELS: 'appState:getCollapsedPanels',
   APP_STATE_SET_COLLAPSED_PANELS: 'appState:setCollapsedPanels',
+  APP_STATE_GET_COLLAPSED_FOLLOW_UP_PROJECTS: 'appState:getCollapsedFollowUpProjects',
+  APP_STATE_SET_COLLAPSED_FOLLOW_UP_PROJECTS: 'appState:setCollapsedFollowUpProjects',
   APP_STATE_GET_GROUPS: 'appState:getConversationGroups',
   APP_STATE_SET_GROUPS: 'appState:setConversationGroups',
   APP_STATE_GET_UNREAD: 'appState:getUnreadSessions',
@@ -3005,6 +3013,8 @@ export const IPC = {
   FOLLOW_UP_ADD: 'followUps:add',
   /** Renderer → main: mark one done (true) or open it again (false). */
   FOLLOW_UP_SET_DONE: 'followUps:setDone',
+  /** Renderer → main: close one without doing it. */
+  FOLLOW_UP_CLOSE: 'followUps:close',
   /** Renderer → main: change how soon one should be picked up. */
   FOLLOW_UP_SET_PRIORITY: 'followUps:setPriority',
   /** Renderer → main: a thread was started from one. */

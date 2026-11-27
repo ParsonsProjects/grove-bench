@@ -59,6 +59,9 @@
     pr && prBadge ? `Pull request #${pr.number}${prNeedsYou ? ' needs you' : ''}: ${prBadge.label}` : '',
   ].filter(Boolean).join('. '));
 
+  /** Where its follow-up stands once it isn't open any more. */
+  const followUpState = $derived(!followUp ? null : followUp.doneAt !== undefined ? 'done' : followUp.closedAt !== undefined ? 'closed' : null);
+
   const edge = $derived(waiting || (prNeedsYou && !unread) ? 'border-status-attention/60' : unread ? 'border-status-unread/70' : 'border-border');
 </script>
 
@@ -108,13 +111,14 @@
     class="w-full min-w-0 flex items-center gap-1.5 px-2 py-1 text-left border-t border-border text-caption text-muted-foreground
       transition-colors hover:bg-accent hover:text-foreground
       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-    title="Started from the follow-up “{followUp.title}”{followUp.doneAt !== undefined ? ', now done' : ''}. Click to show it in Follow-ups"
-    aria-label="Started from the follow-up {followUp.title}{followUp.doneAt !== undefined ? ', done' : ''}. Show it in Follow-ups"
+    title="Started from the follow-up “{followUp.title}”{followUpState ? `, now ${followUpState}` : ''}. Click to show it in Follow-ups"
+    aria-label="Started from the follow-up {followUp.title}{followUpState ? `, ${followUpState}` : ''}. Show it in Follow-ups"
     data-board-card-follow-up={followUp.id}
   >
     <ListTodoIcon class="size-3 shrink-0" aria-hidden="true" />
     <span class="truncate min-w-0">{followUp.title}</span>
-    {#if followUp.doneAt !== undefined}<span class="shrink-0 text-status-unread">done</span>{/if}
+    {#if followUpState === 'done'}<span class="shrink-0 text-status-unread">done</span>
+    {:else if followUpState === 'closed'}<span class="shrink-0">closed</span>{/if}
   </button>
 {/if}
 </div>

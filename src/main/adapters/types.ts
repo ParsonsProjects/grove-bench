@@ -155,18 +155,21 @@ export interface MemoryOperations {
 
 // ─── Follow-up Operations ───
 
-/** Follow-ups (shared/follow-ups.ts) for the session's project, as its
- *  agent sees them: what it adds is recorded as from this thread, and it
- *  can only see and close its own project's. Failures throw with a message
- *  for the agent. */
+/** Follow-ups (shared/follow-ups.ts) as a session's agent sees them: what
+ *  it adds is recorded as from this thread, in its own project unless it
+ *  names another (`project`: a project's name or path). It can list, finish
+ *  and close any project's. Failures throw with a message for the agent. */
 export interface FollowUpOperations {
   /** `raised`: an open one with that title was there, and asking with a
    *  higher priority raised its priority. */
-  add(input: { title: string; details: string; priority?: FollowUpPriority }): { followUp: FollowUp; existing: boolean; raised?: boolean };
-  /** Open ones, highest priority first and oldest first inside each; with
-   *  `includeDone`, done ones after them. */
-  list(opts: { includeDone?: boolean }): FollowUp[];
+  add(input: { title: string; details: string; priority?: FollowUpPriority; project?: string }): Promise<{ followUp: FollowUp; existing: boolean; raised?: boolean }>;
+  /** The thread's project's, or `project`'s ("all": every project's). Open
+   *  ones, highest priority first and oldest first inside each; with
+   *  `includeDone`, done and closed ones after them. */
+  list(opts: { includeDone?: boolean; project?: string }): Promise<FollowUp[]>;
   done(id: string, note?: string): FollowUp;
+  /** Closed without being done: it isn't needed, or won't be done. */
+  close(id: string, reason?: string): FollowUp;
 }
 
 // ─── Preview (browser) Operations ───

@@ -13,6 +13,9 @@ beforeEach(() => {
   followUpsStore.ready = false;
   followUpsStore.loadFailed = false;
   followUpsStore.drawerOpen = false;
+  followUpsStore.collapsed = new Set();
+  followUpsStore.unfolded = new Set();
+  followUpsStore.showEnded = new Set();
 });
 
 describe('followUpsStore.load', () => {
@@ -80,19 +83,20 @@ describe('followUpsStore.load', () => {
 });
 
 describe('followUpsStore.byProject', () => {
-  it('groups by project in the sidebar\'s order, open ones as they came, done ones most recent first', () => {
+  it('groups by project in the sidebar\'s order, open ones as they came, done and closed ones most recent first', () => {
     followUpsStore.list = [
       fu('x', '/gone'),
       fu('b1', '/b'),
       fu('a1', '/a'),
       fu('a-old', '/a', { doneAt: 1 }),
       fu('a2', '/a'),
+      fu('a-closed', '/a', { closedAt: 3 }),
       fu('a-new', '/a', { doneAt: 5 }),
     ];
     const projects = followUpsStore.byProject(['/a', '/b']);
     expect(projects.map((p) => p.repoPath)).toEqual(['/a', '/b', '/gone']);
     expect(projects[0].open.map((f) => f.id)).toEqual(['a1', 'a2']);
-    expect(projects[0].done.map((f) => f.id)).toEqual(['a-new', 'a-old']);
+    expect(projects[0].ended.map((f) => f.id)).toEqual(['a-new', 'a-closed', 'a-old']);
   });
 
   it('puts open ones highest priority first, as they came inside each', () => {
@@ -110,8 +114,93 @@ describe('followUpsStore.setPriority', () => {
 
 describe('followUpsStore.openCountIn', () => {
   it("counts open ones in the given projects only: a removed project's can't be started", () => {
-    followUpsStore.list = [fu('a', '/r'), fu('b', '/removed'), fu('c', '/r', { doneAt: 1 })];
+    followUpsStore.list = [fu('a', '/r'), fu('b', '/removed'), fu('c', '/r', { doneAt: 1 }), fu('d', '/r', { closedAt: 1 })];
     expect(followUpsStore.openCountIn(['/r'])).toBe(1);
+  });
+});
+
+describe('followUpsStore folded projects', () => {
+  it('folds and opens a project, saving the list each time', () => {
+    followUpsStore.toggleCollapsed('/a');
+    expect(followUpsStore.isCollapsed('/a')).toBe(true);
+    expect(mockGroveBench.setCollapsedFollowUpProjects).toHaveBeenLastCalledWith(['/a']);
+    followUpsStore.toggleCollapsed('/b', true);
+    followUpsStore.toggleCollapsed('/a');
+    expect(followUpsStore.isCollapsed('/a')).toBe(false);
+    expect(mockGroveBench.setCollapsedFollowUpProjects).toHaveBeenLastCalledWith(['/b']);
+  });
+
+  it("saves nothing when it is already the way it's asked to be", () => {
+    followUpsStore.toggleCollapsed('/a', false);
+    expect(mockGroveBench.setCollapsedFollowUpProjects).not.toHaveBeenCalled();
+  });
+
+  /** A fresh store whose saved folds arrive when `answer` is called. */
+  async function loadingFolds() {
+    let answer: (list: string[]) => void = () => {};
+    mockGroveBench.getCollapsedFollowUpProjects.mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    vi.resetModules();
+    const { followUpsStore: fresh } = await import('./followUps.svelte.js');
+    const loading = fresh.loadCollapsed();
+    return { fresh, loading, answer: (list: string[]) => answer(list) };
+  }
+
+  it('reads the saved ones once, keeping a fold made while they load, and saves both together', async () => {
+    const { fresh, loading, answer } = await loadingFolds();
+    fresh.toggleCollapsed('/new');
+    // Not saved yet: that would replace the saved list with this fold alone.
+    expect(mockGroveBench.setCollapsedFollowUpProjects).not.toHaveBeenCalled();
+    answer(['/saved']);
+    await loading;
+    await fresh.loadCollapsed();
+    expect([...fresh.collapsed].sort()).toEqual(['/new', '/saved']);
+    expect(mockGroveBench.getCollapsedFollowUpProjects).toHaveBeenCalledTimes(1);
+    expect(mockGroveBench.setCollapsedFollowUpProjects).toHaveBeenCalledTimes(1);
+    expect([...mockGroveBench.setCollapsedFollowUpProjects.mock.calls[0][0]].sort()).toEqual(['/new', '/saved']);
+  });
+
+  it("doesn't fold again a saved project opened while they load", async () => {
+    const { fresh, loading, answer } = await loadingFolds();
+    // Folded in memory only, so it can be opened before the answer comes.
+    fresh.collapsed = new Set(['/saved']);
+    fresh.toggleCollapsed('/saved', false);
+    answer(['/saved', '/other']);
+    await loading;
+    expect([...fresh.collapsed]).toEqual(['/other']);
+    expect(mockGroveBench.setCollapsedFollowUpProjects).toHaveBeenLastCalledWith(['/other']);
+  });
+
+  it("saves nothing back when nothing was folded while they loaded", async () => {
+    const { loading, answer } = await loadingFolds();
+    answer(['/saved']);
+    await loading;
+    expect(mockGroveBench.setCollapsedFollowUpProjects).not.toHaveBeenCalled();
+  });
+
+  it('forgets folds of projects with no follow-ups left, once both lists are read', async () => {
+    mockGroveBench.getCollapsedFollowUpProjects.mockResolvedValueOnce(['/kept', '/gone']);
+    mockGroveBench.listFollowUps.mockResolvedValueOnce([fu('a', '/kept')]);
+    vi.resetModules();
+    const { followUpsStore: fresh } = await import('./followUps.svelte.js');
+    await fresh.load(0);
+    await fresh.loadCollapsed();
+    expect([...fresh.collapsed]).toEqual(['/kept']);
+    expect(mockGroveBench.setCollapsedFollowUpProjects).toHaveBeenLastCalledWith(['/kept']);
+  });
+
+  it('saves only folds of projects that have follow-ups', () => {
+    followUpsStore.ready = true;
+    followUpsStore.list = [fu('a', '/a')];
+    followUpsStore.collapsed = new Set(['/stale']);
+    followUpsStore.toggleCollapsed('/a');
+    expect(mockGroveBench.setCollapsedFollowUpProjects).toHaveBeenLastCalledWith(['/a']);
+  });
+});
+
+describe('followUpsStore.close', () => {
+  it('asks main to close it', async () => {
+    await followUpsStore.close('a1');
+    expect(mockGroveBench.closeFollowUp).toHaveBeenCalledWith('a1');
   });
 });
 
@@ -169,7 +258,7 @@ describe('followUpsStore.add', () => {
 
 describe('followUpsStore.openIn', () => {
   it("counts a project's open follow-ups only", () => {
-    followUpsStore.list = [fu('a', '/r'), fu('b', '/r', { doneAt: 1 }), fu('c', '/other')];
+    followUpsStore.list = [fu('a', '/r'), fu('b', '/r', { doneAt: 1 }), fu('c', '/other'), fu('d', '/r', { closedAt: 1 })];
     expect(followUpsStore.openIn('/r')).toBe(1);
   });
 });
@@ -204,12 +293,42 @@ describe('followUpsStore.startedFrom and reveal', () => {
     expect(followUpsStore.revealId).toBeNull();
   });
 
-  it("shows its project's done ones when it is done", () => {
-    followUpsStore.list = [fu('a', '/r', { doneAt: 5 })];
-    followUpsStore.showDone = new Set();
+  it("shows its project's done and closed ones when it is one of them", () => {
+    followUpsStore.list = [fu('a', '/r', { doneAt: 5 }), fu('b', '/s', { closedAt: 5 })];
     followUpsStore.reveal('a');
-    expect(followUpsStore.showDone.has('/r')).toBe(true);
+    followUpsStore.reveal('b');
+    expect([...followUpsStore.showEnded]).toEqual(['/r', '/s']);
     followUpsStore.toggleDrawer(false);
+  });
+
+  it('opens its project if it was folded, and shows it as a whole card until the drawer closes', () => {
+    followUpsStore.list = [fu('a', '/r', { startedSessionIds: ['s1'] })];
+    followUpsStore.toggleCollapsed('/r', true);
+    followUpsStore.reveal('a');
+    expect(followUpsStore.isCollapsed('/r')).toBe(false);
+    expect(followUpsStore.unfolded.has('a')).toBe(true);
+    followUpsStore.toggleDrawer(false);
+    expect(followUpsStore.unfolded.has('a')).toBe(false);
+  });
+
+  it('folds the last one it showed in full when it shows another', () => {
+    followUpsStore.list = [fu('a', '/r'), fu('b', '/r')];
+    followUpsStore.reveal('a');
+    followUpsStore.reveal('b');
+    expect([...followUpsStore.unfolded]).toEqual(['b']);
+    followUpsStore.toggleDrawer(false);
+  });
+
+  it('leaves one you had shown in full as it is', () => {
+    followUpsStore.list = [fu('a', '/r'), fu('b', '/r')];
+    followUpsStore.toggleUnfolded('a');
+    followUpsStore.reveal('a');
+    followUpsStore.reveal('b');
+    // You show this one in full after the reveal did: yours now.
+    followUpsStore.toggleUnfolded('b');
+    followUpsStore.toggleUnfolded('b');
+    followUpsStore.toggleDrawer(false);
+    expect([...followUpsStore.unfolded].sort()).toEqual(['a', 'b']);
   });
 
   it('counts each reveal, the same follow-up again included', () => {

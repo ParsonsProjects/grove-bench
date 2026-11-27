@@ -22,6 +22,7 @@ vi.mock('./logger.js', () => ({
 
 import {
   addFollowUp,
+  closeFollowUp,
   followUpOperationsFor,
   followUpsForSystemPrompt,
   listFollowUps,
@@ -31,6 +32,7 @@ import {
   removeFollowUp,
   reopenFollowUp,
   resetFollowUpsForTest,
+  resolveProject,
   setFollowUpPriority,
 } from './follow-ups.js';
 import { FOLLOW_UP_LIMITS, type FollowUp } from '../shared/follow-ups.js';
@@ -52,6 +54,9 @@ function wireDisk() {
 const saved = (): FollowUp[] => JSON.parse(disk ?? '[]');
 
 const thread = { id: 's1', repoPath: '/repo', branch: 'claude/login', displayName: 'Fix login' };
+
+/** The projects Grove Bench lists, for an agent naming another one. */
+const projects = async () => ['/repo', '/work/other', '/old/other'];
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -131,7 +136,7 @@ describe('addFollowUp', () => {
   it('says what to do in words for the person, not an agent, when added by hand', () => {
     for (let i = 0; i < FOLLOW_UP_LIMITS.openPerProject; i++) addFollowUp({ repoPath: '/repo', title: `t${i}`, details: '' });
     expect(() => addFollowUp({ repoPath: '/repo', title: 'one more', details: '', byUser: true }))
-      .toThrow('This project already has 100 open follow-ups, the most it can have. Mark finished ones done, or delete some, first.');
+      .toThrow('This project already has 100 open follow-ups, the most it can have. Mark finished ones done, or close or delete some, first.');
     expect(() => addFollowUp({ repoPath: '/repo', title: 'one more', details: '' })).toThrow(/Ask the user/);
   });
 
@@ -195,7 +200,7 @@ describe('listFollowUps', () => {
   });
 });
 
-describe('done, reopen, started and remove', () => {
+describe('done, close, reopen, started and remove', () => {
   it('marks one done with who did it and what they said, once', () => {
     const { followUp } = addFollowUp({ repoPath: '/repo', title: 't', details: '' }, 1);
     const done = markFollowUpDone(followUp.id, { sessionId: 's2', note: ' Fixed it ' }, 5);
@@ -204,19 +209,52 @@ describe('done, reopen, started and remove', () => {
     expect(saved()[0].doneAt).toBe(5);
   });
 
-  it("won't let a thread close another project's follow-up", () => {
-    const { followUp } = addFollowUp({ repoPath: '/other', title: 't', details: '' });
-    expect(() => markFollowUpDone(followUp.id, { repoPath: '/repo' })).toThrow(/no follow-up .* in this project/);
-    expect(() => markFollowUpDone('nope')).toThrow(/no follow-up nope/);
+  it('says when there is no follow-up with that id', () => {
+    expect(() => markFollowUpDone('nope')).toThrow(/no follow-up nope\./);
+    expect(() => closeFollowUp('nope')).toThrow(/no follow-up nope\./);
   });
 
-  it('opens one again without its done fields', () => {
+  it('closes one with who closed it and why, once, and no longer counts it as open', () => {
+    const { followUp } = addFollowUp({ repoPath: '/repo', title: 't', details: '' }, 1);
+    const closed = closeFollowUp(followUp.id.toUpperCase(), { sessionId: 's2', reason: ' Fixed upstream ' }, 5);
+    expect(closed).toMatchObject({ closedAt: 5, closedBySessionId: 's2', closeReason: 'Fixed upstream' });
+    expect(closed).not.toHaveProperty('doneAt');
+    expect(closeFollowUp(followUp.id, {}, 9).closedAt).toBe(5);
+    expect(saved()[0].closedAt).toBe(5);
+    // The same title can be added again: the closed one isn't open.
+    expect(addFollowUp({ repoPath: '/repo', title: 't', details: '' }).existing).toBe(false);
+  });
+
+  it("doesn't close one that is done, so finished work stays done", () => {
+    const { followUp } = addFollowUp({ repoPath: '/repo', title: 't', details: '' });
+    markFollowUpDone(followUp.id, {}, 3);
+    const after = closeFollowUp(followUp.id, { reason: 'r' }, 4);
+    expect(after).toMatchObject({ doneAt: 3 });
+    expect(after).not.toHaveProperty('closedAt');
+  });
+
+  it('marks a closed one done instead, as the work got done after all', () => {
+    const { followUp } = addFollowUp({ repoPath: '/repo', title: 't', details: '' });
+    closeFollowUp(followUp.id, { sessionId: 's2', reason: 'r' }, 3);
+    const done = markFollowUpDone(followUp.id, { note: 'did it' }, 4);
+    expect(done).toMatchObject({ doneAt: 4, doneNote: 'did it' });
+    expect(done).not.toHaveProperty('closedAt');
+    expect(done).not.toHaveProperty('closedBySessionId');
+    expect(done).not.toHaveProperty('closeReason');
+  });
+
+  it('opens one again without its done or closed fields', () => {
     const { followUp } = addFollowUp({ repoPath: '/repo', title: 't', details: '' });
     markFollowUpDone(followUp.id, { sessionId: 's2', note: 'n' });
     const open = reopenFollowUp(followUp.id);
     expect(open).not.toHaveProperty('doneAt');
     expect(open).not.toHaveProperty('doneBySessionId');
     expect(open).not.toHaveProperty('doneNote');
+    closeFollowUp(followUp.id, { sessionId: 's2', reason: 'r' });
+    const again = reopenFollowUp(followUp.id);
+    expect(again).not.toHaveProperty('closedAt');
+    expect(again).not.toHaveProperty('closedBySessionId');
+    expect(again).not.toHaveProperty('closeReason');
   });
 
   it('notes each thread started from it once', () => {
@@ -249,16 +287,17 @@ describe('done, reopen, started and remove', () => {
     expect(mockWriteFileSync).not.toHaveBeenCalled();
   });
 
-  it('keeps only the most recent done ones in each project', () => {
+  it('keeps only the most recent done and closed ones in each project, counted together', () => {
     const ids: string[] = [];
-    for (let i = 0; i < FOLLOW_UP_LIMITS.donePerProject + 2; i++) {
+    for (let i = 0; i < FOLLOW_UP_LIMITS.endedPerProject + 2; i++) {
       const { followUp } = addFollowUp({ repoPath: '/repo', title: `t${i}`, details: '' });
-      markFollowUpDone(followUp.id, {}, 100 + i);
+      if (i % 2) closeFollowUp(followUp.id, {}, 100 + i);
+      else markFollowUpDone(followUp.id, {}, 100 + i);
       ids.push(followUp.id);
     }
     const kept = saved().map((f) => f.id);
     expect(listFollowUps()?.map((f) => f.id)).toEqual(kept);
-    expect(kept).toHaveLength(FOLLOW_UP_LIMITS.donePerProject);
+    expect(kept).toHaveLength(FOLLOW_UP_LIMITS.endedPerProject);
     expect(kept).not.toContain(ids[0]);
     expect(kept).not.toContain(ids[1]);
     expect(kept).toContain(ids[2]);
@@ -266,47 +305,106 @@ describe('done, reopen, started and remove', () => {
 });
 
 describe('followUpOperationsFor', () => {
-  it("adds under the thread's name and branch as they are at the time", () => {
+  it("adds under the thread's name and branch as they are at the time", async () => {
     const live = { ...thread };
-    const ops = followUpOperationsFor(live);
+    const ops = followUpOperationsFor(live, projects);
     live.displayName = 'Renamed';
-    const { followUp } = ops.add({ title: 't', details: 'd' });
+    const { followUp } = await ops.add({ title: 't', details: 'd' });
     expect(followUp).toMatchObject({ repoPath: '/repo', fromSessionId: 's1', fromLabel: 'Renamed', fromBranch: 'claude/login' });
+    expect(followUp).not.toHaveProperty('fromRepoPath');
   });
 
-  it('falls back to the branch for a thread without a name, and leaves out an empty branch', () => {
-    const { followUp } = followUpOperationsFor({ id: 's1', repoPath: '/repo', branch: '', displayName: null }).add({ title: 't', details: '' });
+  it('falls back to the branch for a thread without a name, and leaves out an empty branch', async () => {
+    const { followUp } = await followUpOperationsFor({ id: 's1', repoPath: '/repo', branch: '', displayName: null }, projects).add({ title: 't', details: '' });
     expect(followUp).not.toHaveProperty('fromLabel');
     expect(followUp).not.toHaveProperty('fromBranch');
   });
 
-  it("lists the thread's project only: open first, then done, most recent first", () => {
+  it("lists the thread's project by default: open first, then done and closed, most recent first", async () => {
     addFollowUp({ repoPath: '/other', title: 'elsewhere', details: '' });
-    const ops = followUpOperationsFor(thread);
-    const a = ops.add({ title: 'a', details: '' }).followUp;
-    const b = ops.add({ title: 'b', details: '' }).followUp;
-    const c = ops.add({ title: 'c', details: '' }).followUp;
+    const ops = followUpOperationsFor(thread, projects);
+    const a = (await ops.add({ title: 'a', details: '' })).followUp;
+    const b = (await ops.add({ title: 'b', details: '' })).followUp;
+    const c = (await ops.add({ title: 'c', details: '' })).followUp;
     markFollowUpDone(a.id, {}, 10);
-    markFollowUpDone(b.id, {}, 20);
-    expect(ops.list({}).map((f) => f.title)).toEqual(['c']);
-    expect(ops.list({ includeDone: true }).map((f) => f.id)).toEqual([c.id, b.id, a.id]);
+    closeFollowUp(b.id, {}, 20);
+    expect((await ops.list({})).map((f) => f.title)).toEqual(['c']);
+    expect((await ops.list({ includeDone: true })).map((f) => f.id)).toEqual([c.id, b.id, a.id]);
   });
 
-  it('passes the priority on, and lists open ones highest priority first, oldest first inside each', () => {
-    const ops = followUpOperationsFor(thread);
-    expect(ops.add({ title: 'low', details: '', priority: 'low' }).followUp.priority).toBe('low');
-    ops.add({ title: 'normal', details: '' });
-    ops.add({ title: 'high 1', details: '', priority: 'high' });
-    ops.add({ title: 'high 2', details: '', priority: 'high' });
-    expect(ops.list({}).map((f) => f.title)).toEqual(['high 1', 'high 2', 'normal', 'low']);
+  it('passes the priority on, and lists open ones highest priority first, oldest first inside each', async () => {
+    const ops = followUpOperationsFor(thread, projects);
+    expect((await ops.add({ title: 'low', details: '', priority: 'low' })).followUp.priority).toBe('low');
+    await ops.add({ title: 'normal', details: '' });
+    await ops.add({ title: 'high 1', details: '', priority: 'high' });
+    await ops.add({ title: 'high 2', details: '', priority: 'high' });
+    expect((await ops.list({})).map((f) => f.title)).toEqual(['high 1', 'high 2', 'normal', 'low']);
   });
 
-  it('marks done as the thread, in its own project only', () => {
+  it("lists another project's by name or path, and every project's with all", async () => {
+    addFollowUp({ repoPath: '/work/other', title: 'theirs', details: '' }, 1);
+    addFollowUp({ repoPath: '/repo', title: 'mine', details: '', priority: 'high' }, 2);
+    const ops = followUpOperationsFor(thread, async () => ['/repo', '/work/other']);
+    expect((await ops.list({ project: 'other' })).map((f) => f.title)).toEqual(['theirs']);
+    expect((await ops.list({ project: '\\work\\other\\' })).map((f) => f.title)).toEqual(['theirs']);
+    expect((await ops.list({ project: ' ALL ' })).map((f) => f.title)).toEqual(['mine', 'theirs']);
+    await expect(ops.list({ project: 'nowhere' })).rejects.toThrow(/no project "nowhere".*repo, other/);
+  });
+
+  it("reads a removed project's follow-ups by name, as they can still be closed", async () => {
+    addFollowUp({ repoPath: '/gone/legacy', title: 'old', details: '' });
+    const ops = followUpOperationsFor(thread, projects);
+    expect((await ops.list({ project: 'legacy' })).map((f) => f.title)).toEqual(['old']);
+  });
+
+  it("takes a listed project over a removed one with the same name, and doesn't name removed ones as its projects", async () => {
+    addFollowUp({ repoPath: '/old/app', title: 'old one', details: '' });
+    addFollowUp({ repoPath: '/work/app', title: 'current one', details: '' });
+    const ops = followUpOperationsFor(thread, async () => ['/repo', '/work/app']);
+    expect((await ops.list({ project: 'app' })).map((f) => f.title)).toEqual(['current one']);
+    expect((await ops.list({ project: '/old/app' })).map((f) => f.title)).toEqual(['old one']);
+    await expect(ops.list({ project: 'web' })).rejects.toThrow('There is no project "web" in Grove Bench. Its projects are: repo, app.');
+  });
+
+  it('adds to another project, noting the project it came from', async () => {
+    const ops = followUpOperationsFor(thread, async () => ['/repo', '/work/api']);
+    const { followUp } = await ops.add({ title: 't', details: '', project: 'api' });
+    expect(followUp).toMatchObject({ repoPath: '/work/api', fromSessionId: 's1', fromRepoPath: '/repo', fromBranch: 'claude/login' });
+  });
+
+  it("won't add to a project Grove Bench doesn't list, or one whose name two projects share", async () => {
+    addFollowUp({ repoPath: '/gone/legacy', title: 'old', details: '' });
+    const ops = followUpOperationsFor(thread, projects);
+    await expect(ops.add({ title: 't', details: '', project: 'legacy' })).rejects.toThrow(/no project "legacy"/);
+    await expect(ops.add({ title: 't', details: '', project: 'other' })).rejects.toThrow(/More than one project is named "other": \/work\/other, \/old\/other/);
+    expect((await ops.add({ title: 't', details: '', project: '/old/other' })).followUp.repoPath).toBe('/old/other');
+  });
+
+  it("marks done and closes as the thread, in any project", async () => {
     const other = addFollowUp({ repoPath: '/other', title: 'elsewhere', details: '' }).followUp;
-    const ops = followUpOperationsFor(thread);
-    const mine = ops.add({ title: 'mine', details: '' }).followUp;
+    const another = addFollowUp({ repoPath: '/other', title: 'elsewhere too', details: '' }).followUp;
+    const ops = followUpOperationsFor(thread, projects);
+    const mine = (await ops.add({ title: 'mine', details: '' })).followUp;
     expect(ops.done(mine.id.toUpperCase(), 'did it')).toMatchObject({ doneBySessionId: 's1', doneNote: 'did it' });
-    expect(() => ops.done(other.id)).toThrow(/in this project/);
+    expect(ops.done(other.id)).toMatchObject({ repoPath: '/other', doneBySessionId: 's1' });
+    expect(ops.close(another.id, 'not needed')).toMatchObject({ repoPath: '/other', closedBySessionId: 's1', closeReason: 'not needed' });
+  });
+});
+
+describe('resolveProject', () => {
+  const list = ['C:\\Code\\app', 'C:\\Code\\api'];
+
+  it('finds a project by its path, whatever the slashes and case', () => {
+    expect(resolveProject('c:/code/APP/', list)).toBe('C:\\Code\\app');
+  });
+
+  it('finds a project by its folder name', () => {
+    expect(resolveProject(' Api ', list)).toBe('C:\\Code\\api');
+  });
+
+  it('names the projects there are when it finds none', () => {
+    expect(() => resolveProject('web', list)).toThrow('There is no project "web" in Grove Bench. Its projects are: app, api.');
+    expect(() => resolveProject('web', [])).toThrow(/It has no projects/);
   });
 });
 
@@ -315,6 +413,9 @@ describe('followUpsForSystemPrompt', () => {
     const prompt = followUpsForSystemPrompt('/repo');
     expect(prompt).toContain('followup_add');
     expect(prompt).toContain('followup_done');
+    expect(prompt).toContain('close it with followup_close and say why');
+    expect(prompt).toContain("Close another project's only when the user asks.");
+    expect(prompt).toContain('They work across projects');
     expect(prompt).not.toContain('<open_follow_ups>');
   });
 
@@ -346,6 +447,8 @@ describe('followUpsForSystemPrompt', () => {
     for (let i = 0; i < 12; i++) addFollowUp({ repoPath: '/repo', title: `task ${i}`, details: 'secret details' }, i);
     const done = addFollowUp({ repoPath: '/repo', title: 'finished', details: '' }, 50).followUp;
     markFollowUpDone(done.id);
+    const closed = addFollowUp({ repoPath: '/repo', title: 'dropped', details: '' }, 51).followUp;
+    closeFollowUp(closed.id);
     addFollowUp({ repoPath: '/other', title: 'not this project', details: '' });
     const prompt = followUpsForSystemPrompt('/repo');
     expect(prompt).toContain('task 11');
@@ -353,6 +456,7 @@ describe('followUpsForSystemPrompt', () => {
     expect(prompt).not.toContain('task 1\n');
     expect(prompt).toContain('(2 more not listed.)');
     expect(prompt).not.toContain('finished');
+    expect(prompt).not.toContain('dropped');
     expect(prompt).not.toContain('not this project');
     expect(prompt).not.toContain('secret details');
     expect(prompt.indexOf('task 11')).toBeLessThan(prompt.indexOf('task 10'));

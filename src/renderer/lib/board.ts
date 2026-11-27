@@ -8,7 +8,7 @@
  */
 
 import { BOARD_LANES, BOARD_SORTS, type BoardLanes, type BoardSort, type PrInfo } from '../../shared/types.js';
-import { byFollowUpPriority, type FollowUp } from '../../shared/follow-ups.js';
+import { byFollowUpPriority, isFollowUpOpen, type FollowUp } from '../../shared/follow-ups.js';
 import type { AgentSpriteState } from './agent-sprite.js';
 
 export { BOARD_LANES, BOARD_SORTS };
@@ -61,7 +61,7 @@ export function boardFollowUps(
 ): { followUp: FollowUp; startedBefore: boolean }[] {
   const known = new Set(repos);
   return byFollowUpPriority(list).flatMap((f) => {
-    if (f.doneAt !== undefined || !known.has(f.repoPath)) return [];
+    if (!isFollowUpOpen(f) || !known.has(f.repoPath)) return [];
     const started = f.startedSessionIds ?? [];
     if (started.some(isOpenThread)) return [];
     return [{ followUp: f, startedBefore: started.length > 0 }];
